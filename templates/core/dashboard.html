@@ -51,9 +51,17 @@
     </div>
 
     <div class="card-pad">
-      <div class="flex items-center justify-between mb-2">
+      <div class="flex items-center justify-between gap-2 mb-2">
         <h3 class="font-semibold text-sm">Bank &amp; card balances</h3>
-        {% if 'banking' in u_modules %}<a href="{% url 'bank_accounts' %}" class="text-xs text-indigo-600 hover:underline">Manage accounts →</a>{% endif %}
+        {% if 'banking' in u_modules %}
+        <div class="flex items-center gap-3 text-xs">
+          {% if has_connections %}
+          <form method="post" action="{% url 'bank_sync_now' %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+            <button class="text-indigo-600 hover:underline" title="Pull new transactions from your connected banks now">🔄 Sync now</button></form>
+          {% endif %}
+          <a href="{% url 'bank_accounts' %}" class="text-indigo-600 hover:underline">Manage accounts →</a>
+        </div>
+        {% endif %}
       </div>
       {% if money.accounts %}
       <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
@@ -124,7 +132,7 @@
           {% if u_can_see_costs and attention.missing_receipts %}<span class="block text-xs text-slate-400">{% include "core/_money.html" with v=attention.missing_receipts_total %} without paperwork</span>{% endif %}</span>
         <span class="font-bold tabular-nums {% if attention.missing_receipts %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.missing_receipts }}</span>
       </a>
-      <a href="{% url 'expense_list' %}?review=1" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+      <a href="{% url 'expense_list' %}?review=yes" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
         <span>Auto-created expenses to confirm
           <span class="block text-xs text-slate-400">from the bank feed or recurring templates</span></span>
         <span class="font-bold tabular-nums {% if attention.expenses_to_review %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.expenses_to_review }}</span>
@@ -132,9 +140,16 @@
       {% endif %}
       {% if 'banking' in u_modules and attention.connections_attention %}
       <a href="{% url 'bank_accounts' %}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
-        <span>Bank connections to re-link
+        <span>Bank connections that need a re-login
           <span class="block text-xs text-red-600">transactions stop syncing until you do</span></span>
         <span class="font-bold tabular-nums text-red-600">{{ attention.connections_attention }}</span>
+      </a>
+      {% endif %}
+      {% if month_close and 'accounting' in u_modules and u_can_see_costs %}
+      <a href="{{ month_close.url }}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50 border-t border-slate-100 mt-1 pt-2">
+        <span>Month close
+          <span class="block text-xs {% if month_close.is_closed %}text-emerald-600{% else %}text-slate-400{% endif %}">{{ month_close.label }}: {% if month_close.is_closed %}closed{% else %}{{ month_close.done }} of {{ month_close.total }} done{% endif %}</span></span>
+        <span class="font-bold tabular-nums {% if month_close.is_closed %}text-emerald-600{% elif month_close.done < month_close.total %}text-amber-600{% else %}text-slate-400{% endif %}">{% if month_close.is_closed %}✓{% else %}{{ month_close.done }}/{{ month_close.total }}{% endif %}</span>
       </a>
       {% endif %}
       {% if 'banking' not in u_modules and 'expenses' not in u_modules %}
@@ -149,7 +164,7 @@
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
   <div class="stat"><p class="lbl">Today's revenue</p><p class="val">${{ today_revenue|floatformat:2|intcomma }}</p></div>
   <div class="stat"><p class="lbl">Month-to-date</p><p class="val">${{ mtd_revenue|floatformat:2|intcomma }}</p></div>
-  <div class="stat"><p class="lbl">AR outstanding</p><p class="val">${{ ar_total|floatformat:2|intcomma }}</p>
+  <div class="stat"><p class="lbl">Customers owe you</p><p class="val">${{ ar_total|floatformat:2|intcomma }}</p>
     {% if overdue %}<p class="text-xs text-red-600 font-semibold mt-1">${{ overdue|floatformat:2|intcomma }} overdue</p>{% endif %}</div>
   <div class="stat"><p class="lbl">Pick queue</p><p class="val">{{ pick_queue }}</p>
     <a href="{% url 'pick_queue' %}" class="text-xs text-indigo-600 hover:underline">open picking →</a></div>

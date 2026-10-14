@@ -13,6 +13,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.core.mail import EmailMessage
 from django.db import models
+from django.db.models.functions import Coalesce
 from django.urls import NoReverseMatch, reverse
 from django.utils import timezone
 
@@ -34,7 +35,8 @@ def money_attention(today=None):
         bills_due_total       their combined balance
         bills_overdue         how many of them are already past due
         bills_unpaid_total    every open bill, regardless of due date
-        missing_receipts      expenses dated this month with no receipt attached
+        missing_receipts      expenses dated this month with no receipt attached (neither on
+                              the expense nor on the bank transaction it came from)
         missing_receipts_total
         expenses_to_review    auto-created expenses (bank feed / recurring) not yet confirmed
         connections_attention bank connections in error or needing re-authentication
@@ -53,33 +55,41 @@ def money_attention(today=None):
     oldest = unreviewed.order_by("date").values_list("date", flat=True).first()
     suggested = unreviewed.filter(suggested_account__isnull=False).count()
 
-    # Open bills: expenses with no paid date and no bank transaction behind them
-    open_expenses = Expense.objects.filter(is_deleted=False, paid_date__isnull=True,
-                                           bank_txn__isnull=True, amount__gt=0)
-    due_expenses = open_expenses.filter(due_date__lte=soon)
+    # Open bills: expenses with no paid date and no bank transaction behind them.
+    # Same rule as the Unpaid bills report: a bill with no due date is aged
+    # from its bill date, so an old undated bill still shows up as overdue.
+    open_expenses = (Expense.objects.filter(is_deleted=False, paid_date__isnull=True,
+                                            bank_txn__isnull=True, amount__gt=0,
+                                            date__lte=today)
+                     .annotate(aged_from=Coalesce("due_date", "date")))
+    due_expenses = open_expenses.filter(aged_from__lte=soon)
     bills_due = due_expenses.count()
     bills_due_total = due_expenses.aggregate(t=models.Sum("amount"))["t"] or ZERO
-    bills_overdue = open_expenses.filter(due_date__lt=today).count()
+    bills_overdue = open_expenses.filter(aged_from__lt=today).count()
     bills_unpaid_total = open_expenses.aggregate(t=models.Sum("amount"))["t"] or ZERO
 
-    # Posted supplier receipts that still carry a balance
-    for r in (Receipt.objects.filter(is_deleted=False, posted=True, paid_date__isnull=True)
+    # Posted supplier receipts that still carry a balance (partly paid ones too)
+    for r in (Receipt.objects.filter(is_deleted=False, posted=True, date__lte=today)
               .prefetch_related("lines", "supplier_payments")):
         balance = r.balance_due
         if balance <= 0:
             continue
+        aged_from = r.due_date or r.date
         bills_unpaid_total += balance
-        if r.due_date is not None and r.due_date <= soon:
+        if aged_from <= soon:
             bills_due += 1
             bills_due_total += balance
-            if r.due_date < today:
+            if aged_from < today:
                 bills_overdue += 1
 
-    missing_qs = (Expense.objects.filter(is_deleted=False, amount__gt=0,
-                                         date__gte=month_start, date__lte=today)
-                  .filter(models.Q(receipt_file="") | models.Q(receipt_file__isnull=True)))
-    missing = missing_qs.count()
-    missing_total = missing_qs.aggregate(t=models.Sum("amount"))["t"] or ZERO
+    # Missing receipts: a receipt attached to the bank transaction the expense
+    # came from counts, exactly as on the Missing receipts report.
+    missing_rows = [e for e in Expense.objects.filter(is_deleted=False, amount__gt=0,
+                                                      date__gte=month_start, date__lte=today)
+                    .select_related("bank_txn")
+                    if _receipt_missing(e)]
+    missing = len(missing_rows)
+    missing_total = sum((e.amount for e in missing_rows), ZERO)
 
     to_review = Expense.objects.filter(is_deleted=False, is_reviewed=False).count()
     connections = BankConnection.objects.filter(is_deleted=False,
@@ -96,6 +106,19 @@ def money_attention(today=None):
         "connections_attention": connections,
         "total": unreviewed_count + bills_due + missing + to_review + connections,
     }
+
+
+def _receipt_missing(expense):
+    """True when neither the expense nor its bank transaction holds a receipt.
+    Delegates to the Missing receipts report so both screens agree."""
+    try:
+        from expenses.reports import receipt_missing
+    except ImportError:                      # report module not available: same rule inline
+        if expense.has_receipt:
+            return False
+        txn = expense.bank_transaction
+        return not (txn is not None and txn.receipt_file)
+    return receipt_missing(expense)
 
 
 def _link(url_name):
@@ -158,14 +181,15 @@ def send_review_digest():
                      f"(bank feed or recurring) and need a quick confirmation.")
         link = _link("expense_list")
         if link:
-            lines.append(f"    Expenses: {link}?review=1")
+            lines.append(f"    Expenses: {link}?review=yes")
         lines.append("")
 
     if info["connections_attention"]:
         names = list(BankConnection.objects.filter(is_deleted=False, status__in=["error", "relink"])
                      .values_list("institution_name", flat=True))
         lines.append(f"* {info['connections_attention']} bank connection(s) need attention: "
-                     + ", ".join(names) + ". Re-link them so transactions keep flowing.")
+                     + ", ".join(names) + ". Press Re-login on Banking → Connect a bank so "
+                     f"transactions keep flowing.")
         link = _link("bank_accounts")
         if link:
             lines.append(f"    Bank accounts: {link}")

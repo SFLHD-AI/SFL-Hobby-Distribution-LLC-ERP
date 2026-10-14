@@ -98,7 +98,9 @@ VENDORS = [
     ("Marcus Reyes (show help)", "Contract labor", "ZELLE PAYMENT TO MARCUS REYES", True),
 ]
 
-# Hand-entered demo expenses: (category, vendor) pairs drawn at random.
+# Hand-entered demo expenses: (category, vendor) pairs drawn at random. The
+# category names are the setup_accounts defaults, so the demo never creates
+# a second "Rent" next to "Rent & storage".
 MANUAL_EXPENSE_VENDORS = {
     "Shipping supplies": "ULINE",
     "Software & subscriptions": "QuickBooks",
@@ -107,6 +109,21 @@ MANUAL_EXPENSE_VENDORS = {
     "Bank & merchant fees": "Stripe",
     "Utilities & phone": "FPL",
 }
+
+# Category names older demo seeds created (pre-4.0) -> the default they belong
+# to. On re-run their expenses, vendors, budgets and rules are moved to the
+# default category and the duplicate is soft-deleted.
+LEGACY_CATEGORY_NAMES = {
+    "Software": "Software & subscriptions",
+    "Rent": "Rent & storage",
+    "Labor": "Contract labor",
+    "Fees": "Bank & merchant fees",
+    "Utilities": "Utilities & phone",
+}
+
+# Note stamped on the expenses this seed creates, so re-runs can tell them
+# apart from bills the owner typed in.
+DEMO_EXPENSE_NOTE = "Demo expense — owner paid personally"
 
 
 def _aware(day, hour=10):
@@ -477,6 +494,8 @@ class Command(BaseCommand):
         from banking.models import BankAccount, BankTransaction, CategoryRule
         from expenses.models import Budget, MileageEntry, RecurringExpense, Vendor
 
+        self.fold_legacy_categories(admin)
+
         def category(name):
             cat = ExpenseCategory.objects.filter(name__iexact=name).first()
             if cat is None:
@@ -513,6 +532,10 @@ class Command(BaseCommand):
             self.stdout.write("bank accounts: Chase Business Checking ($12,500), Chase Ink card ($1,840 owed)")
 
         # --- hand-entered expenses (18) -----------------------------------------------
+        # All paid personally by the owner (an owner contribution on the books).
+        # They must NOT be "paid from checking": there is no bank transaction
+        # behind them, so the ledger's checking balance would disagree with the
+        # register by their sum.
         if not Expense.objects.filter(source="manual").exists():
             cat_names = list(MANUAL_EXPENSE_VENDORS)
             for i in range(18):
@@ -521,24 +544,19 @@ class Command(BaseCommand):
                 vendor_name = MANUAL_EXPENSE_VENDORS[cat_name]
                 vendor = vendors.get(vendor_name) or Vendor.objects.filter(name=vendor_name).first()
                 day = today - timedelta(days=random.randint(0, 55))
-                personal = i % 3 == 0
                 Expense.objects.create(
                     date=day, category=cat, vendor=vendor_name, vendor_link=vendor,
                     amount=Decimal(str(round(random.uniform(35, 900), 2))),
-                    note="", reference=f"R-{5100 + i}",
-                    paid_date=day,
-                    paid_from=None if personal else checking,
-                    payment_method="personal" if personal else random.choice(["check", "ach"]),
+                    note=DEMO_EXPENSE_NOTE, reference=f"R-{5100 + i}",
+                    paid_date=day, paid_from=None, payment_method="personal",
                     source="manual", is_reviewed=True, created_by=admin)
-            self.stdout.write("expenses: 18 hand-entered (paid; 6 paid personally, 12 from checking)")
-        # Older demo rows (pre-4.0) had no payment info: mark them paid on their date.
-        for i, exp in enumerate(Expense.objects.filter(source="manual", paid_date__isnull=True,
-                                                       bank_txn__isnull=True).order_by("pk")):
+            self.stdout.write("expenses: 18 hand-entered (paid personally by the owner)")
+        # Only rows this seed stamped are ever back-filled; a real open bill the
+        # owner typed in is never touched.
+        for exp in Expense.objects.filter(source="manual", note=DEMO_EXPENSE_NOTE,
+                                          paid_date__isnull=True, bank_txn__isnull=True):
             exp.paid_date = exp.date
-            if i % 3 == 0:
-                exp.paid_from, exp.payment_method = None, "personal"
-            else:
-                exp.paid_from, exp.payment_method = checking, random.choice(["check", "ach"])
+            exp.paid_from, exp.payment_method = None, "personal"
             exp.save(update_fields=["paid_date", "paid_from", "payment_method", "updated_at"])
 
         if not seeded_feed:
@@ -778,3 +796,64 @@ class Command(BaseCommand):
             cs.save(update_fields=changed + ["updated_at"])
         self.stdout.write(f"rules: {CategoryRule.objects.count()}, recurring: 1, mileage: 6, "
                           f"budgets: {Budget.objects.count()}, books start {cs.books_start_date}")
+
+    # ------------------------------------------------------------------------
+    # Legacy clean-up
+    # ------------------------------------------------------------------------
+    def fold_legacy_categories(self, admin):
+        """Pre-4.0 demo seeds created short category names ("Rent", "Fees"…)
+        that now sit next to the setup_accounts defaults ("Rent & storage",
+        "Bank & merchant fees"). Move everything that points at a legacy
+        duplicate to the default category and soft-delete the duplicate so
+        the demo has one of each. The expenses moved this way were created by
+        the old seed with no payment info; they are marked paid personally on
+        their date (nothing else is back-filled)."""
+        from accounting.models import Account
+        from banking.models import BankTransaction, BankTransactionSplit, CategoryRule
+        from expenses.models import Budget, RecurringExpense, Vendor
+
+        folded = 0
+        for legacy, default_name in LEGACY_CATEGORY_NAMES.items():
+            dup = ExpenseCategory.objects.filter(name__iexact=legacy).first()
+            if dup is None:
+                continue
+            target = ExpenseCategory.objects.filter(name__iexact=default_name).first()
+            if target is None:                      # no default yet: just rename
+                dup.name = default_name
+                dup.save()
+                folded += 1
+                continue
+            if target.pk == dup.pk:
+                continue
+            target.ensure_account()
+            moved_ids = list(Expense.all_objects.filter(category=dup).values_list("pk", flat=True))
+            Expense.all_objects.filter(pk__in=moved_ids).update(category=target)
+            for exp in Expense.objects.filter(pk__in=moved_ids, source="manual",
+                                              paid_date__isnull=True, bank_txn__isnull=True):
+                exp.paid_date = exp.date
+                exp.paid_from, exp.payment_method = None, "personal"
+                exp.note = exp.note or DEMO_EXPENSE_NOTE
+                exp.save(update_fields=["paid_date", "paid_from", "payment_method", "note",
+                                        "updated_at"])
+            Vendor.all_objects.filter(default_category=dup).update(default_category=target)
+            RecurringExpense.all_objects.filter(category=dup).update(category=target)
+            for b in Budget.objects.filter(category=dup):
+                if Budget.objects.filter(category=target, year=b.year, month=b.month).exists():
+                    b.delete()
+                else:
+                    b.category = target
+                    b.save(update_fields=["category"])
+            if dup.account_id and target.account_id:
+                CategoryRule.all_objects.filter(category_account=dup.account_id).update(
+                    category_account=target.account_id)
+                BankTransaction.all_objects.filter(category_account=dup.account_id).update(
+                    category_account=target.account_id)
+                BankTransaction.all_objects.filter(suggested_account=dup.account_id).update(
+                    suggested_account=target.account_id)
+                BankTransactionSplit.objects.filter(account=dup.account_id).update(
+                    account=target.account_id)
+                Account.objects.filter(pk=dup.account_id).update(active=False)
+            dup.delete(user=admin)
+            folded += 1
+        if folded:
+            self.stdout.write(f"expense categories: {folded} legacy duplicate(s) folded into the defaults")

@@ -69,7 +69,12 @@ PRESETS = {
     "amex": {
         "label": "American Express",
         "layouts": [
+            # "Date,Description,Amount" alone is NOT enough to auto-detect Amex:
+            # plenty of banks export exactly those three columns with ordinary
+            # signs. Only auto-select when one of Amex's own headers is there.
             {"signature": ["date", "description", "amount"],
+             "require_any": ["card member", "account #", "reference", "extended details",
+                             "appears on your statement as"],
              "columns": {"date": "date", "description": "description", "amount": "amount",
                          "external_id": "reference"},
              "negate": True},
@@ -357,22 +362,86 @@ def _is_wells_row(row):
             and row[2].strip() in ("*", "") and bool(row[4].strip()))
 
 
+def _layout_fits(layout, norm):
+    """True when every signature header is present and, for layouts that
+    need one, at least one distinguishing header (``require_any``)."""
+    sig = layout.get("signature")
+    if not sig or not all(s in norm for s in sig):
+        return False
+    need = layout.get("require_any")
+    if need and not any(h in norm for h in need):
+        return False
+    return True
+
+
 def detect_preset(headers, sample_row=None):
     """Return the preset slug whose header signature fits best, else None.
     The longest matching signature wins (Bank of America beats Amex even
-    though Amex's three columns are a subset of BofA's)."""
+    though Amex's three columns are a subset of BofA's). A layout with
+    ``require_any`` is only picked when one of those headers is present, so
+    a bare "Date,Description,Amount" file falls back to the generic picker."""
     if headers is None:
         return "wells_fargo" if _is_wells_row(sample_row) else None
     norm = {normalize_header(h) for h in headers}
     best, best_len = None, 0
     for slug, preset in PRESETS.items():
         for layout in preset["layouts"]:
-            sig = layout.get("signature")
-            if not sig:
-                continue
-            if all(s in norm for s in sig) and len(sig) > best_len:
-                best, best_len = slug, len(sig)
+            if _layout_fits(layout, norm) and len(layout["signature"]) > best_len:
+                best, best_len = slug, len(layout["signature"])
     return best
+
+
+# Header words that identify each generic field, checked in order.
+_GUESS = [
+    ("date", ("transaction date", "trans. date", "posting date", "posted date", "post date", "date")),
+    ("posted_date", ("posted date", "post date", "posting date")),
+    ("description", ("description", "payee", "memo", "details", "name", "narrative", "transaction")),
+    ("amount", ("amount", "transaction amount", "amt")),
+    ("debit", ("debit", "withdrawal", "withdrawals", "money out", "paid out", "charge")),
+    ("credit", ("credit", "deposit", "deposits", "money in", "paid in")),
+    ("check_number", ("check #", "check number", "check or slip #", "check", "cheque")),
+    ("external_id", ("transaction id", "reference", "reference number", "id")),
+]
+_BALANCE_WORDS = ("balance", "running bal", "running bal.")
+
+
+def guess_generic_mapping(headers):
+    """Best-guess ``{field: column index}`` for the generic column picker,
+    from header names alone. Only used to pre-fill the picker; the owner
+    confirms. Returns {} for headerless files."""
+    if not headers:
+        return {}
+    norm = [normalize_header(h) for h in headers]
+    guess = {}
+    for key, words in _GUESS:
+        for w in words:
+            for i, h in enumerate(norm):
+                if h == w and i not in guess.values():
+                    guess[key] = i
+                    break
+            if key in guess:
+                break
+    if "posted_date" in guess and guess["posted_date"] == guess.get("date"):
+        del guess["posted_date"]
+    if "amount" in guess:
+        guess.pop("debit", None)
+        guess.pop("credit", None)
+    return guess
+
+
+def generic_hint(headers):
+    """Plain-language nudge for files that look like a card export with
+    positive charges (one signed amount column, no balance column). Empty
+    when the layout is clearly a checking register."""
+    if not headers:
+        return ""
+    norm = {normalize_header(h) for h in headers}
+    if not ({"date", "description", "amount"} <= norm):
+        return ""
+    if any(b in norm for b in _BALANCE_WORDS) or ("debit" in norm or "credit" in norm):
+        return ""
+    return ("Looks like a card export? If purchases show as positive numbers, tick "
+            "'Amounts are positive for charges' below.")
 
 
 def resolve_mapping(preset, headers, sample_row=None):
@@ -431,6 +500,8 @@ def map_rows(rows, preset_or_mapping, headers=None):
             raise ValueError(f"The '{preset_or_mapping}' preset does not fit this file's columns.")
     else:
         mapping = preset_or_mapping
+    if not mapping:
+        raise ValueError("No column mapping: pick the columns first.")
     cols = mapping.get("columns", {})
     negate = bool(mapping.get("negate"))
     skip = mapping.get("skip_when")
@@ -574,6 +645,16 @@ def deserialize_rows(data):
         c["abs_amount"] = abs(c["amount"]) if c["amount"] is not None else None
         out.append(c)
     return out
+
+
+def parse_stored(stored_path):
+    """Re-parse a statement saved by the upload step (``default_storage``).
+    Returns a ParsedCSV, or None when the file is gone."""
+    from django.core.files.storage import default_storage
+    if not stored_path or not default_storage.exists(stored_path):
+        return None
+    with default_storage.open(stored_path, "rb") as fh:
+        return parse_csv(fh.read())
 
 
 def import_rows(account, rows, user=None, preset="", filename="", file=None,

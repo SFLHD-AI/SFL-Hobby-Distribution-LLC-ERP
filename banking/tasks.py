@@ -19,7 +19,11 @@ through the provider's cursor API and reconciles them:
 First sync of a brand-new account
 ---------------------------------
 A Plaid account starts with ``opening_date = today`` and ``opening_balance =
-0``. On its first sync (no transactions yet) we:
+0``. On its first sync we derive both from the bank -- but only while the
+account is still at those defaults (no transactions, opening balance 0,
+opening date not earlier than the day the account was created). An account
+the owner configured by hand (an opening balance from a statement, a
+back-dated opening date) is never touched. For such accounts we:
 
 1. set ``opening_date`` to the earliest transaction date Plaid delivered, so
    nothing in the history is skipped, and
@@ -90,6 +94,18 @@ def _sync_expense(txn):
     exp.save(update_fields=["amount", "date", "paid_date", "updated_at"])
 
 
+def at_defaults(account):
+    """True when the account still looks freshly created: nothing imported,
+    opening balance 0 and an opening date no earlier than the day it was
+    added. Only such accounts get their opening figures from the bank."""
+    if account.opening_balance != 0:
+        return False
+    created = timezone.localtime(account.created_at).date() if account.created_at else timezone.localdate()
+    if account.opening_date < created:
+        return False
+    return not account.transactions.exists()
+
+
 def _initialize_account(account, balance_info, created_rows):
     """First sync: derive opening_date / opening_balance (see module doc)."""
     if not created_rows:
@@ -134,8 +150,7 @@ def sync_connection(conn, provider=None, user=None):
     try:
         result = provider.sync_transactions(conn.access_token, conn.sync_cursor or "")
         balances = {}
-        accounts_needing_init = [a for a in conn.accounts.filter(is_deleted=False)
-                                 if not a.transactions.exists()]
+        accounts_needing_init = [a for a in conn.accounts.filter(is_deleted=False) if at_defaults(a)]
         if accounts_needing_init:
             try:
                 balances = {a["external_account_id"]: a for a in provider.get_accounts(conn.access_token)}

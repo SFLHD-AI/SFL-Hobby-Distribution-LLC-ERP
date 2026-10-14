@@ -11,20 +11,29 @@ layer:
 - **Banking** — connect checking accounts and credit cards through Plaid, or
   import the CSV any bank lets you download. Every transaction is de-duplicated,
   run through *category rules* you teach the system ("PIRATE SHIP → Shipping
-  labels"), recognised by vendor, and parked in a review inbox. One click
-  categorizes it, matches it to a customer payment, a supplier bill or an
-  expense, pairs a transfer, or writes it off as personal.
+  labels & freight"), recognised by vendor, and parked in a review inbox. One
+  click categorizes it, **Match**es it to a customer payment, a supplier bill or
+  an expense, pairs a transfer, **splits** it across several categories, or marks
+  it **Personal** (an owner draw). Tick **Always categorize like this** and a
+  rule is created. Every decision has an **Undo** that releases whatever the
+  decision had linked, so nothing is ever counted twice. Hand-entered rows can
+  be edited or deleted; imported rows can only be ignored.
 - **Expenses** — the register is filled all year, not reconstructed in April:
   card charges become expenses automatically, a phone-friendly quick-capture
   form takes a receipt photo in 10 seconds, recurring templates post rent and
-  subscriptions, and reports flag missing receipts, unpaid bills, 1099
-  contractors, budgets and mileage.
+  subscriptions on their anchor day (Jan 31 → Feb 28 → Mar 31), supplier bills
+  live on the Receiving document (invoice #, due date, paid date, **Unpaid
+  bills** filter), and reports flag missing receipts, unpaid bills (with an
+  inline **Mark paid**), 1099 contractors ($600 through tax year 2025, $2,000
+  from 2026), budgets and mileage.
 - **Accounting** — a virtual double-entry ledger rebuilt on demand from the
   documents that *are* the business. Income statement, balance sheet, trial
   balance, general ledger and journal on both the **cash basis** (what the tax
-  return uses) and the **accrual basis** (the true picture), a cash-vs-accrual
-  bridge, a 12-month "am I building equity?" trend, a soft period lock and a
-  year-end package for the tax preparer. The balance sheet always balances.
+  return uses) and the **accrual basis** (the true picture), a plain-English
+  cash-vs-accrual bridge, a 12-month "am I building equity?" trend, a
+  **Month close** checklist, a soft period lock and a year-end package (CSV and
+  PDF statements, trial balances, general ledgers and journals on both bases)
+  for the tax preparer. The balance sheet always balances.
 
 **Stack:** Django 5.2 LTS · DRF · PostgreSQL · Django-Q2 + Redis · Tailwind CSS · WeasyPrint
 
@@ -62,12 +71,29 @@ reports, can see costs).
    (optional).
 2. Banking → Accounts → add each checking account and credit card with its
    **opening balance as of the books start date** (cards: amount owed).
-3. Banking → Connect a bank (Plaid) or Import CSV. Review the inbox; click
-   "Always do this" on anything repetitive to create a rule.
+3. Banking → Connect a bank (Plaid) or Import CSV. Review the inbox; tick
+   **Always categorize like this** on anything repetitive to create a rule.
 4. Expenses → Vendors: add the people you pay often and their default category;
    mark 1099 contractors.
-5. Dashboard → Money shows cash position, profit on both bases, equity and the
-   "needs attention" list from here on.
+5. Receiving → on each supplier order fill in the supplier's invoice # and due
+   date (the **Supplier bill** card); the bill is open until a bank payment is
+   matched to it.
+6. Dashboard → Money shows cash position, profit on both bases, equity, the
+   "needs attention" list and last month's close progress from here on.
+
+## Reports and exports
+
+Every statement and report can be exported. Financial statements (income
+statement, balance sheet, cash vs. accrual, trial balance), the expense
+reports and the operational reports export to **CSV and PDF**. **CSV only**:
+the general journal, the general ledger, the equity trend (it has an on-screen
+chart instead), the expense register and mileage lists, and the QuickBooks
+files. Two ZIP packages exist for the tax preparer: **Accounting → Year-end
+package** (statements as CSV and PDF, cash and accrual trial balances, general
+ledgers and journals on both bases, also per month) and **Expenses → Year-end
+package** (Schedule C worksheet, every expense, 1099 vendors, mileage, missing
+receipts, bills open at Dec 31 and a `receipts/` folder with every attached
+receipt). See `docs/ADMIN_GUIDE.md` → *Year-end*.
 
 ## Tests
 
@@ -99,8 +125,8 @@ orders/      customer POs, status machine, picking API + mobile UI
 invoicing/   invoices, credit memos, PDF layouts (modern/classic)
 payments/    payments, applications, AR
 expenses/    categories (= ledger accounts), vendors, expenses, recurring, budgets, mileage, reports
-banking/     bank accounts, Plaid provider, CSV importers + bank presets, rules, matching, review inbox
-accounting/  chart of accounts, the virtual ledger engine, financial statements, year-end, period lock
+banking/     bank accounts, Plaid provider, CSV importers + bank presets, rules (+ regex guard), matching, splits, review inbox
+accounting/  chart of accounts, the virtual ledger engine, financial statements, month close, year-end, period lock
 shipping/    Shipment model + providers/ (ShippingProvider interface)
 reports/     operational reports: valuation, margin P&L, sales, aging, QuickBooks exports
 templates/   Tailwind UI + WeasyPrint PDF templates
@@ -115,4 +141,4 @@ docs/        guides
 | hourly | `shipping.tasks.sync_shipstation_tracking` | tracking numbers + label costs back from ShipStation |
 | daily 6am | `expenses.tasks.generate_recurring_expenses` | post due recurring expenses (rent, software…) |
 | daily 7am | `shipping.tasks.send_low_stock_digest` | low-stock email |
-| Monday 7am | `core.tasks.send_review_digest` | weekly email: transactions to review, bills due, missing receipts, connections to re-link |
+| Monday 7am | `core.tasks.send_review_digest` | weekly email: transactions to review, bills due, missing receipts, connections that need a re-login |

@@ -119,9 +119,12 @@ def _learned_index(account_ids):
     built from rows a person (or a confirmed rule) categorized before."""
     index = defaultdict(Counter)
     for acct_id in account_ids:
+        # CATEGORIZED only: MATCHED rows carry system accounts (undeposited
+        # funds, inventory purchases) that are not in the review dropdown,
+        # so a suggestion learned from them could never be selected.
         qs = (BankTransaction.objects
               .filter(account_id=acct_id, is_deleted=False,
-                      status__in=[BankTransaction.CATEGORIZED, BankTransaction.MATCHED],
+                      status=BankTransaction.CATEGORIZED,
                       category_account__isnull=False)
               .order_by("-id")
               .values_list("description", "category_account_id")[:LEARN_SCAN_LIMIT])
@@ -257,18 +260,97 @@ def clean_pattern(text):
     return best[:200]
 
 
+# Words that name a payment rail, a marketplace or a bank's own boilerplate
+# rather than a merchant. A pattern made only of these (plus numbers and
+# punctuation) would match half the statement, so it is never auto-applied.
+GENERIC_WORDS = frozenset("""
+paypal pp sq square venmo zelle cash app cashapp apple pay applepay google googlepay gpay
+amazon amzn amz mktp mktplace marketplace ebay stripe str shopify
+check chk cheque payment pmt pymt pay deposit dep transfer xfer trnsfr ach pos debit dbt credit crd
+purchase online withdrawal wdl atm card visa mastercard mc amex discover
+fee fees charge bill mobile web recurring autopay auto thank you
+id ref reference number no trans transaction txn tran electronic epay eft wire
+from to the of and for at in on by us usa com net www inc llc co ltd
+""".split())
+MIN_SPECIFIC_LEN = 8
+
+
+def _words(text):
+    return [w for w in re.split(r"[^a-z0-9]+", (text or "").lower()) if w]
+
+
+def is_generic_pattern(pattern):
+    """True when ``pattern`` would not single out one merchant: it is only a
+    payment processor / marketplace / bank boilerplate (PAYPAL, SQ *, ZELLE
+    PAYMENT, ONLINE TRANSFER, ACH DEBIT, CHECK ...), or it is short
+    (< 8 chars) with fewer than two words."""
+    text = (pattern or "").strip()
+    if not text:
+        return True
+    words = _words(text)
+    if not words:
+        return True
+    if len(text) < MIN_SPECIFIC_LEN and len(words) < 2:
+        return True
+    specific = [w for w in words if w not in GENERIC_WORDS and not w.isdigit() and len(w) >= 3]
+    return not specific
+
+
+def suggested_pattern(txn):
+    """(pattern, match_field, generic) that 'always categorize like this'
+    would create for ``txn``. Merchant name first, then the digit-free core
+    of the description; ``generic`` is True when neither names a merchant."""
+    candidates = []
+    merchant = (txn.merchant_name or "").strip()[:200]
+    if merchant:
+        candidates.append((merchant, "merchant"))
+    core = clean_pattern(txn.description)
+    if core:
+        candidates.append((core, "description"))
+    whole = (txn.description or "").strip()[:200]
+    if whole:
+        candidates.append((whole, "description"))
+    for pattern, field in candidates:
+        if not is_generic_pattern(pattern):
+            return pattern, field, False
+    if candidates:
+        pattern, field = candidates[0] if not merchant else candidates[-1]
+        return pattern, field, True
+    return "", "description", True
+
+
+def _field_for_pattern(txn, pattern):
+    p = pattern.lower()
+    if p and p in (txn.merchant_name or "").lower():
+        return "merchant"
+    if p and (p in (txn.description or "").lower() or p in (txn.original_description or "").lower()):
+        return "description"
+    return "any"
+
+
 def rule_from_transaction(txn, account, vendor=None, scope="all", user=None, auto_confirm=True,
-                          action="categorize"):
+                          action="categorize", pattern=None):
     """Create (or reuse) a 'contains' rule from a reviewed transaction. Used
     by the inbox 'always categorize like this' checkbox.
 
-    scope: 'all' -> every bank account; 'account' -> only txn.account."""
-    if txn.merchant_name.strip():
-        pattern, match_field = txn.merchant_name.strip()[:200], "merchant"
+    scope: 'all' -> every bank account; 'account' -> only txn.account.
+    pattern: text the owner typed over the suggestion (optional).
+
+    A *generic* pattern (payment processor, marketplace, bank boilerplate,
+    or something very short) becomes a suggest-only rule (auto_confirm
+    False) so it never silently recategorizes half the statement. The
+    returned rule carries ``generic_pattern`` (bool, not stored) so callers
+    can skip bulk-applying it and tell the owner."""
+    pattern = (pattern or "").strip()[:200]
+    if pattern:
+        match_field = _field_for_pattern(txn, pattern)
+        generic = is_generic_pattern(pattern)
     else:
-        pattern, match_field = clean_pattern(txn.description), "description"
+        pattern, match_field, generic = suggested_pattern(txn)
     if not pattern:
-        pattern, match_field = txn.description.strip()[:200], "description"
+        pattern, match_field, generic = txn.description.strip()[:200], "description", True
+    if generic:
+        auto_confirm = False
     direction = "out" if txn.amount < 0 else "in"
     account_filter = txn.account if scope == "account" else None
     existing = CategoryRule.objects.filter(
@@ -288,12 +370,15 @@ def rule_from_transaction(txn, account, vendor=None, scope="all", user=None, aut
             changed.append("direction")
         if changed:
             existing.save(update_fields=changed)
+        existing.generic_pattern = generic
         return existing
     target = account.name if account is not None else dict(CategoryRule.ACTIONS).get(action, action)
     name = f"{pattern[:60]} → {target}"[:150]
-    return CategoryRule.objects.create(
+    rule = CategoryRule.objects.create(
         name=name, pattern=pattern, match_field=match_field, match_type="contains",
         direction=direction, account_filter=account_filter, action=action,
         category_account=account if action == "categorize" else None,
         vendor=vendor, auto_confirm=auto_confirm,
         created_by=user if getattr(user, "is_authenticated", False) else None)
+    rule.generic_pattern = generic
+    return rule

@@ -1,9 +1,12 @@
 """Integration layer: dashboard Money section, Settings (accounting + bank
 feed cards), the weekly review digest, background schedules, the reports
 hub, and the seed_demo smoke test (the demo books must balance)."""
+import sys
+import types
 from datetime import date, timedelta
 from decimal import Decimal
 from io import StringIO
+from unittest import mock
 
 from django.contrib.auth.models import User
 from django.core import mail
@@ -13,7 +16,7 @@ from django.utils import timezone
 
 from accounting.ledger import ACCRUAL, CASH, Journal
 from accounting.models import Account
-from banking.models import BankAccount, BankTransaction, CategoryRule
+from banking.models import BankAccount, BankConnection, BankTransaction, CategoryRule
 from core.models import CompanySettings, Role, UserProfile
 from core.tasks import money_attention, send_review_digest
 from expenses.models import (Budget, Expense, ExpenseCategory, MileageEntry,
@@ -81,6 +84,55 @@ class DashboardMoneyTests(TestCase):
         r.save(update_fields=["paid_date"])
         self.assertEqual(money_attention(TODAY)["bills_due"], 2)
 
+    def test_bills_without_due_date_age_from_bill_date(self):
+        # an undated bill from 10 days ago is overdue, exactly as on the Unpaid bills report
+        Expense.objects.create(date=TODAY - timedelta(days=10), category=self.supplies,
+                               vendor="No Due Date LLC", amount=D("50.00"))
+        # an undated bill from today is due (aged from today) but not overdue
+        Expense.objects.create(date=TODAY, category=self.supplies, vendor="Fresh Co", amount=D("5.00"))
+        info = money_attention(TODAY)
+        self.assertEqual(info["bills_due"], 4)
+        self.assertEqual(info["bills_overdue"], 2)
+        self.assertEqual(info["bills_due_total"], D("150.00"))
+        self.assertEqual(info["bills_unpaid_total"], D("150.00"))
+        # same rule for a posted supplier receipt with no due date
+        from inventory.models import Product, ReceiptLine, Supplier
+        p = Product.objects.create(sku="X-2", name="X2", default_price=D("10.00"))
+        r = Receipt.objects.create(supplier=Supplier.objects.create(name="GTS"),
+                                   date=TODAY - timedelta(days=20))
+        ReceiptLine.objects.create(receipt=r, product=p, qty=2, unit_cost=D("5.00"))
+        r.post()
+        info = money_attention(TODAY)
+        self.assertEqual(info["bills_due"], 5)
+        self.assertEqual(info["bills_overdue"], 3)
+        self.assertEqual(info["bills_due_total"], D("160.00"))
+        # the report agrees with the dashboard
+        from expenses.reports import unpaid_bills
+        report = unpaid_bills(TODAY)
+        self.assertEqual(len(report["rows"]), 5)
+        self.assertEqual(sum(1 for row in report["rows"] if row["days"] > 0), 3)
+        self.assertEqual(report["total"], info["bills_unpaid_total"])
+
+    def test_missing_receipts_counts_receipt_on_the_bank_transaction(self):
+        before = money_attention(TODAY)
+        # a card charge whose bank row carries the receipt photo: the expense it
+        # created has no file of its own, but it is NOT missing a receipt
+        t = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("-99.00"),
+                                           description="STAPLES", receipt_file="bank_receipts/x.jpg")
+        t.categorize(self.supplies.ensure_account(), user=self.admin)
+        self.assertFalse(t.expense.has_receipt)
+        info = money_attention(TODAY)
+        self.assertEqual(info["missing_receipts"], before["missing_receipts"])
+        self.assertEqual(info["missing_receipts_total"], before["missing_receipts_total"])
+        # the same charge without a receipt anywhere does count
+        t2 = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("-1.00"),
+                                            description="NO PAPER")
+        t2.categorize(self.supplies.ensure_account(), user=self.admin)
+        self.assertEqual(money_attention(TODAY)["missing_receipts"], before["missing_receipts"] + 1)
+        from expenses.reports import missing_receipts
+        self.assertEqual(missing_receipts(TODAY.replace(day=1), TODAY)["count"],
+                         before["missing_receipts"] + 1)
+
     def test_dashboard_renders_money_section_for_admin(self):
         self.client.force_login(self.admin)
         r = self.client.get("/")
@@ -89,8 +141,12 @@ class DashboardMoneyTests(TestCase):
         for text in ["Money", "Cash position", "Net profit this month", "Net profit, year to date",
                      "Equity", "Needs attention", "Bank transactions to review",
                      "Bills due in 7 days", "missing a receipt", "Auto-created expenses to confirm",
-                     "Bank &amp; card balances", "Operations"]:
+                     "Bank &amp; card balances", "Operations", "Customers owe you"]:
             self.assertIn(text, html, text)
+        self.assertNotIn("AR outstanding", html)
+        # the confirm link opens the register filtered to rows needing review
+        self.assertIn('href="/expenses/?review=yes"', html)
+        self.assertNotIn("review=1", html)
         # cash position: 1000 - 12.34 in the bank, 250 + 40 owed on the card
         self.assertIn("987.66", html)
         self.assertIn("290.00", html)
@@ -131,6 +187,54 @@ class DashboardMoneyTests(TestCase):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("No bank accounts yet", r.content.decode())
+
+    def test_sync_now_is_a_post_form_only_when_a_bank_is_connected(self):
+        self.client.force_login(self.admin)
+        html = self.client.get("/").content.decode()
+        self.assertNotIn("Sync now", html)            # CSV-only setup: nothing to sync
+        BankConnection.objects.create(provider="plaid", institution_name="Chase", status="active")
+        html = self.client.get("/").content.decode()
+        self.assertIn("Sync now", html)
+        self.assertIn('<form method="post" action="/banking/sync/"', html)
+        self.assertIn("csrfmiddlewaretoken", html)
+        self.assertNotIn('href="/banking/sync/"', html)   # never a GET link
+        # a GET to the sync endpoint is refused
+        self.assertEqual(self.client.get("/banking/sync/").status_code, 405)
+
+    def _fake_closing(self, tile):
+        mod = types.ModuleType("accounting.closing")
+        mod.dashboard_tile = lambda: tile
+        return mock.patch.dict(sys.modules, {"accounting.closing": mod})
+
+    def test_month_close_tile_renders_when_available(self):
+        self.client.force_login(self.admin)
+        tile = {"label": "September", "year": 2026, "month": 9, "done": 4, "total": 6,
+                "is_closed": False, "url": "/accounting/month-close/?month=2026-09"}
+        with self._fake_closing(tile):
+            html = self.client.get("/").content.decode()
+        self.assertIn("Month close", html)
+        self.assertIn("September: 4 of 6 done", html)
+        self.assertIn('href="/accounting/month-close/?month=2026-09"', html)
+        tile.update(done=6, is_closed=True)
+        with self._fake_closing(tile):
+            html = self.client.get("/").content.decode()
+        self.assertIn("September: closed", html)
+
+    def test_month_close_tile_is_optional(self):
+        self.client.force_login(self.admin)
+        with mock.patch.dict(sys.modules, {"accounting.closing": None}):   # import fails
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Month close", r.content.decode())
+        # a broken checklist never takes the dashboard down either
+        mod = types.ModuleType("accounting.closing")
+        def boom():
+            raise RuntimeError("no rows")
+        mod.dashboard_tile = boom
+        with mock.patch.dict(sys.modules, {"accounting.closing": mod}):
+            r = self.client.get("/")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotIn("Month close", r.content.decode())
 
 
 # ---------------------------------------------------------------------------
@@ -270,8 +374,10 @@ class ReviewDigestTests(TestCase):
         self.assertIn("no receipt attached", body)
         self.assertIn("created automatically", body)
         self.assertIn("Chase", body)
+        self.assertIn("Re-login", body)
         self.assertIn("Uncategorized", body)
         self.assertIn("/banking/", body)
+        self.assertIn("/expenses/?review=yes", body)
 
 
 # ---------------------------------------------------------------------------
@@ -347,8 +453,15 @@ class SeedDemoTests(TestCase):
         manual = Expense.objects.filter(source="manual")
         self.assertEqual(manual.count(), 18)
         self.assertFalse(manual.filter(paid_date__isnull=True).exists())
-        self.assertTrue(manual.filter(payment_method="personal", paid_from__isnull=True).exists())
-        self.assertTrue(manual.filter(paid_from=checking).exists())
+        # owner paid them personally: no bank transaction backs them, so they must
+        # not claim to have left the checking account
+        self.assertEqual(manual.filter(payment_method="personal", paid_from__isnull=True).count(), 18)
+        self.assertFalse(manual.filter(paid_from__isnull=False).exists())
+        # the demo uses the setup_accounts default names, never a second "Rent"
+        names = [n.lower() for n in ExpenseCategory.objects.values_list("name", flat=True)]
+        self.assertEqual(len(names), len(set(names)), names)
+        for legacy in ("Rent", "Software", "Utilities", "Fees", "Labor"):
+            self.assertNotIn(legacy.lower(), names)
 
         cs = CompanySettings.get()
         self.assertEqual(cs.books_start_date, checking.opening_date)
@@ -394,21 +507,68 @@ class SeedDemoTests(TestCase):
                 if r["account"] is not None}
         self.assertGreater(keys.get("inventory", D("0")), D("0"))
         self.assertGreater(keys.get("ap", D("0")), D("0"))
-        # bank balances on the balance sheet equal the feed balances
-        checking = BankAccount.objects.get(account_type="checking")
-        rows = {r["account"].pk: r["amount"] for r in bs["assets"]}
-        ledger_checking = rows.get(checking.ledger_account_id, D("0"))
-        hand_paid = sum((e.amount for e in Expense.objects.filter(
-            source="manual", paid_from=checking)), D("0"))
-        self.assertEqual(ledger_checking, (checking.current_balance - hand_paid).quantize(D("0.01")))
+        # bank balances on the balance sheet equal the feed balances exactly
+        for acct in BankAccount.objects.all():
+            rows = {r["account"].pk: r["amount"] for r in bs["assets"] + bs["liabilities"]
+                    if r["account"] is not None}
+            self.assertEqual(rows.get(acct.ledger_account_id, D("0")),
+                             acct.current_balance.quantize(D("0.01")), acct.name)
+        # and the owner's personally paid expenses show up as a contribution
+        equity = {r["account"].system_key: r["amount"] for r in bs["equity"] if r["account"] is not None}
+        manual_total = sum((e.amount for e in Expense.objects.filter(source="manual")), D("0"))
+        self.assertGreaterEqual(equity.get("owner_contribution", D("0")), manual_total)
 
-    def test_seed_demo_is_idempotent(self):
+    def test_seed_demo_is_idempotent_and_safe_to_rerun(self):
+        checking = BankAccount.objects.get(account_type="checking")
+        office = ExpenseCategory.objects.get(name="Office supplies")
+        # a real open bill the owner typed in between runs: must stay unpaid
+        real_bill = Expense.objects.create(date=TODAY - timedelta(days=3), category=office,
+                                           vendor="Real Landlord", amount=D("777.00"),
+                                           reference="REAL-1", due_date=TODAY + timedelta(days=20))
+        # a pre-4.0 demo category sitting next to its default, with things hanging off it
+        legacy = ExpenseCategory.objects.create(name="Rent")
+        legacy_exp = Expense.objects.create(date=TODAY - timedelta(days=40), category=legacy,
+                                            vendor="Commerce Park LLC", amount=D("1200.00"))
+        legacy_vendor = Vendor.objects.create(name="Old Landlord", default_category=legacy)
+        Budget.objects.create(category=legacy, year=TODAY.year, month=None, amount=D("14400.00"))
+        legacy_account_id = legacy.account_id
+
         call_command("seed_demo", stdout=StringIO())
+        call_command("seed_demo", stdout=StringIO())
+
         self.assertEqual(BankAccount.objects.count(), 2)
         self.assertEqual(CategoryRule.objects.count(), 3)
         self.assertEqual(RecurringExpense.objects.count(), 1)
         self.assertEqual(MileageEntry.objects.count(), 6)
-        self.assertEqual(Expense.objects.filter(source="manual").count(), 18)
+        self.assertEqual(Expense.objects.filter(source="manual", payment_method="personal").count(), 19)
+
+        # the books still balance and the ledger's checking row equals the register
+        bs = Journal(ACCRUAL, [TODAY]).balance_sheet(TODAY)
+        self.assertTrue(bs["balanced"], bs["difference"])
+        rows = {r["account"].pk: r["amount"] for r in bs["assets"] if r["account"] is not None}
+        self.assertEqual(rows.get(checking.ledger_account_id, D("0")),
+                         checking.current_balance.quantize(D("0.01")))
+
+        # the planted real bill was never touched
+        real_bill.refresh_from_db()
+        self.assertIsNone(real_bill.paid_date)
+        self.assertFalse(real_bill.is_paid)
+        self.assertEqual(real_bill.category, office)
+
+        # the legacy duplicate was folded into "Rent & storage" and soft-deleted
+        target = ExpenseCategory.objects.get(name="Rent & storage")
+        legacy_exp.refresh_from_db()
+        self.assertEqual(legacy_exp.category, target)
+        self.assertEqual(legacy_exp.paid_date, legacy_exp.date)       # old demo row: paid personally
+        self.assertEqual(legacy_exp.payment_method, "personal")
+        legacy_vendor.refresh_from_db()
+        self.assertEqual(legacy_vendor.default_category, target)
+        self.assertTrue(Budget.objects.filter(category=target, year=TODAY.year, month=None).exists())
+        self.assertTrue(ExpenseCategory.all_objects.get(name="Rent").is_deleted)
+        self.assertFalse(Account.objects.get(pk=legacy_account_id).active)
+        names = [n.lower() for n in ExpenseCategory.objects.values_list("name", flat=True)]
+        self.assertEqual(len(names), len(set(names)), names)
+        self.assertEqual(ExpenseCategory.objects.filter(name__iexact="rent").count(), 0)
 
     def test_pages_render_with_demo_data(self):
         admin = User.objects.get(username="admin")
@@ -422,8 +582,13 @@ class SeedDemoTests(TestCase):
         self.assertIn("to review", html)
         reports = self.client.get("/reports/").content.decode()
         for text in ["Financial statements", "Expenses &amp; bills", "Operational P&amp;L (margin view)",
-                     "live under Accounting", "Am I building equity?", "Unpaid bills", "1099 contractors"]:
+                     "live under Accounting", "Am I building equity?", "Unpaid bills", "1099 contractors",
+                     "Month close", "Supplier bills on Receiving", 'href="/inventory/receiving/?status=unpaid"',
+                     "QuickBooks export", 'name="start"', 'name="end"', 'name="kind" value="invoices"']:
             self.assertIn(text, reports, text)
+        self.assertNotIn("?start=&amp;end=", reports)      # no more "edit the URL" advice
+        self.assertIn('action="/reports/quickbooks/"', reports)
+        self.assertIn("/accounting/month-close/", reports)
 
     def test_bookkeeper_sees_money_pages(self):
         books = User.objects.get(username="books")

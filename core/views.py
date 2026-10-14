@@ -21,6 +21,26 @@ from orders.models import PurchaseOrder
 log = logging.getLogger(__name__)
 
 
+def _month_close_tile():
+    """The previous month's close checklist for the dashboard, or None.
+
+    ``accounting.closing.dashboard_tile()`` returns {"label", "year",
+    "month", "done", "total", "is_closed", "url"}. The module is optional
+    (it ships with the Month close page), so a missing import or a failure
+    inside it must never take the dashboard down.
+    """
+    try:
+        from accounting.closing import dashboard_tile
+    except ImportError:
+        return None
+    try:
+        tile = dashboard_tile()
+    except Exception:          # a bug in the checklist must not hide the dashboard
+        log.exception("month close tile failed")
+        return None
+    return tile if isinstance(tile, dict) and tile.get("label") else None
+
+
 def _money_widgets(user, today):
     """Everything the dashboard's Money section needs.
 
@@ -30,10 +50,14 @@ def _money_widgets(user, today):
     ``accounting.ledger.dashboard_snapshot`` plus a two-month equity trend.
     """
     from accounting.models import ACCRUAL, CASH
-    from banking.models import BankAccount
+    from banking.models import BankAccount, BankConnection
 
     ctx = {"attention": money_attention(today), "money": None, "money_error": False}
     ctx["has_bank_accounts"] = BankAccount.objects.filter(active=True).exists()
+    # "Sync now" only makes sense when a live bank feed (Plaid) is connected
+    ctx["has_connections"] = (BankConnection.objects.filter(is_deleted=False, provider="plaid")
+                              .exclude(status="disconnected").exists())
+    ctx["month_close"] = _month_close_tile()
     if not can_see_costs(user):
         return ctx
 

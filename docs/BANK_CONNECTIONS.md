@@ -38,10 +38,13 @@ whole flow — connect, sync, review, rules — without touching real money.
 3. Each linked account becomes a Bank account under Banking → Accounts. The
    first sync sets its opening date to the earliest transaction and its
    opening balance so today's balance matches the bank.
-4. Press **Sync now** (or wait for the hourly job). Transactions appear in
-   the inbox. Try the review actions and a rule.
-5. When you are done playing, disconnect the sandbox connection (Banking →
-   Accounts → connection → Disconnect) and deactivate the fake accounts.
+4. Press **Sync now** (a button on the inbox and on the dashboard's *Bank &
+   card balances* card; it is a POST, so it is never triggered by a bookmark
+   or a link preview) or wait for the hourly job. Transactions appear in the
+   inbox. Try the review actions and a rule.
+5. When you are done playing, press **Disconnect** next to the sandbox
+   connection on Banking → **Connect a bank** and deactivate the fake
+   accounts.
 
 ### 1.3 Production (your real banks)
 
@@ -59,7 +62,7 @@ whole flow — connect, sync, review, rules — without touching real money.
 4. **Banking → Connect a bank** and log in to your real bank. Link the
    business checking account and every business credit card. Do **not**
    link personal accounts; personal purchases on business cards are handled
-   in the inbox (mark as *Owner draw / personal*).
+   in the inbox (press **Personal**).
 5. Set each new account's **opening date** and **opening balance** if you
    want history to start at your books start date rather than at the
    earliest transaction Plaid delivered (Banking → Accounts → edit).
@@ -68,7 +71,7 @@ whole flow — connect, sync, review, rules — without touching real money.
 
 - `banking.tasks.sync_all_connections` runs **hourly** (registered by
   `setup_schedules`, executed by the `worker` container / `qcluster`). You
-  can also press **Sync now** on the inbox.
+  can also press **Sync now** on the inbox or the dashboard.
 - Plaid sends *added*, *modified* and *removed* transactions through a
   cursor, so nothing is fetched twice. Pending card authorizations arrive
   marked **pending** and are updated in place (same row, review work kept)
@@ -82,9 +85,10 @@ whole flow — connect, sync, review, rules — without touching real money.
   Plaid, the existing row is adopted (matched on account + date + amount +
   normalized description) rather than duplicated.
 - **Needs re-authentication**: banks force a fresh login every so often
-  (Chase about every 90 days). The connection turns to *Re-authentication
-  required*, the dashboard "needs attention" card and the weekly email say
-  so, and Banking → Accounts has a **Re-link** button. Nothing is lost;
+  (Chase about every 90 days). The connection shows **Re-login needed** on
+  Banking → Accounts and on *Connect a bank*, and the dashboard "needs
+  attention" card and the weekly email say so. Press **Re-login** on
+  Banking → **Connect a bank** (next to the connection). Nothing is lost;
   syncing resumes where it stopped.
 - Turn the hourly pull off with Settings → Bank feed → "Pull new
   transactions automatically" (useful while you are catching up by CSV).
@@ -104,6 +108,14 @@ headers; a *Generic* mapping lets you pick the date / description / amount
 (or debit + credit) columns for anything else. Rows dated before the
 account's opening date are skipped.
 
+**Amex and other "charges are positive" cards.** Amex lists purchases as
+positive numbers. Its full export (Date, Description, Card Member, Account #,
+Amount, and more with *additional details* ticked) is recognised and the
+signs are flipped for you. A bare **three-column** export (Date,
+Description, Amount) is not specific enough to tell apart from other banks:
+map the columns yourself in the Generic picker and tick **Amounts are
+positive for charges (money out)**, or tick *Flip signs* on the preview.
+
 ### Where the download lives, bank by bank
 
 Websites move buttons around; the words to look for are *Download*,
@@ -113,7 +125,7 @@ file-type choice of **CSV** (sometimes called "Excel/CSV" or "spreadsheet").
 | Bank | Steps | Notes |
 |---|---|---|
 | **Chase** (checking, Ink cards) | Log in → pick the account → above the activity list click the **download** icon (↓) → *File type: CSV*, *Activity: choose a date range* → Download | Checking files have Details / Posting Date / Description / Amount / Type / Balance; card files have Transaction Date / Post Date / Description / Category / Type / Amount. Both are signed correctly (charges negative). Max range is about 2 years. |
-| **American Express** | Statements & Activity → *Download* (top right) → *CSV*, tick *Include all additional transaction details*, pick the statement or date range | Amex lists **charges as positive** and payments as negative. The Amex preset flips them for you; if you use the Generic mapping tick *Flip signs*. |
+| **American Express** | Statements & Activity → *Download* (top right) → *CSV*, tick *Include all additional transaction details*, pick the statement or date range | Amex lists **charges as positive** and payments as negative. The full export is recognised and flipped for you; a bare 3-column Date/Description/Amount file must be mapped by hand with *Amounts are positive for charges (money out)* ticked (see above). |
 | **Capital One** | Account → *Download Transactions* (on the account page) → *CSV*, choose dates | Separate Debit and Credit columns; handled by the preset. |
 | **Bank of America** | Account → above the transaction list choose *Download* → *File type: Microsoft Excel / CSV*, date range | The file starts with a summary block (beginning balance etc.) above the real header — the importer skips it. |
 | **Wells Fargo** | Account → *Download Account Activity* (right side) → *Comma Delimited*, date range | The file has **no header row**: date, amount, *, check #, description. Pick the Wells Fargo preset. |
@@ -125,6 +137,48 @@ file-type choice of **CSV** (sometimes called "Excel/CSV" or "spreadsheet").
 
 **How often?** Weekly is plenty for CSV; the inbox is faster to work when
 it is short. Overlap the previous import by a few days every time.
+
+### Typed in by hand
+
+Banking → **+ Add by hand** records a cash purchase, a check you wrote or
+anything the feed missed. It lands in the inbox like any other row. Rows
+you typed in are the only ones that can be **edited** (date, amount,
+description) or **deleted** afterwards, from the transaction page; imported
+and synced rows are the bank's record and can only be ignored.
+
+---
+
+## 2b. Working the inbox
+
+- **Save** categorizes (pick the category, optionally a vendor and a note).
+  Tick **Always categorize like this** to create a rule on the spot.
+- **Match** opens the transaction page's *Match to something already
+  recorded* list: customer payments (**Link selected payments**; groups of
+  checks that add up to the deposit are offered as one button), supplier
+  receipts (**Link selected receipts**, unposted ones marked *not posted
+  yet* for prepayments), hand-entered expenses (**Link**) and the transfer
+  twin in another account (**Pair**).
+- **Record a customer payment for this deposit** (on a deposit's page) opens
+  the payment form pre-filled with the amount and date for money a customer
+  sent that you never recorded; Link it when you come back.
+- **Split** divides one transaction across several categories (a Costco run:
+  supplies + inventory + personal). The parts must add up to the amount;
+  each expense-category part becomes its own expense row.
+- **Transfer** pairs the row with its twin in another account (card
+  payments, moving money between accounts).
+- **Personal** books an owner draw (money out) or an owner contribution
+  (money in).
+- **Ignore** hides a duplicate or something that is not this business.
+- **Undo** / **Undo review** sends a reviewed row back and releases
+  everything that decision had linked (bill paid dates, payments, twin,
+  split parts). Picking a different action on a reviewed row does the same
+  release first.
+
+**Rules** (Banking → Rules) match on *Contains*, *Starts with*, *Is exactly*
+or a regular expression. A regex that repeats a group that already repeats,
+such as `(a+)+` or `(\w+\s?)*`, is refused when you save it, as is any
+pattern longer than 200 characters; such patterns can take seconds per row
+and stall every import and sync. Use *Contains* for almost everything.
 
 ---
 
@@ -164,15 +218,15 @@ month of history between the opening date and the first import.
 
 **The balance sheet's bank account differs from Banking → Accounts.**
 Expenses or supplier bills marked *paid from* this account by hand are on
-the books but not in the feed yet. When the real charge arrives, **match**
-it to the expense (the inbox suggests it) instead of categorizing it fresh.
-See `docs/ACCOUNTING.md` FAQ.
+the books but not in the feed yet. When the real charge arrives, **Match →
+Link** it to the expense (the inbox suggests it) instead of categorizing it
+fresh. See `docs/ACCOUNTING.md` FAQ.
 
 **A transfer keeps showing as an expense.**
 Paying the card from checking is two rows (checking −, card +). Open either
-one → *Transfer* — the twin within a few days with the opposite amount is
-suggested. Mark it once and create a rule ("CHASE CREDIT CRD AUTOPAY" →
-transfer) so it never asks again.
+one → **Transfer** — the twin within a few days with the opposite amount is
+suggested (**Pair**). Mark it once and create a rule ("CHASE CREDIT CRD
+AUTOPAY" → transfer) so it never asks again.
 
 **A deposit is bigger or smaller than the payments it covers.**
 Match it to the payments anyway. The difference is booked as
@@ -181,10 +235,10 @@ Square/PayPal fees); categorize the fee part later or create a *Bank &
 merchant fees* expense.
 
 **Plaid says ITEM_LOGIN_REQUIRED / connection needs attention.**
-Normal; the bank wants a fresh login. Banking → Accounts → Re-link. If it
-keeps happening, your bank may require you to enable third-party access in
-its own security settings (Chase: Profile & settings → Security → Linked
-apps & websites).
+Normal; the bank wants a fresh login. Banking → **Connect a bank** →
+**Re-login** next to the connection. If it keeps happening, your bank may
+require you to enable third-party access in its own security settings
+(Chase: Profile & settings → Security → Linked apps & websites).
 
 **Plaid Link does not open in production.**
 The page must be served over HTTPS and `PUBLIC_BASE_URL` must match the
@@ -192,10 +246,16 @@ address in the browser. In the Plaid dashboard, *Team Settings → Allowed
 redirect URIs* must include `https://your-domain/banking/connect/`.
 
 **I connected the wrong account / want to start over.**
-Banking → Accounts → open the connection → *Disconnect*. Accounts and their
-transactions are kept (soft-deleted when you deactivate them) so nothing
-you reviewed is lost; the ledger ignores inactive accounts' transactions
-only if you ignore them too.
+Banking → **Connect a bank** → **Disconnect** next to the connection.
+Accounts and their transactions are kept (soft-deleted when you deactivate
+them) so nothing you reviewed is lost; the ledger ignores inactive
+accounts' transactions only if you ignore them too.
+
+**I categorized / matched something wrong.**
+Press **Undo** on the row (or **Undo review** on its page). The previous
+decision is fully released — the bill's paid date is cleared, payments are
+unlinked, a transfer twin goes back to review, split parts and the expense
+rows they created are removed — and the row is back in *Needs review*.
 
 **The file will not parse.**
 The importer tries UTF-8, Windows-1252 and Latin-1 and sniffs commas,

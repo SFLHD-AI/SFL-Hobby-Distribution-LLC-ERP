@@ -26,20 +26,24 @@ The top of the dashboard is the **Money** section:
 
 - **Cash position** — every bank account's balance (opening balance plus
   all imported/synced transactions), what you owe on cards, and the net.
+  With a Plaid connection the **Sync now** button pulls new transactions on
+  the spot.
 - **Net profit this month / year to date** on the basis you chose in
   Settings, with the other basis in small text underneath.
 - **Equity (accrual)** — what the business is worth on paper, and how much
   it moved since the last month-end. Up month after month = you are
   building equity.
 - **Needs attention** — bank transactions waiting for review, bills due in
-  the next 7 days (overdue in red), expenses this month without a receipt,
-  auto-created expenses to confirm, and bank connections that need a fresh
-  login. Each line links to the page that clears it. The goal is to keep
-  this card green.
+  the next 7 days (overdue in red; a bill with no due date is aged from its
+  bill date), expenses this month without a receipt (a receipt attached to
+  the bank transaction counts), auto-created expenses to confirm, bank
+  connections that need a re-login, and last month's **Month close**
+  progress ("September: 4 of 6 done"). Each line links to the page that
+  clears it. The goal is to keep this card green.
 
-Below it are the operational widgets (orders by status, low stock,
-certificates expiring, recent orders, balances owed, inbound supplier
-orders).
+Below it are the operational widgets (today's and month-to-date revenue,
+**Customers owe you**, pick queue, orders by status, low stock, certificates
+expiring, recent orders, balances owed, inbound supplier orders).
 
 ## Daily flow
 
@@ -85,14 +89,22 @@ Everything that happens in your checking account and on your credit cards
 should flow into **Banking**. Two ways, mix as you like:
 
 - **Plaid (automatic).** Paste your Plaid keys under Settings → Bank feed,
-  then Banking → *Connect a bank* and log in to the bank through Plaid's
-  widget. New transactions arrive every hour. Start in Sandbox (fake banks)
-  if you want to see the flow first.
+  then Banking → **Connect a bank** and log in to the bank through Plaid's
+  widget. New transactions arrive every hour, or press **Sync now** on the
+  inbox or the dashboard. When a bank asks for a fresh login the connection
+  shows **Re-login needed**; press **Re-login** on *Connect a bank*. The
+  **Disconnect** button lives on the same page.
 - **CSV (manual).** Download a CSV from the bank's website and use Banking →
-  *Import CSV*. Chase, Amex, Capital One, Bank of America, Wells Fargo, Citi,
+  **Import CSV**. Chase, Amex, Capital One, Bank of America, Wells Fargo, Citi,
   Discover, PayPal and Square files are recognised automatically; anything
-  else works with the generic column picker. Re-importing an overlapping
-  range is safe — duplicates are skipped.
+  else works with the generic column picker. A bare three-column Amex export
+  (Date, Description, Amount) is not specific enough to recognise: map the
+  columns yourself and tick *Amounts are positive for charges (money out)*.
+  Re-importing an overlapping range is safe — duplicates are skipped.
+- **By hand.** Banking → **+ Add by hand** for a cash purchase, a check or
+  anything the feed missed. Hand-entered rows are the only ones you can
+  **edit** or **delete** later (from the transaction page); imported or
+  synced rows can only be ignored.
 
 First set up each account under Banking → **Accounts**: name, type
 (checking / credit card / …), last 4 digits, and the **opening balance as of
@@ -112,22 +124,33 @@ describes what the money was:
 
 | The money was… | Action | What happens |
 |---|---|---|
-| a purchase, a bill, a fee | **Categorize** → pick the expense category (or Shipping labels, Inventory purchases, Owner draw…) | An expense row is created in the register, already marked paid from this account |
-| something you already typed in (quick capture, a bill) | **Match to expense** — the suggestion appears automatically when amount and date fit | The expense is marked paid; nothing is counted twice |
-| a customer deposit | **Match to payment(s)** — one deposit can cover two or three checks | The payments move from *Undeposited funds* to the bank |
-| paying a supplier for product | **Match to supplier bill(s)** (posted receipts) | The receipt is marked paid; the bill drops off the unpaid list |
-| paying your credit card, moving money between your accounts | **Transfer** — the twin in the other account is suggested | No expense, no income; money just moved |
-| personal | **Categorize → Owner draw / personal** | Shows in equity, not on the P&L |
+| a purchase, a bill, a fee | pick the category (an expense category, or Shipping labels & freight, Inventory purchases…) and **Save** | An expense row is created in the register, already marked paid from this account |
+| something you already typed in (quick capture, a bill) | **Match** → under *Expenses entered by hand* press **Link** | The expense is marked paid; nothing is counted twice |
+| a customer deposit | **Match** → tick the payment(s) and press **Link selected payments** — one deposit can cover two or three checks | The payments move from *Payments received, not yet deposited* to the bank |
+| a customer deposit you never recorded (Zelle straight into checking) | **Match** → **Record a customer payment for this deposit** | Opens the payment form pre-filled with the amount and date; come back and Link it |
+| paying a supplier for product | **Match** → tick the receipt(s) and press **Link selected receipts** | The receipt's bill is marked paid from this account; it drops off *Unpaid bills* |
+| paying your credit card, moving money between your accounts | **Transfer** — or **Match** → **Pair** next to the twin in the other account | No expense, no income; money just moved |
+| one receipt, several things (a Costco run: supplies + inventory + personal) | open the transaction → **Split** → one line per category, amounts must add up | Each expense-category part becomes its own expense row; the personal part is an owner draw |
+| personal | **Personal** | An owner draw (money in: an owner contribution). Shows in equity, not on the P&L |
 | a duplicate, or not this business | **Ignore** | Disappears from everything, including the balance |
+| reviewed wrong | **Undo** (inbox) / **Undo review** (transaction page) | Back to *Needs review*. Everything the decision had linked is released: the bill's paid date is cleared, payments are unlinked, the transfer twin goes back to review, split parts and auto-created expense rows are removed |
 
-Tick **"Always do this"** when you categorize something that repeats
-(Pirate Ship, ULINE, Google Workspace, the Chase monthly fee…) and a **rule**
-is created. From then on those transactions are categorized the moment they
-arrive and never reach the inbox. Rules live under Banking → Rules, where
-you can also run them against the whole inbox. **Vendors** (Expenses →
-Vendors) do the lighter version: when a description contains a vendor's name
-or one of its aliases, the vendor's default category is suggested and you
-confirm with one click.
+Choosing a different action on an already-reviewed row does the same
+release first, so you can change your mind without anything being counted
+twice.
+
+Tick **Always categorize like this** when you categorize something that
+repeats (Pirate Ship, ULINE, Google Workspace, the Chase monthly fee…) and a
+**rule** is created. From then on those transactions are categorized the
+moment they arrive and never reach the inbox. Rules live under Banking →
+Rules, where you can also run them against the whole inbox. A rule can match
+with *Contains*, *Starts with*, *Is exactly* or a regular expression; a regex
+that repeats a group that already repeats — `(a+)+`, `(\w+\s?)*` — is
+refused when you save it (patterns over 200 characters too), because such a
+pattern can stall every import. **Vendors** (Expenses → Vendors) do the
+lighter version: when a description contains a vendor's name or one of its
+aliases, the vendor's default category is suggested and you confirm with one
+click.
 
 Until a transaction is reviewed it sits on your statements as
 **Uncategorized expense / income** — visible on purpose, so an unworked inbox
@@ -136,7 +159,7 @@ cannot quietly make profit look better than it is.
 Every Monday morning the **weekly money review email** (Settings → Bank
 feed, sent to the alert email) lists what is waiting: transactions to
 review and the oldest one, bills due this week, expenses missing receipts,
-auto-created expenses to confirm, and connections that need a fresh login.
+auto-created expenses to confirm, and connections that need a re-login.
 
 ## Expenses & receipts
 
@@ -151,7 +174,9 @@ reconstructed at year end:
   inbox matches it to this expense.
 - **Recurring templates** (Expenses → Recurring): rent, software, insurance.
   Posted automatically every morning as either an open bill or an auto-paid
-  expense; a matching bank transaction later links to it.
+  expense; a matching bank transaction later links to it. A monthly template
+  keeps its day of the month as the anchor: a template due Jan 31 posts
+  Feb 28, then Mar 31 again — it never drifts to the 28th for good.
 - **Typed in** with due date, vendor invoice number and "paid from" / "paid
   personally". Paid-personally expenses count fully and show up as an owner
   contribution.
@@ -165,19 +190,50 @@ Also under Expenses:
 
 - **Vendors** — who you pay, their aliases on statements, default category,
   and the **1099** flag. The *1099 contractors* report totals every flagged
-  vendor paid $600+ this year.
+  vendor paid at or above the IRS threshold for the year you pick: **$600
+  through tax year 2025, $2,000 from 2026** (the threshold box on the report
+  defaults to the right one).
 - **Categories** — one per ledger account, each mapped to a Schedule C line
   and a deductible percentage (meals 50%).
 - **Budgets** — planned spend per category per month or year; the
   *Expenses by month* report shows actual against budget.
 - **Mileage** — business miles with purpose, from/to and round trip at the
   IRS rate from Settings; the deduction appears in the year-end package.
-- **Unpaid bills** — open expenses and supplier bills by due date. *Mark
-  paid* when you pay one by check; let the bank feed do it otherwise.
+- **Unpaid bills (AP aging)** — open expenses and supplier bills aged by
+  due date (a bill with no due date is aged from its bill date), with
+  buckets for not yet due / 1–30 / 31–60 / over 60 days late. **Mark paid**
+  inline when you pay one by check; let the bank feed do it otherwise.
+- **Needs review** — the register's *Needs review* filter
+  (`Expenses → ?review=yes`, also the dashboard link) lists rows created by
+  a rule or a recurring template that still want a human glance.
 
-Supplier bills: on a Receiving document fill in the supplier's invoice
-number and due date. Once posted it is an open bill until a bank payment is
-matched to it (or you type a paid date).
+### Supplier bills on Receiving
+
+A supplier order (Receiving) is also the supplier's **bill**. On the
+Receiving document the **Supplier bill** card holds the supplier's invoice
+number, the due date, and — when you paid by check or wire outside the feed —
+the paid date, check/ref # and the account it was paid from. Once the order
+is posted the bill is open (badge **Unpaid**, **Overdue** after the due date)
+until a bank payment is matched to it: in the inbox the payment's **Match**
+list offers the receipt, and linking it fills in the paid date and account.
+Receiving → **Unpaid bills** filters the list to open bills; the *Unpaid
+bills* report shows them together with open expenses.
+
+**Prepayments (allocations, pre-orders).** You can pay a supplier before the
+product arrives: link the bank payment to the not-yet-posted receipt (the
+Match list marks it *not posted yet*), or type the paid date on the Supplier
+bill card. The card shows **Prepaid**, and on the accrual books the money
+sits in the asset **Supplier deposits & prepayments** — the cash-vs-accrual
+bridge calls it *Paid to suppliers ahead of delivery* — until the receipt is
+posted. The rule is applied **per supplier**: a deposit paid to Panini is
+shown as a prepayment even while you still owe Topps a bill, so one supplier
+never hides behind another.
+
+**Supplier refunds.** When a supplier refunds you, the deposit lands in the
+inbox like any other. **Match → Link** it to the receipt it belongs to (the
+bill's balance goes back up by the refund), or categorize it to *Inventory
+purchases* if it is a general credit; either way the refund reduces your
+cost of product, on both bases.
 
 ## Local deliveries (your driver)
 
@@ -260,6 +316,14 @@ The dashboard shows equity and its change since last month-end;
 
 ### Month-end routine (30 minutes)
 
+Open **Accounting → Month close** (`/accounting/month-close/?month=YYYY-MM`;
+the dashboard tile and the Reports page take you to last month). It is a
+checklist for one month: the automatic steps show their live count (bank
+transactions still to review, expenses to confirm, bills without a due
+date, receipts missing) and the manual steps are tick boxes. When every step
+is done, **Close the month**; the dashboard tile turns green and the period
+lock moves to the month-end. The steps:
+
 1. **Inbox to zero** — every bank transaction reviewed; bank balances on
    Banking → Accounts match the real statements.
 2. **Bills** — supplier receipts posted with invoice numbers and due dates;
@@ -268,24 +332,37 @@ The dashboard shows equity and its change since last month-end;
 4. **Stock** — spot cycle count; *Month-end inventory valuation* saved.
 5. **Statements** — Accounting → Income statement and Balance sheet for the
    month on both bases; *Cash vs. accrual* to understand the gap; *Equity
-   trend* to see the direction.
+   trend* to see the direction. Accounting → Year-end package → **Month-end**
+   downloads the month's statements as one ZIP if you want to file them.
 6. **Sales tax** — Reports → Sales tax report for your filing period
    (monthly/quarterly per Settings) when it is due.
-7. Optional: Accounting → **Close books** through the month-end. Editing a
-   document in a closed period then shows a warning (admins can override).
+7. **Close the month** on the Month close page (or Accounting → **Close the
+   books** through the month-end). Editing a document in a closed period
+   then shows a warning (admins can override).
 
 ### Year-end (what your tax preparer gets)
 
-- **Accounting → Year-end package**: cash-basis income statement and balance
-  sheet for the fiscal year, trial balance, general ledger and journal
-  exports, plus the accrual versions for your own records.
-- **Expenses → Year-end package**: expense totals by Schedule C line with
-  the deductible percentage applied, the mileage deduction, the 1099
-  contractor list and the receipts bundle.
+Two ZIP packages, both linked from the Reports page and from each other's
+page; hand over both.
+
+- **Accounting → Year-end package** (`/accounting/year-end/`): one ZIP for
+  the fiscal year with the income statement, balance sheet and cash-vs-accrual
+  comparison as **CSV and PDF**, the trial balance on both bases (cash and
+  accrual), the general ledger on both bases, the general journal on both
+  bases, and a README that tells the preparer which files are cash basis (the
+  return) and which are accrual (the true picture). The same ZIP is available
+  for any single month.
+- **Expenses → Year-end package** (`/expenses/year-end/`): one ZIP with the
+  Schedule C worksheet (totals per category with the line and the deductible
+  percentage applied), every expense that touches the year with its cash and
+  accrual columns, the 1099 vendor list at that year's threshold, the mileage
+  deduction, the missing-receipts list, the bills still open on Dec 31, a
+  README, and a **`receipts/`** folder holding every receipt file attached to
+  an expense (or to the bank transaction it came from) dated in the year.
 - **Reports → QuickBooks export** if your preparer wants invoices, payments
-  and expenses as plain CSVs.
-- Close the books through December 31 (Accounting → Close books) once the
-  return is filed.
+  and expenses as plain CSVs: pick From/To dates and the file.
+- Close the books through December 31 (Accounting → **Close the books**)
+  once the return is filed.
 
 ### Other reports (Reports page)
 
@@ -295,7 +372,11 @@ The dashboard shows equity and its change since last month-end;
 - **Inventory valuation** as of any date, **revenue/profit by customer**,
   **by day of week**, **sales by SKU/category/brand**, **AR aging**,
   **shipping charges vs. costs**, **sales tax**.
-- Every report exports to CSV and PDF.
+- Every report exports to **CSV**, and the financial statements, expense
+  reports and operational reports also to **PDF**. CSV only: the general
+  journal and general ledger (your accountant imports them), the equity trend
+  (it has a chart on screen instead), the expense register and mileage lists,
+  and the QuickBooks files.
 
 ## Certificates & tax
 
@@ -312,8 +393,9 @@ happens without a valid cert: **charge tax** or **block finalization**.
 - **Accounting** — which basis to show first, fiscal year start month,
   books start date, mileage rate, sales-tax filing frequency.
 - **Bank feed (Plaid)** — client ID, secret, sandbox/production, hourly sync
-  on/off, the weekly money review email on/off. "Plaid configured" shows
-  when both keys are present (here or in `.env`).
+  on/off, the weekly money review email on/off. The green **Plaid
+  configured** badge shows when both keys are present (here or in `.env`);
+  otherwise it reads *Not configured — CSV import still works*.
 - **Alerts** — alert email, daily low-stock digest.
 - **Integrations** — ShipStation, Shippo, uShip keys.
 

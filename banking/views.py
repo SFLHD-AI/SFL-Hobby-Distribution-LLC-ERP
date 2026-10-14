@@ -3,10 +3,12 @@ Banking views: review inbox, transaction detail + matching, accounts,
 CSV import, rules, Plaid connect, manual entry.
 """
 import json
+import re
 import secrets
 import time
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlencode
 
 from django.contrib import messages
 from django.core.files.base import ContentFile
@@ -23,10 +25,12 @@ from django.views.decorators.http import require_POST
 from accounting.models import Account, AccountType
 from banking import importers, matching
 from banking.forms import (BankAccountForm, CategoryRuleForm, GenericMappingForm, ImportUploadForm,
-                           ManualTransactionForm, ReceiptUploadForm, ReconcileForm, category_groups)
+                           ManualTransactionEditForm, ManualTransactionForm, ReceiptUploadForm, ReconcileForm,
+                           category_groups)
 from banking.models import BankAccount, BankConnection, BankTransaction, CategoryRule, ImportBatch
 from banking.providers import ProviderError, get_provider
-from banking.rules import apply_rules, apply_single_rule, rule_from_transaction, test_rule
+from banking.rules import (apply_rules, apply_single_rule, rule_from_transaction, suggested_pattern,
+                           test_rule)
 from banking.services import cash_position, inbox_counts
 from banking.tasks import sync_all_connections, sync_connection
 from core.models import ActivityLog, CompanySettings, log_activity
@@ -36,6 +40,8 @@ from expenses.models import Expense, ExpenseCategory, Vendor
 PAGE_SIZE = 50
 SESSION_PREFIX = "bank_import_"
 SESSION_TTL = 2 * 60 * 60
+SPLIT_MAX_PARTS = 5
+MAX_AMOUNT = Decimal("9999999999")          # DecimalField(max_digits=12, decimal_places=2)
 
 
 # ---------------------------------------------------------------------------
@@ -64,10 +70,26 @@ def _parse_date(value):
 
 
 def _parse_decimal(value):
-    try:
-        return Decimal(str(value).replace(",", "").replace("$", "")) if value not in (None, "") else None
-    except InvalidOperation:
+    """Decimal from user text, or None. Rejects NaN/Infinity and numbers the
+    database could not store, so a hand-typed query string never 500s."""
+    if value in (None, ""):
         return None
+    try:
+        d = Decimal(str(value).strip().replace(",", "").replace("$", ""))
+    except (InvalidOperation, ValueError):
+        return None
+    if not d.is_finite() or abs(d) > MAX_AMOUNT:
+        return None
+    return d
+
+
+def _int_or_none(value):
+    """Positive int from a query-string / form value, or None."""
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
 
 
 def _resolve_vendor(name, category_account=None):
@@ -92,10 +114,75 @@ def _resolve_vendor(name, category_account=None):
 
 
 def _category_from_post(request, field="category"):
-    pk = request.POST.get(field)
-    if not pk:
+    pk = _int_or_none(request.POST.get(field))
+    if pk is None:
         return None
     return Account.objects.filter(pk=pk, active=True).first()
+
+
+def _peer_problem(peer, txn):
+    """Why ``peer`` cannot be paired with ``txn`` as a transfer twin, or
+    None when it can. A twin must be waiting for review, or be flagged as a
+    transfer whose own twin is missing / stale / this very row."""
+    if peer.pk == txn.pk:
+        return "A transaction cannot be its own transfer twin."
+    if peer.status == BankTransaction.UNREVIEWED:
+        return None
+    if peer.status == BankTransaction.TRANSFER:
+        other = peer.transfer_peer
+        if other is None or other.is_deleted or other.transfer_peer_id != peer.pk or other.pk == txn.pk:
+            return None
+        return (f"That transaction is already paired with '{other.description[:40]}' in {other.account.name}. "
+                "Undo that transfer first.")
+    return (f"That transaction was already reviewed ({peer.get_status_display().lower()}). "
+            "Send it back to review first, then pair it.")
+
+
+_NAME_STOP = {"llc", "inc", "co", "corp", "ltd", "the", "and", "of", "company", "dba", "lp"}
+
+
+def _guess_customer(txn):
+    """Best-effort: the active customer whose business-name words all appear
+    in the deposit's description / merchant text. None when nothing fits."""
+    from customers.models import Customer
+    hay = re.sub(r"[^a-z0-9]+", " ", f"{txn.description} {txn.merchant_name} {txn.original_description}".lower())
+    if not hay.strip():
+        return None
+    best, best_score = None, 0
+    for cust in Customer.objects.filter(is_deleted=False, active=True).only("pk", "business_name")[:2000]:
+        words = [w for w in re.split(r"[^a-z0-9]+", cust.business_name.lower())
+                 if len(w) >= 3 and w not in _NAME_STOP]
+        if not words or not all(w in hay for w in words):
+            continue
+        score = sum(len(w) for w in words)
+        if score > best_score:
+            best, best_score = cust, score
+    return best
+
+
+def _payment_url(txn):
+    """Link to the payment form pre-filled from this deposit (None when the
+    payments module is not wired or the row is not an inflow)."""
+    if txn.amount <= 0:
+        return None
+    base = _safe_reverse("payment_create")
+    if base is None:
+        return None
+    params = {"bank_txn": txn.pk, "amount": f"{abs(txn.amount):.2f}", "date": txn.date.isoformat(),
+              "reference": txn.description[:100]}
+    cust = _guess_customer(txn)
+    if cust is not None:
+        params["customer"] = cust.pk
+    return f"{base}?{urlencode(params)}"
+
+
+def _attach_rule_patterns(txns):
+    """Pre-compute the pattern 'always categorize like this' would create for
+    each unreviewed row so the inbox can show (and let the owner edit) it."""
+    for t in txns:
+        if t.status == BankTransaction.UNREVIEWED:
+            t.rule_pattern, _field, t.rule_pattern_generic = suggested_pattern(t)
+    return txns
 
 
 def _inbox_context_extras():
@@ -121,15 +208,15 @@ def inbox(request):
     status = g.get("status", BankTransaction.UNREVIEWED)
     qs = (BankTransaction.objects.filter(is_deleted=False)
           .select_related("account", "suggested_account", "category_account", "vendor", "expense",
-                          "transfer_peer", "transfer_peer__account", "import_batch"))
-    if status and status != "all":
-        qs = qs.filter(status=status)
+                          "transfer_peer", "transfer_peer__account", "import_batch", "reviewed_by")
+          .prefetch_related("splits__account"))
     if status == "suggested":
-        qs = BankTransaction.objects.filter(is_deleted=False, status=BankTransaction.UNREVIEWED,
-                                            suggested_account__isnull=False).select_related(
-            "account", "suggested_account", "vendor")
-    if g.get("account"):
-        qs = qs.filter(account_id=g["account"])
+        qs = qs.filter(status=BankTransaction.UNREVIEWED, suggested_account__isnull=False)
+    elif status and status != "all":
+        qs = qs.filter(status=status)
+    account_id = _int_or_none(g.get("account"))
+    if account_id:
+        qs = qs.filter(account_id=account_id)
     d_from, d_to = _parse_date(g.get("from")), _parse_date(g.get("to"))
     if d_from:
         qs = qs.filter(date__gte=d_from)
@@ -146,8 +233,9 @@ def inbox(request):
     if amax is not None:
         qs = qs.filter(amount__lte=amax, amount__gte=-amax)
     batch = None
-    if g.get("batch"):
-        batch = ImportBatch.objects.filter(pk=g["batch"]).first()
+    batch_id = _int_or_none(g.get("batch"))
+    if batch_id:
+        batch = ImportBatch.objects.filter(pk=batch_id).select_related("account").first()
         if batch:
             qs = qs.filter(import_batch=batch)
     qs = qs.order_by("-date", "-id")
@@ -156,7 +244,8 @@ def inbox(request):
     params = g.copy()
     params.pop("page", None)
     ctx = {
-        "page": page, "transactions": page.object_list, "status": status, "batch": batch,
+        "page": page, "transactions": _attach_rule_patterns(list(page.object_list)), "status": status,
+        "batch": batch,
         "querystring": params.urlencode(), "filters": g,
         "recent_batches": ImportBatch.objects.select_related("account").order_by("-created_at")[:15],
         "connections": BankConnection.objects.exclude(provider="manual").exclude(status="disconnected"),
@@ -184,12 +273,22 @@ def inbox_action(request, pk):
         vendor = _resolve_vendor(request.POST.get("vendor"), account)
         txn.categorize(account, user=request.user, vendor=vendor, note=note or None)
         msg = f"Saved as {account.name}."
+        generic_note = ""
         if request.POST.get("always"):
             rule = rule_from_transaction(txn, account, vendor=vendor,
-                                         scope=request.POST.get("rule_scope", "all"), user=request.user)
-            others = apply_single_rule(rule, user=request.user)
-            msg += f" Rule '{rule.name}' saved" + (f" and applied to {others} more." if others else ".")
+                                         scope=request.POST.get("rule_scope", "all"), user=request.user,
+                                         pattern=request.POST.get("rule_pattern"))
+            if getattr(rule, "generic_pattern", False):
+                msg += f" Rule '{rule.name}' saved as a suggestion only."
+                generic_note = (f"'{rule.pattern}' is too generic to apply automatically — it would match "
+                                "many different merchants. The rule will suggest this category in the inbox; "
+                                "edit it under Rules to narrow the text if you want it applied on its own.")
+            else:
+                others = apply_single_rule(rule, user=request.user)
+                msg += f" Rule '{rule.name}' saved" + (f" and applied to {others} more." if others else ".")
         messages.success(request, msg)
+        if generic_note:
+            messages.warning(request, generic_note)
     elif action == "personal":
         account = _owner_account(txn)
         txn.categorize(account, user=request.user, note=note or None)
@@ -200,6 +299,10 @@ def inbox_action(request, pk):
     elif action == "transfer":
         twins = matching.transfer_twins(txn)
         if len(twins) == 1:
+            problem = _peer_problem(twins[0], txn)
+            if problem:
+                messages.warning(request, problem)
+                return redirect("bank_transaction_detail", txn.pk)
             txn.mark_transfer(twins[0], user=request.user)
             messages.success(request, f"Paired with {twins[0].account.name} on {twins[0].date:%b %-d}.")
         elif not twins:
@@ -279,14 +382,16 @@ def rules_run(request):
     if request.method != "POST":
         return redirect(nxt)
     qs = BankTransaction.objects.filter(is_deleted=False, status=BankTransaction.UNREVIEWED)
-    if request.POST.get("account"):
-        qs = qs.filter(account_id=request.POST["account"])
+    account_id = _int_or_none(request.POST.get("account"))
+    if account_id:
+        qs = qs.filter(account_id=account_id)
     c = apply_rules(list(qs.select_related("account")[:5000]), user=request.user)
     messages.success(request, _rules_message(c))
     return redirect(nxt)
 
 
 @module_required("banking")
+@require_POST
 def sync_now(request):
     nxt = _safe_next(request, reverse("bank_inbox"))
     result = sync_all_connections(user=request.user)
@@ -313,6 +418,9 @@ def transaction_detail(request, pk):
     sugg = matching.suggestions(txn) if txn.status in (BankTransaction.UNREVIEWED, BankTransaction.CATEGORIZED) \
         else {"payments": [], "payment_groups": [], "receipts": [], "expenses": [], "transfer_twins": []}
     history = ActivityLog.objects.filter(model="BankTransaction", object_id=str(txn.pk)).order_by("-timestamp")[:30]
+    splits = list(txn.splits.select_related("account", "expense"))
+    editable = txn.status in (BankTransaction.UNREVIEWED, BankTransaction.CATEGORIZED)
+    pattern, _field, generic = suggested_pattern(txn)
     ctx = {
         "txn": txn, "sugg": sugg, "has_suggestions": matching.has_any(sugg), "history": history,
         "receipt_form": ReceiptUploadForm(),
@@ -320,6 +428,15 @@ def transaction_detail(request, pk):
         "linked_receipts": txn.receipts.select_related("supplier") if txn.status == BankTransaction.MATCHED else [],
         "expense_url": _safe_reverse("expense_edit", txn.expense_id) if txn.expense_id else None,
         "next_url": request.get_full_path(),
+        # hand-entered rows can be corrected or removed
+        "is_manual": txn.source == "manual",
+        "edit_form": (ManualTransactionEditForm(txn)
+                      if txn.source == "manual" and txn.status == BankTransaction.UNREVIEWED else None),
+        # deposits can become a customer payment in one click
+        "payment_url": _payment_url(txn) if editable else None,
+        # split across categories
+        "splits": splits, "can_split": editable and not splits, "split_rows": range(1, SPLIT_MAX_PARTS + 1),
+        "rule_pattern": pattern, "rule_pattern_generic": generic,
     }
     ctx.update(_inbox_context_extras())
     return render(request, "banking/transaction_detail.html", ctx)
@@ -357,11 +474,56 @@ def _transaction_post(request, txn):
             txn.link_expense(exp, user=request.user)
             messages.success(request, f"Matched to expense: {exp.vendor} ${exp.amount}.")
         elif action == "transfer_with":
-            peer = BankTransaction.objects.filter(pk=request.POST.get("peer_id"), is_deleted=False).first()
+            peer = (BankTransaction.objects.filter(pk=_int_or_none(request.POST.get("peer_id")), is_deleted=False)
+                    .select_related("account", "transfer_peer", "transfer_peer__account").first())
             if peer is None:
                 raise ValueError("That transaction no longer exists.")
+            problem = _peer_problem(peer, txn)
+            if problem:
+                raise ValueError(problem)
             txn.mark_transfer(peer, user=request.user)
             messages.success(request, f"Paired as a transfer with {peer.account.name}.")
+        elif action == "split":
+            parts = []
+            for i in range(1, SPLIT_MAX_PARTS + 1):
+                acct_id = _int_or_none(request.POST.get(f"split_account_{i}"))
+                raw_amt = (request.POST.get(f"split_amount_{i}") or "").strip()
+                part_note = (request.POST.get(f"split_note_{i}") or "").strip()[:200]
+                if acct_id is None and not raw_amt:
+                    continue
+                if acct_id is None:
+                    raise ValueError(f"Pick a category for part {i}.")
+                amt = _parse_decimal(raw_amt)
+                if amt is None or amt <= 0:
+                    raise ValueError(f"Enter a positive amount for part {i}.")
+                acct = Account.objects.filter(pk=acct_id, active=True).first()
+                if acct is None:
+                    raise ValueError(f"Part {i}: that category no longer exists.")
+                parts.append((acct, amt.quantize(Decimal("0.01")), part_note))
+            if len(parts) < 2:
+                raise ValueError("A split needs at least two parts.")
+            txn.split(parts, user=request.user)
+            messages.success(request, f"Split into {len(parts)} parts.")
+        elif action == "edit":
+            if txn.source != "manual":
+                raise ValueError("Only hand-entered transactions can be edited; bank rows come from the bank.")
+            if txn.status != BankTransaction.UNREVIEWED:
+                raise ValueError("Undo the review first, then edit.")
+            form = ManualTransactionEditForm(txn, request.POST)
+            if not form.is_valid():
+                raise ValueError("; ".join(e for errs in form.errors.values() for e in errs))
+            form.save()
+            log_activity(request.user, "bank_txn_edited", txn)
+            messages.success(request, "Transaction updated.")
+        elif action == "delete":
+            if txn.source != "manual":
+                raise ValueError("Only hand-entered transactions can be deleted. To keep a bank row out of "
+                                 "the books, use Ignore instead.")
+            label = str(txn)
+            txn.delete(user=request.user)
+            log_activity(request.user, "bank_txn_deleted", txn, note=label[:500])
+            messages.success(request, "Transaction deleted.")
+            return redirect("bank_inbox")
         elif action == "upload_receipt":
             form = ReceiptUploadForm(request.POST, request.FILES)
             if not form.is_valid():
@@ -406,8 +568,8 @@ def transaction_add(request):
         messages.error(request, "Please fix the highlighted fields.")
     else:
         initial = {}
-        if request.GET.get("account"):
-            initial["account"] = request.GET["account"]
+        if _int_or_none(request.GET.get("account")):
+            initial["account"] = _int_or_none(request.GET.get("account"))
         form = ManualTransactionForm(initial=initial)
     return render(request, "banking/transaction_form.html", {"form": form})
 
@@ -530,6 +692,10 @@ def account_detail(request, pk):
 # ---------------------------------------------------------------------------
 # CSV import (upload -> preview -> confirm -> result)
 # ---------------------------------------------------------------------------
+# The session holds only a pointer to the saved upload plus the chosen
+# preset / column mapping / flip flag; every step re-parses the file. Keeping
+# thousands of parsed rows in the session made the cookie-backed session
+# backend fall over and bloated the DB-backed one.
 def _session_cleanup(session):
     now = time.time()
     for key in [k for k in session.keys() if k.startswith(SESSION_PREFIX)]:
@@ -540,53 +706,80 @@ def _session_cleanup(session):
             del session[key]
 
 
-def _preview_context(request, token, state, mapped, flip=False):
+def _save_state(request, token, state):
+    request.session[SESSION_PREFIX + token] = state
+    request.session.modified = True
+
+
+def _upload_page(request, form):
+    return render(request, "banking/import.html", {"form": form, "step": "upload",
+                                                   "accounts": BankAccount.objects.filter(active=True)})
+
+
+def _preview_context(request, token, state, parsed, mapped, flip=False):
     account = get_object_or_404(BankAccount, pk=state["account_id"])
     if flip:
         importers.flip_rows(mapped)
     rows, counts = importers.classify_rows(account, mapped)
     preset = state.get("preset") or "generic"
-    column_labels = [(i, l) for i, l in state["column_labels"]]
     mapping_form = None
     if preset == "generic":
         init = {f"col_{k}": str(v) for k, v in state["mapping"]["columns"].items()} if state.get("mapping") else {}
         if state.get("mapping"):
             init["positive_is_charge"] = state["mapping"].get("negate", False)
-        mapping_form = GenericMappingForm(column_labels, initial=init)
+        mapping_form = GenericMappingForm(parsed.column_labels(), initial=init)
     new_total = sum((r["amount"] for r in rows if r["status"] == importers.NEW), Decimal("0"))
     return {
         "token": token, "account": account, "rows": rows[:25], "all_rows": len(rows), "counts": counts,
         "preset": preset, "preset_label": importers.PRESETS.get(preset, {}).get("label", preset),
-        "filename": state["filename"], "warnings": state.get("warnings", []),
+        "filename": state["filename"], "warnings": parsed.warnings,
         "sign_warning": importers.sign_warning(account, rows) if not flip else "",
-        "flip": flip, "mapping_form": mapping_form, "headers": state.get("headers"),
+        "flip": flip, "mapping_form": mapping_form, "headers": parsed.headers,
         "new_total": new_total, "mapping_ok": True,
         "presets": importers.PRESET_CHOICES,
     }
+
+
+def _generic_picker_context(token, state, parsed, mform):
+    account = BankAccount.objects.filter(pk=state["account_id"]).first()
+    warnings = list(parsed.warnings)
+    hint = importers.generic_hint(parsed.headers)
+    return {"step": "map", "token": token, "account": account, "mapping_form": mform,
+            "filename": state["filename"], "headers": parsed.headers, "sample": parsed.rows[:5],
+            "column_labels": parsed.column_labels(), "warnings": warnings, "hint": hint,
+            "presets": importers.PRESET_CHOICES, "preset": state.get("preset") or "generic"}
+
+
+def _guessed_picker(parsed, state=None):
+    """Column-picker form pre-filled from the header names (or the mapping
+    already chosen)."""
+    columns = (state or {}).get("mapping", {}).get("columns") if state and state.get("mapping") else None
+    if columns is None:
+        columns = importers.guess_generic_mapping(parsed.headers)
+    init = {f"col_{k}": str(v) for k, v in columns.items()}
+    if state and state.get("mapping"):
+        init["positive_is_charge"] = state["mapping"].get("negate", False)
+    return GenericMappingForm(parsed.column_labels(), initial=init)
 
 
 @module_required("banking")
 def bank_import(request):
     _session_cleanup(request.session)
     if request.method != "POST":
-        form = ImportUploadForm(initial={"account": request.GET.get("account")})
-        return render(request, "banking/import.html", {"form": form, "step": "upload",
-                                                       "accounts": BankAccount.objects.filter(active=True)})
+        return _upload_page(request, ImportUploadForm(initial={"account": _int_or_none(request.GET.get("account"))}))
     step = request.POST.get("step", "upload")
     if step == "upload":
         form = ImportUploadForm(request.POST, request.FILES)
         if not form.is_valid():
             messages.error(request, "Please fix the highlighted fields.")
-            return render(request, "banking/import.html", {"form": form, "step": "upload",
-                                                           "accounts": BankAccount.objects.filter(active=True)})
+            return _upload_page(request, form)
         account = form.cleaned_data["account"]
         upload = form.cleaned_data["file"]
         data = upload.read()
         parsed = importers.parse_csv(data)
         if not parsed.rows:
             messages.error(request, "No transactions found in that file. " + " ".join(parsed.warnings))
-            return render(request, "banking/import.html", {"form": form, "step": "upload",
-                                                           "accounts": BankAccount.objects.filter(active=True)})
+            return _upload_page(request, form)
         preset = form.cleaned_data["preset"]
         if preset == "auto":
             preset = importers.detect_preset(parsed.headers, parsed.rows[0]) or "generic"
@@ -602,62 +795,78 @@ def bank_import(request):
             f"bank_imports/pending/{token}_{upload.name[-60:]}", ContentFile(data))
         state = {
             "account_id": account.pk, "filename": upload.name[:200], "stored_path": stored_path,
-            "preset": preset, "headers": parsed.headers, "rows": parsed.rows,
-            "column_labels": parsed.column_labels(), "warnings": parsed.warnings,
-            "mapping": mapping, "created": time.time(),
+            "preset": preset, "mapping": mapping, "flip": False, "created": time.time(),
         }
-        request.session[SESSION_PREFIX + token] = state
-        request.session.modified = True
+        _save_state(request, token, state)
         if mapping is None:
-            ctx = _generic_picker_context(token, state, GenericMappingForm(state["column_labels"]))
-            return render(request, "banking/import.html", ctx)
+            return render(request, "banking/import.html",
+                          _generic_picker_context(token, state, parsed, _guessed_picker(parsed)))
         mapped = importers.map_rows(parsed.rows, mapping)
-        return render(request, "banking/import.html", _preview_context(request, token, state, mapped))
+        return render(request, "banking/import.html", _preview_context(request, token, state, parsed, mapped))
 
     token = request.POST.get("token", "")
-    state = request.session.get(SESSION_PREFIX + token)
-    if not state:
+    state = request.session.get(SESSION_PREFIX + token) if token else None
+    parsed = importers.parse_stored(state.get("stored_path")) if state else None
+    if not state or parsed is None or not parsed.rows:
+        if state:
+            del request.session[SESSION_PREFIX + token]
+            request.session.modified = True
         messages.error(request, "That upload has expired. Please upload the file again.")
         return redirect("bank_import")
+    if step == "confirm" and request.POST.get("preview"):
+        step = "preview"
 
     if step == "remap":
-        mform = GenericMappingForm(state["column_labels"], request.POST)
+        mform = GenericMappingForm(parsed.column_labels(), request.POST)
         if not mform.is_valid():
             messages.error(request, "Pick the columns that hold the date, description and amount.")
-            return render(request, "banking/import.html", _generic_picker_context(token, state, mform))
+            return render(request, "banking/import.html", _generic_picker_context(token, state, parsed, mform))
         state["mapping"] = importers.mapping_from_form(mform.cleaned_data)
         state["preset"] = "generic"
-        request.session[SESSION_PREFIX + token] = state
-        request.session.modified = True
+        _save_state(request, token, state)
         try:
-            mapped = importers.map_rows(state["rows"], state["mapping"])
+            mapped = importers.map_rows(parsed.rows, state["mapping"])
         except ValueError as exc:
             messages.error(request, str(exc))
-            return render(request, "banking/import.html", _generic_picker_context(token, state, mform))
-        return render(request, "banking/import.html", _preview_context(request, token, state, mapped))
+            return render(request, "banking/import.html", _generic_picker_context(token, state, parsed, mform))
+        return render(request, "banking/import.html",
+                      _preview_context(request, token, state, parsed, mapped, flip=bool(state.get("flip"))))
 
     if step == "reparse":
         preset = request.POST.get("preset", state["preset"])
         if preset == "generic" or preset not in importers.PRESETS:
+            state["preset"] = "generic"
+            _save_state(request, token, state)
             return render(request, "banking/import.html",
-                          _generic_picker_context(token, state, GenericMappingForm(state["column_labels"])))
-        mapping = importers.resolve_mapping(preset, state["headers"], state["rows"][0] if state["rows"] else None)
+                          _generic_picker_context(token, state, parsed, _guessed_picker(parsed, state)))
+        mapping = importers.resolve_mapping(preset, parsed.headers, parsed.rows[0])
         if mapping is None:
             messages.warning(request, f"The {importers.PRESETS[preset]['label']} layout does not fit this file.")
             return render(request, "banking/import.html",
-                          _generic_picker_context(token, state, GenericMappingForm(state["column_labels"])))
+                          _generic_picker_context(token, state, parsed, _guessed_picker(parsed, state)))
         state["mapping"], state["preset"] = mapping, preset
-        request.session[SESSION_PREFIX + token] = state
-        request.session.modified = True
-        mapped = importers.map_rows(state["rows"], mapping)
-        return render(request, "banking/import.html", _preview_context(request, token, state, mapped))
+        _save_state(request, token, state)
+        mapped = importers.map_rows(parsed.rows, mapping)
+        return render(request, "banking/import.html",
+                      _preview_context(request, token, state, parsed, mapped, flip=bool(state.get("flip"))))
+
+    if step == "preview":
+        # re-render the preview with the flip-signs choice applied
+        if not state.get("mapping"):
+            return render(request, "banking/import.html",
+                          _generic_picker_context(token, state, parsed, _guessed_picker(parsed, state)))
+        state["flip"] = bool(request.POST.get("flip"))
+        _save_state(request, token, state)
+        mapped = importers.map_rows(parsed.rows, state["mapping"])
+        return render(request, "banking/import.html",
+                      _preview_context(request, token, state, parsed, mapped, flip=state["flip"]))
 
     if step == "confirm":
         if not state.get("mapping"):
             messages.error(request, "Pick the columns first.")
             return redirect("bank_import")
         account = get_object_or_404(BankAccount, pk=state["account_id"])
-        mapped = importers.map_rows(state["rows"], state["mapping"])
+        mapped = importers.map_rows(parsed.rows, state["mapping"])
         if request.POST.get("flip"):
             importers.flip_rows(mapped)
         batch = importers.import_rows(account, mapped, user=request.user, preset=state["preset"],
@@ -671,14 +880,6 @@ def bank_import(request):
                                   f"into {account.name}.")
         return redirect("bank_import_result", batch.pk)
     return HttpResponseBadRequest("Unknown step")
-
-
-def _generic_picker_context(token, state, mform):
-    account = BankAccount.objects.filter(pk=state["account_id"]).first()
-    return {"step": "map", "token": token, "account": account, "mapping_form": mform,
-            "filename": state["filename"], "headers": state.get("headers"), "sample": state["rows"][:5],
-            "column_labels": state["column_labels"], "warnings": state.get("warnings", []),
-            "presets": importers.PRESET_CHOICES, "preset": state.get("preset") or "generic"}
 
 
 @module_required("banking")

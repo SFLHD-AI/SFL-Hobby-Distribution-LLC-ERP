@@ -19,9 +19,13 @@
   <a href="{% url 'accounting_equity_trend' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📈</p><h2 class="font-semibold">Am I building equity?</h2>
     <p class="text-sm text-slate-500 mt-1">Month-end equity, assets and liabilities for the last 12 months.</p></a>
+  {% url 'accounting_month_close' as month_close_url %}
+  <a href="{% firstof month_close_url '/accounting/month-close/' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">✅</p><h2 class="font-semibold">Month close</h2>
+    <p class="text-sm text-slate-500 mt-1">The month-end checklist: inbox to zero, bills posted, receipts attached, statements reviewed. Tick the steps off and close the month.</p></a>
   <a href="{% url 'accounting_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🗓️</p><h2 class="font-semibold">Year-end package</h2>
-    <p class="text-sm text-slate-500 mt-1">Everything your tax preparer asks for in one place: statements, trial balance, general ledger exports.</p></a>
+    <p class="text-sm text-slate-500 mt-1">Everything your tax preparer asks for in one ZIP: statements (CSV and PDF) on both bases, trial balances, general ledgers and journals. Also available per month.</p></a>
   <a href="{% url 'accounting_index' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📒</p><h2 class="font-semibold">Accounting home</h2>
     <p class="text-sm text-slate-500 mt-1">Trial balance, general ledger, journal, chart of accounts and the period lock.</p></a>
@@ -36,6 +40,11 @@
   <a href="{% url 'expense_report_unpaid_bills' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📬</p><h2 class="font-semibold">Unpaid bills</h2>
     <p class="text-sm text-slate-500 mt-1">Open expenses and supplier bills by due date — what is coming due and what is late.</p></a>
+  {% if 'receiving' in u_modules %}
+  <a href="{% url 'receipt_list' %}?status=unpaid" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🚚</p><h2 class="font-semibold">Supplier bills on Receiving</h2>
+    <p class="text-sm text-slate-500 mt-1">The Receiving list filtered to <b>Unpaid bills</b>: posted supplier orders whose bill is still open, with invoice # and due date.</p></a>
+  {% endif %}
   <a href="{% url 'expense_report_missing_receipts' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🧾</p><h2 class="font-semibold">Missing receipts</h2>
     <p class="text-sm text-slate-500 mt-1">Expenses with no receipt attached. Clear this list monthly and year end is painless.</p></a>
@@ -44,7 +53,7 @@
     <p class="text-sm text-slate-500 mt-1">Contractors paid $600 or more this year, so the 1099-NEC forms are not a scramble in January.</p></a>
   <a href="{% url 'expense_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📦</p><h2 class="font-semibold">Expense year-end package</h2>
-    <p class="text-sm text-slate-500 mt-1">Totals by Schedule C line, mileage deduction, receipts bundle and the expense register as CSV.</p></a>
+    <p class="text-sm text-slate-500 mt-1">Totals by Schedule C line, mileage deduction, 1099 list, the expense register as CSV and a receipts/ folder with every attached receipt.</p></a>
   <a href="{% url 'bank_accounts' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🏦</p><h2 class="font-semibold">Bank &amp; card accounts</h2>
     <p class="text-sm text-slate-500 mt-1">Balances, last import or sync, and how many transactions still need a review.</p></a>
@@ -88,12 +97,20 @@
   {% if u_can_see_costs %}
   <div class="card-pad">
     <p class="text-2xl mb-2">🧾</p><h2 class="font-semibold">QuickBooks export</h2>
-    <p class="text-sm text-slate-500 mt-1 mb-3">CSV bundles for your accountant (current month by default; add ?start=&end= for other ranges).</p>
-    <div class="flex flex-wrap gap-2">
-      <a href="{% url 'report_quickbooks' %}?kind=invoices" class="btn-secondary">Invoices</a>
-      <a href="{% url 'report_quickbooks' %}?kind=payments" class="btn-secondary">Payments</a>
-      <a href="{% url 'report_quickbooks' %}?kind=expenses" class="btn-secondary">Expenses</a>
-    </div>
+    <p class="text-sm text-slate-500 mt-1 mb-3">Plain CSV files for your accountant. Pick the dates, then the file you want.</p>
+    <form method="get" action="{% url 'report_quickbooks' %}" class="space-y-3 field-inline" id="qbExport">
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="text-xs text-slate-500 block mb-1" for="qb_start">From</label>
+          <input type="date" id="qb_start" name="start" value="{% now 'Y-m-01' %}" class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1" for="qb_end">To</label>
+          <input type="date" id="qb_end" name="end" value="{% now 'Y-m-d' %}" class="w-full"></div>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <button name="kind" value="invoices" class="btn-secondary">Invoices</button>
+        <button name="kind" value="payments" class="btn-secondary">Payments</button>
+        <button name="kind" value="expenses" class="btn-secondary">Expenses</button>
+      </div>
+    </form>
   </div>
   {% endif %}
 </div>

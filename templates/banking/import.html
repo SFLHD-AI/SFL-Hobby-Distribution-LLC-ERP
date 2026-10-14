@@ -27,7 +27,8 @@
 <form method="post" class="card-pad space-y-4">
   {% csrf_token %}<input type="hidden" name="step" value="remap"><input type="hidden" name="token" value="{{ token }}">
   <div class="flex flex-wrap items-center justify-between gap-2">
-    <div><h2 class="font-semibold">Pick the columns in {{ filename }}</h2><p class="text-sm text-slate-500">Importing into {{ account.name }}. {% for w in warnings %}{{ w }} {% endfor %}</p></div>
+    <div><h2 class="font-semibold">Pick the columns in {{ filename }}</h2><p class="text-sm text-slate-500">Importing into {{ account.name }}. {% for w in warnings %}{{ w }} {% endfor %}</p>
+      {% if hint %}<p class="text-sm text-amber-700 mt-1">💡 {{ hint }}</p>{% endif %}</div>
     <label class="text-sm field-inline">Try a bank format: <select name="preset" onchange="this.form.querySelector('[name=step]').value='reparse'; this.form.submit();">{% for v, l in presets %}{% if v != 'auto' %}<option value="{{ v }}" {% if v == preset %}selected{% endif %}>{{ l }}</option>{% endif %}{% endfor %}</select></label>
   </div>
   <div class="overflow-x-auto"><table class="tbl text-xs"><thead><tr>{% for i, label in column_labels %}<th>{{ label }}</th>{% endfor %}</tr></thead><tbody>{% for row in sample %}<tr>{% for c in row %}<td>{{ c|truncatechars:30 }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
@@ -56,7 +57,7 @@
     <div class="stat"><div class="lbl">Unreadable rows</div><div class="val text-slate-500">{{ counts.error|default:0 }}</div></div>
   </div>
   {% if sign_warning %}<div class="mt-4 rounded-lg px-4 py-3 text-sm bg-amber-50 text-amber-800 border border-amber-200">⚠ {{ sign_warning }}</div>{% endif %}
-  {% if flip %}<div class="mt-4 rounded-lg px-4 py-3 text-sm bg-sky-50 text-sky-800 border border-sky-200">Signs flipped for this preview.</div>{% endif %}
+  {% if flip %}<div class="mt-4 rounded-lg px-4 py-3 text-sm bg-sky-50 text-sky-800 border border-sky-200">Signs flipped: the rows below show how they will import. Untick "Flip signs" to go back.</div>{% endif %}
 </div>
 
 {% if mapping_form %}
@@ -89,7 +90,8 @@
 
 <form method="post" class="card-pad flex flex-wrap items-center gap-3">
   {% csrf_token %}<input type="hidden" name="step" value="confirm"><input type="hidden" name="token" value="{{ token }}">
-  <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="flip" value="1" class="rounded border-slate-300" {% if flip %}checked{% endif %}> Flip signs (money in ↔ money out)</label>
+  <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" name="flip" value="1" class="rounded border-slate-300" {% if flip %}checked{% endif %} onchange="this.form.querySelector('[name=step]').value='preview'; this.form.submit();"> Flip signs (money in ↔ money out)</label>
+  <noscript><button name="preview" value="1" class="btn-secondary">Re-preview</button></noscript>
   <span class="text-sm text-slate-500">Net of new rows: <strong class="{% if new_total < 0 %}text-red-600{% else %}text-emerald-700{% endif %}">${{ new_total|floatformat:2|intcomma }}</strong></span>
   <span class="ml-auto flex gap-2"><a href="{% url 'bank_import' %}" class="btn-secondary">Cancel</a>
   <button class="btn-primary" {% if not counts.new %}disabled title="Nothing new to import"{% endif %}>Import {{ counts.new|default:0 }} transaction{{ counts.new|default:0|pluralize }}</button></span>

@@ -84,12 +84,70 @@ def payment_list(request):
     })
 
 
+def _int_or_none(value):
+    try:
+        n = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def _bank_deposit(pk):
+    """The live bank transaction a payment should be matched to, or None."""
+    pk = _int_or_none(pk)
+    if pk is None:
+        return None
+    try:
+        from banking.models import BankTransaction
+    except ImportError:            # banking module not installed
+        return None
+    return BankTransaction.objects.filter(pk=pk, is_deleted=False).select_related("account").first()
+
+
+def _link_deposit(request, payment, bank_txn_id):
+    """Match a freshly recorded payment to the bank deposit it came from
+    (the payment form was opened from a bank transaction). Amounts must
+    agree, otherwise the books would show a deposit that does not equal the
+    payments inside it; the owner can still match by hand from the bank
+    transaction page."""
+    txn = _bank_deposit(bank_txn_id)
+    if txn is None:
+        return
+    if txn.amount <= 0 or abs(txn.amount) != payment.amount:
+        messages.warning(request, f"Payment saved, but not matched to the bank deposit: the deposit is "
+                                  f"${abs(txn.amount):,.2f} and the payment is ${payment.amount:,.2f}. "
+                                  "Match it from the bank transaction page.")
+        return
+    txn.link_payments([payment], user=request.user)
+    messages.success(request, f"Deposit matched: {txn.date:%b %-d} ${abs(txn.amount):,.2f} in {txn.account.name} "
+                              "now points at this payment.")
+
+
 @module_required("payments")
 def payment_create(request):
     customer = None
     customer_id = request.GET.get("customer") or request.POST.get("customer")
-    if customer_id:
-        customer = Customer.objects.filter(pk=customer_id).first()
+    if _int_or_none(customer_id):
+        customer = Customer.objects.filter(pk=_int_or_none(customer_id)).first()
+    # Pre-fill from a bank deposit (banking "Record a customer payment for this deposit")
+    # or any caller that passes amount / date / reference in the query string.
+    prefill = {
+        "amount": (request.GET.get("amount") or "").strip(),
+        "date": (request.GET.get("date") or "").strip(),
+        "reference": (request.GET.get("reference") or "").strip()[:100],
+        "bank_txn": _int_or_none(request.GET.get("bank_txn") or request.POST.get("bank_txn")) or "",
+    }
+    try:
+        if prefill["amount"]:
+            prefill["amount"] = str(Decimal(prefill["amount"]).quantize(Decimal("0.01")))
+    except InvalidOperation:
+        prefill["amount"] = ""
+    try:
+        from datetime import date as _date
+        if prefill["date"]:
+            _date.fromisoformat(prefill["date"])
+    except ValueError:
+        prefill["date"] = ""
 
     open_invoices = []
     if customer:
@@ -104,7 +162,10 @@ def payment_create(request):
                 raise InvalidOperation
         except (KeyError, InvalidOperation):
             messages.error(request, "Enter a valid payment amount.")
-            return redirect(f"{request.path}?customer={customer.pk}")
+            back = f"{request.path}?customer={customer.pk}"
+            if prefill["bank_txn"]:
+                back += f"&bank_txn={prefill['bank_txn']}"
+            return redirect(back)
         try:
             with transaction.atomic():
                 payment = Payment.objects.create(
@@ -128,6 +189,8 @@ def payment_create(request):
                                  f"(apply it later from the payment page).")
             else:
                 messages.success(request, "Payment recorded and applied.")
+            if prefill["bank_txn"]:
+                _link_deposit(request, payment, prefill["bank_txn"])
             return redirect("payment_detail", payment.pk)
         except (ValidationError, InvalidOperation) as e:
             msg = "; ".join(e.messages) if hasattr(e, "messages") else str(e)
@@ -138,6 +201,7 @@ def payment_create(request):
         "customers": Customer.objects.filter(active=True),
         "customer": customer, "open_invoices": open_invoices,
         "methods": Payment.METHODS, "preselect_invoice": preselect_invoice,
+        "prefill": prefill,
     })
 
 

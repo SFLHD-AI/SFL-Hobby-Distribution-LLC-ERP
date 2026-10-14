@@ -2,7 +2,7 @@
 {% block title %}Banking{% endblock %}
 {% block header_actions %}
 <a href="{% url 'bank_import' %}" class="btn-secondary hidden sm:inline-flex">⬆ Import CSV</a>
-{% if connections %}<form method="post" action="{% url 'bank_sync_now' %}" class="hidden sm:inline">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}"><button class="btn-secondary">🔄 Sync now</button></form>{% endif %}
+{% if connections %}<form method="post" action="{% url 'bank_sync_now' %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}"><button class="btn-secondary">🔄 Sync now</button></form>{% endif %}
 <form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">{% if filters.account %}<input type="hidden" name="account" value="{{ filters.account }}">{% endif %}<button class="btn-primary">⚡ Run rules</button></form>
 {% endblock %}
 {% block content %}
@@ -92,7 +92,8 @@
           {% if t.merchant_name and t.merchant_name|lower != t.description|lower %}<div class="text-xs text-slate-500">{{ t.merchant_name }}</div>{% endif %}
           <div class="flex flex-wrap gap-1 mt-1">
             {% if t.status == 'unreviewed' and t.suggested_account %}<span class="badge bg-indigo-100 text-indigo-700" title="Suggested by a rule, a saved vendor or past choices">Suggested: {{ t.suggested_account.name }}</span>{% endif %}
-            {% if t.status == 'categorized' %}<span class="badge bg-emerald-100 text-emerald-700">{{ t.category_account.name }}</span>{% if t.auto_categorized %}<span class="badge bg-slate-100 text-slate-600">by rule</span>{% endif %}{% endif %}
+            {% if t.is_split %}<span class="badge bg-amber-100 text-amber-700" title="{% for sp in t.splits.all %}{{ sp.account.name }} ${{ sp.amount|floatformat:2 }}{% if not forloop.last %} · {% endif %}{% endfor %}">Split · {{ t.splits.all|length }} parts</span>
+            {% elif t.status == 'categorized' %}<span class="badge bg-emerald-100 text-emerald-700">{{ t.category_account.name }}</span>{% if t.auto_categorized %}<span class="badge bg-slate-100 text-slate-600">by rule</span>{% endif %}{% endif %}
             {% if t.status == 'matched' %}<span class="badge bg-sky-100 text-sky-700">Matched{% if t.expense %}: {{ t.expense.vendor }}{% endif %}</span>{% endif %}
             {% if t.status == 'transfer' %}<span class="badge bg-violet-100 text-violet-700">Transfer{% if t.transfer_peer %} ↔ {{ t.transfer_peer.account.name }}{% endif %}</span>{% endif %}
             {% if t.status == 'ignored' %}<span class="badge bg-slate-200 text-slate-600">Ignored</span>{% endif %}
@@ -104,17 +105,30 @@
       <div class="lg:col-span-2 lg:text-right text-lg font-bold tabular-nums {% if t.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if t.amount < 0 %}−{% else %}+{% endif %}${{ t.abs_amount|floatformat:2|intcomma }}</div>
       <div class="lg:col-span-6">
         {% if t.status == 'unreviewed' %}
-        <div class="grid sm:grid-cols-12 gap-2 items-center">
-          <div class="sm:col-span-5">{% include "banking/_category_select.html" with name="category" selected=t.suggested_account_id groups=category_groups %}</div>
-          <div class="sm:col-span-3"><input type="text" name="vendor" list="vendorList" value="{{ t.vendor.name|default:'' }}" placeholder="Vendor" class="w-full rounded-lg border-slate-300 text-sm"></div>
-          <div class="sm:col-span-4"><input type="text" name="note" value="{{ t.notes }}" placeholder="Note" class="w-full rounded-lg border-slate-300 text-sm"></div>
-          <div class="sm:col-span-12 flex flex-wrap items-center gap-1.5">
-            <button name="action" value="save" class="btn-primary !py-1.5">Save</button>
-            <button name="action" value="match" class="btn-secondary !py-1.5" title="Match to a customer payment, supplier receipt or expense">Match</button>
-            <button name="action" value="transfer" class="btn-secondary !py-1.5" title="Pair with the same amount in another account">Transfer</button>
-            <button name="action" value="personal" class="btn-secondary !py-1.5" title="Owner draw / not a business expense">Personal</button>
-            <button name="action" value="ignore" class="btn-secondary !py-1.5 text-slate-500" title="Duplicate or not this business">Ignore</button>
-            <label class="inline-flex items-center gap-1.5 text-xs text-slate-600 ml-auto"><input type="checkbox" name="always" value="1" class="rounded border-slate-300"> Always categorize like this</label>
+        {# compact on phones: category + Save + "More…"; everything else unfolds #}
+        <div class="space-y-2">
+          <div class="flex items-center gap-2">
+            <div class="flex-1 min-w-0">{% include "banking/_category_select.html" with name="category" selected=t.suggested_account_id groups=category_groups %}</div>
+            <button name="action" value="save" class="btn-primary !py-1.5 sm:hidden">Save</button>
+            <button type="button" class="btn-secondary !py-1.5 sm:hidden rowMoreBtn" aria-expanded="false">More…</button>
+          </div>
+          <div class="rowMore hidden sm:block space-y-2">
+            <div class="grid sm:grid-cols-2 gap-2">
+              <input type="text" name="vendor" list="vendorList" value="{{ t.vendor.name|default:'' }}" placeholder="Vendor" class="w-full rounded-lg border-slate-300 text-sm">
+              <input type="text" name="note" value="{{ t.notes }}" placeholder="Note" class="w-full rounded-lg border-slate-300 text-sm">
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5">
+              <button name="action" value="save" class="btn-primary !py-1.5 hidden sm:inline-flex">Save</button>
+              <button name="action" value="match" class="btn-secondary !py-1.5" title="Match to a customer payment, supplier receipt or expense">Match</button>
+              <button name="action" value="transfer" class="btn-secondary !py-1.5" title="Pair with the same amount in another account">Transfer</button>
+              <button name="action" value="personal" class="btn-secondary !py-1.5" title="Owner draw / not a business expense">Personal</button>
+              <button name="action" value="ignore" class="btn-secondary !py-1.5 text-slate-500" title="Duplicate or not this business">Ignore</button>
+            </div>
+            <div class="flex flex-wrap items-center gap-1.5 text-xs text-slate-600">
+              <label class="inline-flex items-center gap-1.5"><input type="checkbox" name="always" value="1" class="rounded border-slate-300"> Always categorize like this:</label>
+              <input type="text" name="rule_pattern" value="{{ t.rule_pattern }}" maxlength="200" title="Transactions whose description or merchant contains this text get the same category. Edit it to make the rule narrower or wider." class="flex-1 min-w-[10rem] rounded-lg border-slate-300 text-xs py-1">
+              {% if t.rule_pattern_generic %}<span class="text-amber-700" title="This text names a payment service or bank wording rather than a merchant, so the rule would only suggest, not apply">too generic to auto-apply</span>{% endif %}
+            </div>
           </div>
         </div>
         {% else %}
@@ -156,6 +170,15 @@
   var act = document.getElementById('bulkAction'), wrap = document.getElementById('bulkCategoryWrap');
   function toggle() { wrap.style.display = act.value === 'categorize' ? '' : 'none'; }
   if (act) { act.addEventListener('change', toggle); toggle(); }
+  // phones: "More…" unfolds vendor / note / other actions for one row
+  document.querySelectorAll('.rowMoreBtn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var more = btn.closest('form').querySelector('.rowMore');
+      var open = more.classList.toggle('hidden') === false;
+      btn.textContent = open ? 'Less' : 'More…';
+      btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+  });
 })();
 </script>
 {% endblock %}

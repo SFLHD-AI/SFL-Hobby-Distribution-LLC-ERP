@@ -6,8 +6,10 @@ from django import forms
 from django.utils import timezone
 
 from accounting.models import Account, AccountSubtype
+from banking import regex_guard
 from banking.importers import MAPPING_FIELDS, PRESET_CHOICES
 from banking.models import BankAccount, BankTransaction, CategoryRule
+from core.models import CompanySettings
 from expenses.models import Vendor
 
 DATE = forms.DateInput(attrs={"type": "date"})
@@ -51,6 +53,16 @@ class BankAccountForm(forms.ModelForm):
             "is_default": "Pre-selected as the 'paid from' account when you add an expense.",
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk is None:
+            start = CompanySettings.get().books_start_date
+            if start:
+                self.fields["opening_date"].initial = start
+                self.fields["opening_date"].help_text = (
+                    f"Your books start on {start:%b %-d, %Y}; transactions before the opening "
+                    "date are skipped.")
+
     def clean_last4(self):
         v = (self.cleaned_data.get("last4") or "").strip()
         if v and not re.fullmatch(r"\d{4}", v):
@@ -90,10 +102,19 @@ class CategoryRuleForm(forms.ModelForm):
         data = super().clean()
         pattern = (data.get("pattern") or "").strip()
         if data.get("match_type") == "regex" and pattern:
-            try:
-                re.compile(pattern)
-            except re.error as exc:
-                self.add_error("pattern", f"That is not a valid regular expression: {exc}")
+            if regex_guard.nested_quantifier(pattern):
+                self.add_error("pattern", "That pattern repeats a group that already repeats "
+                                          "(like (a+)+ or (\\w+\\s?)*). It could stall every import; "
+                                          "simplify it, or use 'Contains' instead.")
+            else:
+                try:
+                    re.compile(pattern)
+                except re.error as exc:
+                    self.add_error("pattern", f"That is not a valid regular expression: {exc}")
+                else:
+                    if regex_guard.compile_safe(pattern) is None or not regex_guard.is_safe(pattern):
+                        self.add_error("pattern", "That pattern is too slow to run safely on every "
+                                                  "transaction. Simplify it, or use 'Contains' instead.")
         if data.get("action") == "categorize" and not data.get("category_account"):
             self.add_error("category_account", "Pick the category this rule should assign.")
         lo, hi = data.get("amount_min"), data.get("amount_max")
@@ -142,6 +163,44 @@ class ManualTransactionForm(forms.Form):
             merchant_name=(self.cleaned_data.get("merchant_name") or "").strip(),
             check_number=(self.cleaned_data.get("check_number") or "").strip(),
             notes=(self.cleaned_data.get("notes") or "").strip(), source="manual")
+        txn.save()
+        return txn
+
+
+class ManualTransactionEditForm(forms.Form):
+    """Edit a hand-entered transaction (date, amount, description) while it
+    is still waiting for review."""
+    date = forms.DateField(widget=DATE)
+    direction = forms.ChoiceField(choices=ManualTransactionForm.DIRECTIONS, initial="out")
+    amount = forms.DecimalField(min_value=Decimal("0.01"), decimal_places=2, max_digits=12,
+                                label="Amount", help_text="Positive number; pick the direction.")
+    description = forms.CharField(max_length=300)
+
+    def __init__(self, txn, *args, **kwargs):
+        self.txn = txn
+        kwargs.setdefault("initial", {}).update({
+            "date": txn.date, "amount": abs(txn.amount), "description": txn.description,
+            "direction": "out" if txn.amount < 0 else "in"})
+        super().__init__(*args, **kwargs)
+
+    def clean(self):
+        data = super().clean()
+        day = data.get("date")
+        if day and day < self.txn.account.opening_date:
+            self.add_error("date", f"{self.txn.account.name} starts on {self.txn.account.opening_date:%b %-d, %Y}; "
+                                   "pick a date on or after that.")
+        return data
+
+    def save(self):
+        txn = self.txn
+        amt = self.cleaned_data["amount"]
+        same_desc = txn.original_description == txn.description
+        txn.date = self.cleaned_data["date"]
+        txn.amount = -amt if self.cleaned_data["direction"] == "out" else amt
+        txn.description = self.cleaned_data["description"].strip()
+        if same_desc or not txn.original_description:
+            txn.original_description = txn.description
+        txn.fingerprint = BankTransaction.make_fingerprint(txn.account_id, txn.date, txn.amount, txn.description)
         txn.save()
         return txn
 

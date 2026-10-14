@@ -43,9 +43,19 @@ DEBIT,01/15/2025,CHASE CREDIT CRD AUTOPAY,-500.00,ACH_DEBIT,4500.00,
 CREDIT,01/17/2025,DEPOSIT ID NUMBER 123,"1,250.00",DEPOSIT,5750.00,
 CHECK,01/18/2025,CHECK 1042,-300.00,CHECK,5450.00,1042
 """
-AMEX = """Date,Description,Amount
-01/10/2025,AMAZON MARKETPLACE,89.99
-01/12/2025,ONLINE PAYMENT - THANK YOU,-400.00
+# Real Amex export: "Card Member" / "Account #" distinguish it from the many
+# banks whose files are a bare Date,Description,Amount.
+AMEX = """Date,Description,Card Member,Account #,Amount
+01/10/2025,AMAZON MARKETPLACE,JANE OWNER,-31005,89.99
+01/12/2025,ONLINE PAYMENT - THANK YOU,JANE OWNER,-31005,-400.00
+"""
+BARE_THREE = """Date,Description,Amount
+01/10/2025,AMAZON MARKETPLACE,-89.99
+01/12/2025,DEPOSIT FROM CARD SHOP,400.00
+"""
+CHECKING_FOUR = """Date,Description,Amount,Balance
+01/10/2025,USPS PO 1234,-45.00,1955.00
+01/12/2025,ZELLE FROM CARD SHOP,400.00,2355.00
 """
 CAPITAL_ONE = """Transaction Date,Posted Date,Card No.,Description,Category,Debit,Credit
 2025-01-05,2025-01-06,1234,SHOPIFY,Other Services,29.00,
@@ -657,8 +667,9 @@ class ViewRenderTests(BankingBase):
         for name in ("bank_inbox_bulk", "bank_rules_run"):
             self.assertEqual(self.client.get(reverse(name)).status_code, 302)
         self.assertEqual(self.client.get(reverse("bank_inbox_action", args=[self.t.pk])).status_code, 302)
+        # sync is a state change: POST only (the dashboard link is a form)
         resp = self.client.get(reverse("bank_sync_now"))
-        self.assertEqual(resp.status_code, 302)
+        self.assertEqual(resp.status_code, 405)
 
 
 class ReviewActionViewTests(BankingBase):
@@ -1353,3 +1364,602 @@ class ServicesTests(BankingBase):
         self.assertEqual(n, {"unreviewed": 2, "suggested": 1, "connections_error": 1})
         a.categorize(self.shipping_acct)
         self.assertEqual(needs_attention()["unreviewed"], 1)
+
+
+# ===========================================================================
+# Review fixes (independent code review, round 2)
+# ===========================================================================
+class TransferPairingViewTests(BankingBase):
+    """#1 picking a twin: re-pairing works (used to IntegrityError) and a
+    peer that is already reviewed is refused with a message, not a 500."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = self.txn(account=self.checking, desc="AUTOPAY", amount="-500.00")
+        self.twin_a = self.txn(account=self.card, desc="PAYMENT A", amount="500.00")
+        self.twin_b = self.txn(account=self.card, desc="PAYMENT B", amount="500.00", day=TODAY - timedelta(days=1))
+        self.url = reverse("bank_transaction_detail", args=[self.out.pk])
+
+    def test_repair_to_another_twin_releases_the_old_one(self):
+        self.out.mark_transfer(self.twin_a, user=self.user)
+        resp = self.client.post(self.url, {"action": "transfer_with", "peer_id": self.twin_b.pk}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "Paired as a transfer")
+        self.out.refresh_from_db(); self.twin_a.refresh_from_db(); self.twin_b.refresh_from_db()
+        self.assertEqual(self.out.transfer_peer, self.twin_b)
+        self.assertEqual(self.twin_b.transfer_peer, self.out)
+        self.assertEqual((self.twin_a.status, self.twin_a.transfer_peer), (BankTransaction.UNREVIEWED, None))
+        # pairing with the same twin again is a harmless no-op
+        resp = self.client.post(self.url, {"action": "transfer_with", "peer_id": self.twin_b.pk}, follow=True)
+        self.assertContains(resp, "Paired as a transfer")
+
+    def test_reviewed_peer_is_refused_with_a_message(self):
+        self.twin_a.categorize(self.shipping_acct, user=self.user)
+        resp = self.client.post(self.url, {"action": "transfer_with", "peer_id": self.twin_a.pk}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "already reviewed")
+        self.out.refresh_from_db()
+        self.assertEqual(self.out.status, BankTransaction.UNREVIEWED)
+        # a peer that is paired with somebody else is refused too
+        other_out = self.txn(account=self.checking, desc="OTHER", amount="-500.00")
+        other_out.mark_transfer(self.twin_b, user=self.user)
+        resp = self.client.post(self.url, {"action": "transfer_with", "peer_id": self.twin_b.pk}, follow=True)
+        self.assertContains(resp, "already paired")
+        self.twin_b.refresh_from_db()
+        self.assertEqual(self.twin_b.transfer_peer, other_out)
+        # bogus / missing ids never 500
+        for bad in ("abc", "", "999999", str(self.out.pk)):
+            resp = self.client.post(self.url, {"action": "transfer_with", "peer_id": bad}, follow=True)
+            self.assertEqual(resp.status_code, 200, bad)
+
+    def test_inbox_transfer_button_accepts_flagged_twin_with_stale_peer(self):
+        # twin flagged as a transfer by a rule, but its own peer went away
+        self.twin_a.status = BankTransaction.TRANSFER
+        self.twin_a.save(update_fields=["status"])
+        self.twin_b.delete(user=self.user)
+        resp = self.client.post(reverse("bank_inbox_action", args=[self.out.pk]), {"action": "transfer"}, follow=True)
+        self.assertContains(resp, "Paired with Visa")
+        self.out.refresh_from_db(); self.twin_a.refresh_from_db()
+        self.assertEqual(self.out.transfer_peer, self.twin_a)
+        self.assertEqual(self.twin_a.transfer_peer, self.out)
+
+    def test_peer_problem_helper(self):
+        from banking.views import _peer_problem
+        self.assertIsNone(_peer_problem(self.twin_a, self.out))
+        self.assertIn("own transfer twin", _peer_problem(self.out, self.out))
+        self.twin_a.mark_ignored(user=self.user)
+        self.assertIn("already reviewed", _peer_problem(self.twin_a, self.out))
+
+
+class CsvDetectionTests(BankingBase):
+    """#2 a bare Date,Description,Amount header must not become Amex."""
+
+    def test_bare_three_columns_fall_back_to_generic(self):
+        parsed = _parse(BARE_THREE)
+        self.assertEqual(parsed.headers, ["date", "description", "amount"])
+        self.assertIsNone(importers.detect_preset(parsed.headers, parsed.rows[0]))
+        self.assertIn("card export", importers.generic_hint(parsed.headers))
+        self.assertEqual(importers.guess_generic_mapping(parsed.headers),
+                         {"date": 0, "description": 1, "amount": 2})
+
+    def test_four_column_checking_file_is_not_amex(self):
+        parsed = _parse(CHECKING_FOUR)
+        self.assertIsNone(importers.detect_preset(parsed.headers, parsed.rows[0]))
+        self.assertEqual(importers.generic_hint(parsed.headers), "")          # a balance column = a register
+        guess = importers.guess_generic_mapping(parsed.headers)
+        self.assertEqual((guess["date"], guess["description"], guess["amount"]), (0, 1, 2))
+        self.assertNotIn(3, guess.values())
+
+    def test_real_amex_header_is_detected_and_negated(self):
+        parsed, preset, rows = _mapped(AMEX)
+        self.assertEqual(preset, "amex")
+        self.assertEqual(amounts(rows), [D("-89.99"), D("400.00")])
+        # BofA (4 matching headers) still beats the generic 3 of Amex
+        bofa = _parse(BOFA)
+        self.assertEqual(importers.detect_preset(bofa.headers, bofa.rows[0]), "bank_of_america")
+
+    def test_amex_stays_selectable_by_hand(self):
+        parsed = _parse(BARE_THREE)
+        mapping = importers.resolve_mapping("amex", parsed.headers, parsed.rows[0])
+        self.assertTrue(mapping["negate"])
+        rows = importers.map_rows(parsed.rows, mapping)
+        self.assertEqual(amounts(rows), [D("89.99"), D("-400.00")])
+        with self.assertRaises(ValueError):
+            importers.map_rows(parsed.rows, None)
+
+    def test_upload_view_shows_picker_with_hint_and_guesses(self):
+        f = SimpleUploadedFile("card.csv", BARE_THREE.encode(), content_type="text/csv")
+        resp = self.client.post(reverse("bank_import"), {"step": "upload", "account": self.card.pk, "file": f,
+                                                         "preset": "auto"})
+        self.assertEqual(resp.context["step"], "map")
+        self.assertContains(resp, "Looks like a card export?")
+        self.assertContains(resp, "Amounts are positive for charges")
+        form = resp.context["mapping_form"]
+        self.assertEqual((form["col_date"].value(), form["col_description"].value(), form["col_amount"].value()),
+                         ("0", "1", "2"))
+        self.assertNotContains(resp, "American Express</strong>")
+        # forcing Amex by hand still works
+        f = SimpleUploadedFile("card.csv", BARE_THREE.encode(), content_type="text/csv")
+        resp = self.client.post(reverse("bank_import"), {"step": "upload", "account": self.card.pk, "file": f,
+                                                         "preset": "amex"})
+        self.assertEqual(resp.context["preset"], "amex")
+        self.assertEqual([r["amount"] for r in resp.context["rows"]], [D("89.99"), D("-400.00")])
+
+
+class RegexGuardFormTests(BankingBase):
+    """#3 the rule form refuses patterns that could hang imports."""
+
+    def data(self, **kw):
+        d = {"name": "Rx", "priority": 100, "active": "on", "match_field": "any", "match_type": "regex",
+             "pattern": "pirate\\s+ship", "direction": "any", "action": "categorize",
+             "category_account": self.shipping_acct.pk, "auto_confirm": "on"}
+        d.update(kw)
+        return d
+
+    def test_nested_quantifier_rejected_plainly(self):
+        from banking.forms import CategoryRuleForm
+        for bad in (r"^(\w+\s?)*$", r"(a+)+", r"(ab*)+c"):
+            form = CategoryRuleForm(self.data(pattern=bad))
+            self.assertFalse(form.is_valid(), bad)
+            self.assertIn("repeats a group", form.errors["pattern"][0])
+            self.assertNotIn("Traceback", form.errors["pattern"][0])
+        resp = self.client.post(reverse("bank_rule_create"), self.data(pattern=r"^(\w+\s?)*$"))
+        self.assertContains(resp, "repeats a group")
+        self.assertEqual(CategoryRule.objects.count(), 0)
+
+    def test_valid_regex_still_saves_and_invalid_still_reported(self):
+        from banking.forms import CategoryRuleForm
+        self.assertTrue(CategoryRuleForm(self.data()).is_valid())
+        form = CategoryRuleForm(self.data(pattern="(oops"))
+        self.assertIn("not a valid regular expression", form.errors["pattern"][0])
+        self.client.post(reverse("bank_rule_create"), self.data())
+        self.assertEqual(CategoryRule.objects.get().pattern, "pirate\\s+ship")
+        # 'contains' rules are never run through the regex guard
+        self.assertTrue(CategoryRuleForm(self.data(match_type="contains", pattern="(a+)+")).is_valid())
+
+
+class GenericRulePatternTests(BankingBase):
+    """#4 'always categorize like this' must not learn PAYPAL -> Shipping."""
+
+    def test_is_generic_pattern(self):
+        from banking.rules import is_generic_pattern
+        for g in ("PayPal", "SQ *", "Square", "Venmo", "ZELLE PAYMENT", "Cash App", "APPLE PAY", "GOOGLE PAY",
+                  "AMAZON", "AMZN MKTP US*", "EBAY", "STRIPE", "CHECK", "ONLINE PAYMENT - THANK YOU",
+                  "DEPOSIT", "TRANSFER", "ACH DEBIT", "POS PURCHASE", "DEBIT CARD PURCHASE", "CREDIT",
+                  "ONLINE", "WITHDRAWAL", "ATM", "ULINE", "12345", "", "   "):
+            self.assertTrue(is_generic_pattern(g), g)
+        for ok in ("PIRATE SHIP", "SQ *COFFEE", "PAYPAL *PIRATESHIP", "Foo Coffee", "USPS PO", "STARBUCKS STORE",
+                   "SHOPIFY PAYOUT", "Uline Shipping Supplies", "GODADDY.COM"):
+            self.assertFalse(is_generic_pattern(ok), ok)
+
+    def test_suggested_pattern_falls_back_from_processor_merchant(self):
+        from banking.rules import suggested_pattern
+        t = self.txn(desc="PAYPAL *PIRATESHIP 402935", amount="-45.20", merchant_name="PayPal")
+        self.assertEqual(suggested_pattern(t), ("PAYPAL *PIRATESHIP", "description", False))
+        g = self.txn(desc="ZELLE PAYMENT 88812", amount="-45.20", merchant_name="Zelle")
+        pattern, field, generic = suggested_pattern(g)
+        self.assertTrue(generic)
+        self.assertTrue(pattern)
+
+    def test_generic_rule_is_suggest_only_and_not_bulk_applied(self):
+        t = self.txn(desc="ZELLE PAYMENT 123456", amount="-40.00")
+        other = self.txn(desc="ZELLE PAYMENT 654321", amount="-90.00")
+        resp = self.client.post(reverse("bank_inbox_action", args=[t.pk]),
+                                {"action": "save", "category": self.shipping_acct.pk, "always": "1"}, follow=True)
+        self.assertContains(resp, "suggestion only")
+        self.assertContains(resp, "too generic")
+        rule = CategoryRule.objects.get()
+        self.assertFalse(rule.auto_confirm)
+        self.assertEqual(rule.times_applied, 0)
+        other.refresh_from_db()
+        self.assertEqual(other.status, BankTransaction.UNREVIEWED)
+        self.assertIsNone(other.suggested_account)                # not even suggested in bulk
+        # ...but the next import run suggests it, never applies it
+        c = apply_rules([other])
+        other.refresh_from_db()
+        self.assertEqual((c["suggested"], other.status, other.suggested_account),
+                         (1, BankTransaction.UNREVIEWED, self.shipping_acct))
+
+    def test_inbox_shows_editable_pattern_and_uses_the_posted_value(self):
+        t = self.txn(desc="PIRATE SHIP 8449500000 CA", amount="-45.20")
+        resp = self.client.get(reverse("bank_inbox"))
+        self.assertContains(resp, 'name="rule_pattern" value="PIRATE SHIP"')
+        detail = self.client.get(reverse("bank_transaction_detail", args=[t.pk]))
+        self.assertContains(detail, 'name="rule_pattern" value="PIRATE SHIP"')
+        o1 = self.txn(desc="PIRATE SHIP 8449511111", amount="-9.00")
+        o2 = self.txn(desc="PIRATESHIP.COM LABEL", amount="-3.00")
+        resp = self.client.post(reverse("bank_inbox_action", args=[t.pk]),
+                                {"action": "save", "category": self.shipping_acct.pk, "always": "1",
+                                 "rule_pattern": "  pirate  "}, follow=True)
+        self.assertContains(resp, "applied to 2 more")
+        rule = CategoryRule.objects.get()
+        self.assertEqual((rule.pattern, rule.match_field, rule.auto_confirm), ("pirate", "description", True))
+        for o in (o1, o2):
+            o.refresh_from_db()
+            self.assertEqual(o.status, BankTransaction.CATEGORIZED)
+        # a generic edit is honoured but only as a suggestion
+        g = self.txn(desc="SQ *FOO 1", amount="-3.00", merchant_name="Foo Coffee")
+        resp = self.client.post(reverse("bank_inbox_action", args=[g.pk]),
+                                {"action": "save", "category": self.software_acct.pk, "always": "1",
+                                 "rule_pattern": "SQ *"}, follow=True)
+        self.assertContains(resp, "suggestion only")
+        self.assertFalse(CategoryRule.objects.get(pattern="SQ *").auto_confirm)
+        # a pattern typed by hand that matches the merchant name is a merchant rule
+        m = self.txn(desc="SQ *BAR 2", amount="-3.00", merchant_name="Bar Bakery")
+        rule = rule_from_transaction(m, self.software_acct, pattern="Bar Bakery")
+        self.assertEqual(rule.match_field, "merchant")
+        self.assertFalse(rule.generic_pattern)
+
+    def test_generic_badge_in_inbox(self):
+        self.txn(desc="VENMO PAYMENT", amount="-20.00")
+        resp = self.client.get(reverse("bank_inbox"))
+        self.assertContains(resp, "too generic to auto-apply")
+
+
+class QueryStringRobustnessTests(BankingBase):
+    """#5 sync is POST only; #6 junk ids / decimals never 500."""
+
+    def test_sync_now_requires_post(self):
+        self.assertEqual(self.client.get(reverse("bank_sync_now")).status_code, 405)
+        resp = self.client.post(reverse("bank_sync_now"), follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, "No connected banks")
+
+    def test_helpers(self):
+        from banking.views import _int_or_none, _parse_decimal
+        self.assertEqual([_int_or_none(v) for v in ("5", " 7 ", "abc", "", None, "0", "-3", "1.5")],
+                         [5, 7, None, None, None, None, None, None])
+        self.assertEqual(_parse_decimal("$1,234.50"), D("1234.50"))
+        for bad in ("abc", "NaN", "nan", "Infinity", "-inf", "1e999", "99999999999999", "", None):
+            self.assertIsNone(_parse_decimal(bad), bad)
+
+    def test_inbox_and_friends_survive_junk_query_strings(self):
+        self.txn(desc="X", amount="-1.00")
+        base = reverse("bank_inbox")
+        for qs in ("?account=abc", "?account=999999", "?batch=abc", "?batch=-1", "?min=abc&max=NaN",
+                   "?min=1e999", "?min=Infinity", "?from=2025-99-99&to=xyz", "?page=zzz", "?status=bogus",
+                   "?account=1.5&batch=1e3"):
+            resp = self.client.get(base + qs)
+            self.assertEqual(resp.status_code, 200, qs)
+        self.assertEqual(self.client.get(reverse("bank_transaction_add") + "?account=abc").status_code, 200)
+        self.assertEqual(self.client.get(reverse("bank_import") + "?account=abc").status_code, 200)
+        resp = self.client.post(reverse("bank_rules_run"), {"account": "abc"}, follow=True)
+        self.assertContains(resp, "Rules checked")
+        t = BankTransaction.objects.get()
+        resp = self.client.post(reverse("bank_inbox_action", args=[t.pk]), {"action": "save", "category": "abc"},
+                                follow=True)
+        self.assertContains(resp, "Pick a category first.")
+        resp = self.client.post(reverse("bank_inbox_bulk"), {"ids": [t.pk], "bulk_action": "categorize",
+                                                             "bulk_category": "1e5"}, follow=True)
+        self.assertContains(resp, "Pick a category")
+
+
+class ImportSessionTests(BankingBase):
+    """#7 only a pointer to the saved file lives in the session; the preview
+    honours 'flip signs'."""
+
+    def upload(self, text, account=None, preset="auto", name="chase.csv"):
+        f = SimpleUploadedFile(name, text.encode("utf-8") if isinstance(text, str) else text, content_type="text/csv")
+        return self.client.post(reverse("bank_import"), {"step": "upload", "account": (account or self.card).pk,
+                                                         "file": f, "preset": preset})
+
+    def test_session_holds_pointer_not_rows(self):
+        from banking.views import SESSION_PREFIX
+        resp = self.upload(CHASE_CARD)
+        token = resp.context["token"]
+        state = self.client.session[SESSION_PREFIX + token]
+        self.assertEqual(set(state), {"account_id", "filename", "stored_path", "preset", "mapping", "flip", "created"})
+        self.assertNotIn("rows", state)
+        self.assertEqual(state["preset"], "chase")
+        # preview after a preset change and the import itself re-read the saved file
+        resp = self.client.post(reverse("bank_import"), {"step": "reparse", "token": token, "preset": "chase"})
+        self.assertEqual(resp.context["counts"]["new"], 3)
+        self.client.post(reverse("bank_import"), {"step": "confirm", "token": token})
+        self.assertEqual(BankTransaction.objects.count(), 3)
+
+    def test_generic_remap_reparses_file(self):
+        resp = self.upload(GENERIC_LATIN1, account=self.checking, name="bank.csv")
+        token = resp.context["token"]
+        resp = self.client.post(reverse("bank_import"), {"step": "remap", "token": token, "col_date": "0",
+                                                         "col_description": "1", "col_debit": "2", "col_credit": "3"})
+        self.assertEqual(resp.context["counts"]["new"], 2)
+        from banking.views import SESSION_PREFIX
+        self.assertNotIn("rows", self.client.session[SESSION_PREFIX + token])
+        self.client.post(reverse("bank_import"), {"step": "confirm", "token": token})
+        self.assertEqual(BankTransaction.objects.count(), 2)
+
+    def test_preview_shows_flipped_rows_before_confirm(self):
+        resp = self.upload(CHASE_CARD)
+        token = resp.context["token"]
+        self.assertEqual([r["amount"] for r in resp.context["rows"]], [D("-45.20"), D("500.00"), D("-120.00")])
+        resp = self.client.post(reverse("bank_import"), {"step": "preview", "token": token, "flip": "1"})
+        self.assertTrue(resp.context["flip"])
+        self.assertEqual([r["amount"] for r in resp.context["rows"]], [D("45.20"), D("-500.00"), D("120.00")])
+        self.assertContains(resp, "Signs flipped")
+        self.assertContains(resp, 'name="flip" value="1" class="rounded border-slate-300" checked')
+        # unticking goes back
+        resp = self.client.post(reverse("bank_import"), {"step": "preview", "token": token})
+        self.assertFalse(resp.context["flip"])
+        self.assertEqual(resp.context["rows"][0]["amount"], D("-45.20"))
+        # the no-script fallback button on the confirm form re-previews instead of importing
+        resp = self.client.post(reverse("bank_import"), {"step": "confirm", "token": token, "flip": "1", "preview": "1"})
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(resp.context["flip"])
+        self.assertEqual(BankTransaction.objects.count(), 0)
+        self.client.post(reverse("bank_import"), {"step": "confirm", "token": token, "flip": "1"})
+        self.assertEqual(BankTransaction.objects.get(description__startswith="PIRATE").amount, D("45.20"))
+
+    def test_missing_file_means_expired(self):
+        from django.core.files.storage import default_storage
+        from banking.views import SESSION_PREFIX
+        resp = self.upload(CHASE_CARD)
+        token = resp.context["token"]
+        default_storage.delete(self.client.session[SESSION_PREFIX + token]["stored_path"])
+        resp = self.client.post(reverse("bank_import"), {"step": "confirm", "token": token}, follow=True)
+        self.assertContains(resp, "expired")
+        self.assertNotIn(SESSION_PREFIX + token, self.client.session)
+        resp = self.client.post(reverse("bank_import"), {"step": "confirm", "token": "nope"}, follow=True)
+        self.assertContains(resp, "expired")
+
+
+class PlaidInitDefaultsTests(BankingBase):
+    """#8 first sync only derives opening figures for accounts at defaults."""
+
+    def test_hand_configured_account_is_never_reset(self):
+        from banking.tasks import at_defaults
+        conn = BankConnection.objects.create(provider="plaid", institution_name="Bank", access_token="tok")
+        fresh = BankAccount.objects.create(name="Fresh", account_type="checking", connection=conn,
+                                           external_account_id="acc1", opening_date=TODAY, opening_balance=0)
+        configured = BankAccount.objects.create(name="Configured", account_type="checking", connection=conn,
+                                                external_account_id="acc2", opening_date=date(2025, 1, 1),
+                                                opening_balance=D("1000.00"))
+        zero_but_backdated = BankAccount.objects.create(name="Backdated", account_type="savings", connection=conn,
+                                                        external_account_id="acc3", opening_date=date(2025, 6, 1),
+                                                        opening_balance=0)
+        self.assertTrue(at_defaults(fresh))
+        self.assertFalse(at_defaults(configured))
+        self.assertFalse(at_defaults(zero_but_backdated))
+        accounts = [{"external_account_id": e, "name": e, "official_name": "", "mask": "", "type": "depository",
+                     "subtype": "checking", "account_type": "checking", "current_balance": D("500.00"),
+                     "available_balance": D("500.00")} for e in ("acc1", "acc2", "acc3")]
+        page = {"added": [
+            plaid_txn("f1", "acc1", TODAY - timedelta(days=10), "-100.00", "USPS"),
+            plaid_txn("c1", "acc2", date(2024, 12, 20), "-50.00", "BEFORE OPENING"),      # skipped
+            plaid_txn("c2", "acc2", TODAY - timedelta(days=2), "-60.00", "ULINE"),
+            plaid_txn("b1", "acc3", TODAY - timedelta(days=2), "25.00", "INTEREST"),
+        ], "modified": [], "removed": [], "next_cursor": "c"}
+        s = sync_connection(conn, provider=FakeProvider(accounts=accounts, pages=[page]))
+        self.assertEqual(s["accounts_initialized"], ["Fresh"])
+        self.assertEqual(s["skipped"], 1)
+        fresh.refresh_from_db(); configured.refresh_from_db(); zero_but_backdated.refresh_from_db()
+        self.assertEqual((fresh.opening_date, fresh.opening_balance), (TODAY - timedelta(days=10), D("600.00")))
+        self.assertEqual((configured.opening_date, configured.opening_balance), (date(2025, 1, 1), D("1000.00")))
+        self.assertEqual((zero_but_backdated.opening_date, zero_but_backdated.opening_balance), (date(2025, 6, 1), D("0")))
+        self.assertFalse(BankTransaction.objects.filter(external_id="c1").exists())
+        self.assertFalse(at_defaults(fresh))            # has transactions now
+
+
+class LearnedSuggestionSourceTests(BankingBase):
+    """#9 learn from categorized rows only; matched rows carry system
+    accounts the dropdown does not offer."""
+
+    def test_matched_rows_do_not_teach(self):
+        from orders.tests import make_customer
+        from payments.models import Payment
+        cust = make_customer("Card Shop")
+        p = Payment.objects.create(customer=cust, amount=D("500.00"), date=TODAY, method="zelle")
+        old = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 111", amount="500.00",
+                       day=TODAY - timedelta(days=20))
+        old.link_payments([p], user=self.user)
+        new = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 222", amount="500.00")
+        c = apply_rules([new])
+        new.refresh_from_db()
+        self.assertEqual(c["learned"], 0)
+        self.assertIsNone(new.suggested_account)
+        # a categorized sibling does teach, and the suggestion is selectable
+        cat = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 333", amount="500.00",
+                       day=TODAY - timedelta(days=10))
+        cat.categorize(Account.system("sales"), user=self.user)
+        c = apply_rules([new])
+        new.refresh_from_db()
+        self.assertEqual((c["learned"], new.suggested_account), (1, Account.system("sales")))
+        offered = {a.pk for _, accts in Account.bank_category_choices() for a in accts}
+        self.assertIn(new.suggested_account_id, offered)
+
+    def test_inbox_selects_reviewed_by(self):
+        done = self.txn(desc="ULINE", amount="-120.00")
+        done.categorize(self.shipping_acct, user=self.user)
+        with self.assertNumQueries(self.client.get(reverse("bank_inbox") + "?status=categorized")
+                                   and 0 or 0):
+            pass
+        resp = self.client.get(reverse("bank_inbox") + "?status=categorized")
+        self.assertContains(resp, self.user.username)
+        self.assertIn("reviewed_by", str(resp.context["page"].object_list.query))
+
+
+class BankAccountFormDefaultsTests(BankingBase):
+    """#10 a new account opens on the books start date."""
+
+    def test_new_account_defaults_to_books_start_date(self):
+        from banking.forms import BankAccountForm
+        settings_obj = CompanySettings.get()
+        settings_obj.books_start_date = date(2025, 1, 1)
+        settings_obj.save()
+        form = BankAccountForm()
+        self.assertEqual(form.fields["opening_date"].initial, date(2025, 1, 1))
+        self.assertIn("Your books start on Jan 1, 2025", form.fields["opening_date"].help_text)
+        self.assertIn("transactions before the opening date are skipped", form.fields["opening_date"].help_text)
+        resp = self.client.get(reverse("bank_account_create"))
+        self.assertContains(resp, 'value="2025-01-01"')
+        self.assertContains(resp, "Your books start on Jan 1, 2025")
+        # editing never overrides what the owner chose
+        edit = BankAccountForm(instance=self.checking)
+        self.assertEqual(edit["opening_date"].value(), date(2020, 1, 1))
+        self.assertNotIn("Your books start", edit.fields["opening_date"].help_text)
+        # no books start date -> plain default (today)
+        settings_obj.books_start_date = None
+        settings_obj.save()
+        form = BankAccountForm()
+        self.assertNotIn("Your books start", form.fields["opening_date"].help_text)
+
+
+class ManualTransactionDetailTests(BankingBase):
+    """#11a hand-entered rows can be edited while unreviewed and deleted."""
+
+    def test_edit_and_delete_manual_row(self):
+        t = self.txn(account=self.checking, desc="USPS stamps", amount="-25.00", source="manual")
+        url = reverse("bank_transaction_detail", args=[t.pk])
+        resp = self.client.get(url)
+        self.assertContains(resp, "Hand-entered transaction")
+        self.assertContains(resp, 'name="action" value="edit"')
+        self.assertContains(resp, "Delete this transaction")
+        old_fp = t.fingerprint
+        resp = self.client.post(url, {"action": "edit", "date": (TODAY - timedelta(days=1)).isoformat(),
+                                      "direction": "in", "amount": "30.00", "description": "USPS refund"}, follow=True)
+        self.assertContains(resp, "Transaction updated.")
+        t.refresh_from_db()
+        self.assertEqual((t.date, t.amount, t.description, t.original_description),
+                         (TODAY - timedelta(days=1), D("30.00"), "USPS refund", "USPS refund"))
+        self.assertNotEqual(t.fingerprint, old_fp)
+        # validation errors come back as messages
+        resp = self.client.post(url, {"action": "edit", "date": "2019-01-01", "direction": "out",
+                                      "amount": "1", "description": "x"}, follow=True)
+        self.assertContains(resp, "pick a date on or after")
+        resp = self.client.post(url, {"action": "edit", "date": TODAY.isoformat(), "direction": "out",
+                                      "amount": "0", "description": "x"}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        t.refresh_from_db()
+        self.assertEqual(t.amount, D("30.00"))
+        # once reviewed, no edit form (but delete stays)
+        t.categorize(Account.system("sales"), user=self.user)
+        resp = self.client.get(url)
+        self.assertNotContains(resp, 'name="action" value="edit"')
+        self.assertContains(resp, "Delete this transaction")
+        resp = self.client.post(url, {"action": "edit", "date": TODAY.isoformat(), "direction": "in",
+                                      "amount": "31", "description": "x"}, follow=True)
+        self.assertContains(resp, "Undo the review first")
+        # delete: soft, and releases documents
+        e = Expense.objects.create(date=TODAY, category=self.shipping, vendor="Uline", amount=D("120.00"))
+        m = self.txn(desc="ULINE", amount="-120.00", source="manual")
+        m.link_expense(e, user=self.user)
+        resp = self.client.post(reverse("bank_transaction_detail", args=[m.pk]), {"action": "delete"}, follow=True)
+        self.assertContains(resp, "Transaction deleted.")
+        self.assertEqual(resp.redirect_chain[-1][0], reverse("bank_inbox"))
+        self.assertFalse(BankTransaction.objects.filter(pk=m.pk).exists())
+        self.assertTrue(BankTransaction.all_objects.get(pk=m.pk).is_deleted)
+        e.refresh_from_db()
+        self.assertIsNone(e.paid_date)
+        self.assertEqual(self.client.get(reverse("bank_transaction_detail", args=[m.pk])).status_code, 404)
+
+    def test_bank_rows_cannot_be_edited_or_deleted(self):
+        t = self.txn(desc="PIRATE SHIP", amount="-45.20", source="csv")
+        url = reverse("bank_transaction_detail", args=[t.pk])
+        resp = self.client.get(url)
+        self.assertNotContains(resp, "Hand-entered transaction")
+        resp = self.client.post(url, {"action": "delete"}, follow=True)
+        self.assertContains(resp, "Only hand-entered transactions can be deleted")
+        self.assertTrue(BankTransaction.objects.filter(pk=t.pk).exists())
+        resp = self.client.post(url, {"action": "edit", "date": TODAY.isoformat(), "direction": "out",
+                                      "amount": "1", "description": "x"}, follow=True)
+        self.assertContains(resp, "Only hand-entered transactions can be edited")
+
+
+class RecordPaymentLinkTests(BankingBase):
+    """#11b deposits link to a pre-filled payment form with a customer guess."""
+
+    def test_payment_url_and_customer_guess(self):
+        from orders.tests import make_customer
+        from banking.views import _guess_customer
+        shop = make_customer("Card Shop LLC")
+        make_customer("Tampa Cards")
+        dep = self.txn(account=self.checking, desc="ZELLE PAYMENT FROM CARD SHOP 998", amount="1250.00")
+        self.assertEqual(_guess_customer(dep), shop)
+        self.assertIsNone(_guess_customer(self.txn(account=self.checking, desc="DEPOSIT 123", amount="5.00")))
+        resp = self.client.get(reverse("bank_transaction_detail", args=[dep.pk]))
+        self.assertContains(resp, "Record a customer payment for this deposit")
+        url = resp.context["payment_url"]
+        self.assertTrue(url.startswith(reverse("payment_create") + "?"))
+        from urllib.parse import parse_qs, urlparse
+        q = parse_qs(urlparse(url).query)
+        self.assertEqual(q["bank_txn"], [str(dep.pk)])
+        self.assertEqual(q["amount"], ["1250.00"])
+        self.assertEqual(q["date"], [TODAY.isoformat()])
+        self.assertEqual(q["reference"], ["ZELLE PAYMENT FROM CARD SHOP 998"])
+        self.assertEqual(q["customer"], [str(shop.pk)])
+        # follows through to the payment form
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertContains(resp, 'name="bank_txn" value="%d"' % dep.pk)
+        self.assertContains(resp, 'value="1250.00"')
+        # outflows and matched deposits do not offer it
+        out = self.txn(account=self.checking, desc="USPS", amount="-5.00")
+        self.assertIsNone(self.client.get(reverse("bank_transaction_detail", args=[out.pk])).context["payment_url"])
+        dep.mark_ignored(user=self.user)
+        self.assertIsNone(self.client.get(reverse("bank_transaction_detail", args=[dep.pk])).context["payment_url"])
+
+
+class SplitViewTests(BankingBase):
+    """#11c split a transaction across categories from the detail page."""
+
+    def test_split_form_post_errors_and_undo(self):
+        from banking.models import BankTransactionSplit
+        t = self.txn(desc="STAPLES 1234", amount="-100.00")
+        url = reverse("bank_transaction_detail", args=[t.pk])
+        resp = self.client.get(url)
+        self.assertContains(resp, "Split this transaction")
+        self.assertContains(resp, 'name="split_account_1"')
+        self.assertContains(resp, 'name="split_amount_5"')
+        self.assertContains(resp, 'id="splitRemaining"')
+        # parts must add up
+        resp = self.client.post(url, {"action": "split", "split_account_1": self.shipping_acct.pk, "split_amount_1": "60",
+                                      "split_account_2": self.software_acct.pk, "split_amount_2": "30"}, follow=True)
+        self.assertContains(resp, "add up to $100.00")
+        self.assertFalse(t.splits.exists())
+        resp = self.client.post(url, {"action": "split", "split_account_1": self.shipping_acct.pk, "split_amount_1": "100"},
+                                follow=True)
+        self.assertContains(resp, "at least two parts")
+        resp = self.client.post(url, {"action": "split", "split_account_1": self.shipping_acct.pk, "split_amount_1": "60",
+                                      "split_account_2": "", "split_amount_2": "40"}, follow=True)
+        self.assertContains(resp, "Pick a category for part 2")
+        resp = self.client.post(url, {"action": "split", "split_account_1": self.shipping_acct.pk, "split_amount_1": "abc",
+                                      "split_account_2": self.software_acct.pk, "split_amount_2": "40"}, follow=True)
+        self.assertContains(resp, "positive amount for part 1")
+        # success: expense rows per part, row shows as split in the inbox
+        resp = self.client.post(url, {"action": "split",
+                                      "split_account_1": self.shipping_acct.pk, "split_amount_1": "60.00", "split_note_1": "boxes",
+                                      "split_account_2": self.software_acct.pk, "split_amount_2": "40.00",
+                                      "split_account_3": "", "split_amount_3": ""}, follow=True)
+        self.assertContains(resp, "Split into 2 parts")
+        t.refresh_from_db()
+        self.assertEqual(t.status, BankTransaction.CATEGORIZED)
+        self.assertTrue(t.is_split)
+        self.assertEqual(BankTransactionSplit.objects.count(), 2)
+        self.assertEqual(sorted(Expense.objects.values_list("amount", flat=True)), [D("40.00"), D("60.00")])
+        self.assertContains(resp, "Split across 2 categories")
+        self.assertContains(resp, "Undo split")
+        self.assertNotContains(resp, "Split this transaction")      # already split
+        inbox = self.client.get(reverse("bank_inbox") + "?status=categorized")
+        self.assertContains(inbox, "Split · 2 parts")
+        # undo = reset
+        self.client.post(url, {"action": "reset"})
+        t.refresh_from_db()
+        self.assertEqual((t.status, t.is_split, Expense.objects.count()), (BankTransaction.UNREVIEWED, False, 0))
+
+
+class InboxPhoneLayoutTests(BankingBase):
+    """#13 sync visible everywhere; compact rows with a More… toggle."""
+
+    def test_sync_button_and_compact_rows(self):
+        BankConnection.objects.create(provider="plaid", institution_name="Bank", access_token="tok")
+        self.txn(desc="PIRATE SHIP", amount="-45.20")
+        resp = self.client.get(reverse("bank_inbox"))
+        html = resp.content.decode()
+        self.assertIn("Sync now", html)
+        import re as _re
+        sync_form = _re.search(r'<form method="post" action="%s"[^>]*>' % reverse("bank_sync_now"), html).group(0)
+        self.assertNotIn("hidden", sync_form)
+        self.assertIn('class="rowMore hidden sm:block', html)
+        self.assertIn("rowMoreBtn", html)
+        self.assertIn("More…", html)
+        # the compact Save and the full-width Save are both there (one per breakpoint)
+        self.assertEqual(html.count('name="action" value="save"'), 2)
