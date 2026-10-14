@@ -35,6 +35,10 @@
       </div>
       <div class="field"><label>Reference</label>{{ header_form.reference }}</div>
       <div class="grid grid-cols-2 gap-3">
+        <div class="field"><label>Supplier invoice #</label>{{ header_form.supplier_invoice_number }}</div>
+        <div class="field"><label>Bill due</label>{{ header_form.due_date }}</div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
         <div class="field"><label>Freight $</label>{{ header_form.freight_cost }}</div>
         <div class="field"><label>Duties $</label>{{ header_form.duties_cost }}</div>
       </div>
@@ -46,6 +50,47 @@
       <div class="flex justify-between"><span class="text-slate-500">Merchandise</span><b>${{ receipt.merchandise_total|floatformat:2|intcomma }}</b></div>
       <div class="flex justify-between"><span class="text-slate-500">Freight + duties</span><b>${{ receipt.freight_cost|add:receipt.duties_cost|floatformat:2 }}</b></div>
       <div class="flex justify-between text-base"><span class="text-slate-500">Landed total</span><b>${{ receipt.landed_total|floatformat:2|intcomma }}</b></div>
+    </div>
+
+    {# ---------- Supplier bill: what you owe this supplier for this order ---------- #}
+    <div class="mt-4 pt-4 border-t border-slate-100">
+      <h2 class="font-semibold mb-2 flex items-center gap-2">Supplier bill
+        {% if receipt.is_paid %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>
+        {% elif receipt.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue</span>
+        {% elif receipt.posted %}<span class="badge bg-amber-100 text-amber-700">Unpaid</span>
+        {% elif receipt.paid_date or linked_payments %}<span class="badge bg-sky-100 text-sky-700">Prepaid</span>{% endif %}
+      </h2>
+      <dl class="text-sm space-y-1 mb-3">
+        <div class="flex justify-between"><dt class="text-slate-500">Bill total</dt><dd>${{ receipt.landed_total|floatformat:2|intcomma }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Paid so far</dt><dd>${{ receipt.amount_paid|floatformat:2|intcomma }}</dd></div>
+        <div class="flex justify-between font-semibold"><dt class="text-slate-500">Balance</dt><dd>${{ receipt.balance_due|floatformat:2|intcomma }}</dd></div>
+      </dl>
+      {% if linked_payments %}
+      <p class="text-xs text-slate-500 mb-1">Paid from the bank feed:</p>
+      <ul class="text-xs space-y-0.5 mb-3">
+        {% for t in linked_payments %}
+        <li><a class="text-indigo-600 hover:underline" href="{% url 'bank_transaction_detail' t.pk %}">{{ t.date|date:"M j, Y" }} · {{ t.account.name }} · ${{ t.abs_amount|floatformat:2|intcomma }}</a></li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+      <form method="post" class="space-y-2">
+        {% csrf_token %}<input type="hidden" name="action" value="save_bill">
+        <div class="grid grid-cols-2 gap-3">
+          <div class="field"><label>Supplier invoice #</label>{{ bill_form.supplier_invoice_number }}</div>
+          <div class="field"><label>Bill due</label>{{ bill_form.due_date }}</div>
+        </div>
+        {% if not linked_payments %}
+        <div class="grid grid-cols-2 gap-3">
+          <div class="field"><label>Paid on</label>{{ bill_form.paid_date }}</div>
+          <div class="field"><label>Check / ref #</label>{{ bill_form.payment_reference }}</div>
+        </div>
+        <div class="field"><label>Paid from</label>{{ bill_form.paid_from }}
+          <p class="text-xs text-slate-400 mt-1">Tip: if this account is connected to Banking, leave these blank and match the bank transaction instead — it fills in automatically.</p></div>
+        {% else %}
+        <p class="text-xs text-slate-400">Payment details come from the matched bank transaction(s) above.</p>
+        {% endif %}
+        <button class="btn-secondary w-full justify-center">Save bill details</button>
+      </form>
     </div>
   </div>
 

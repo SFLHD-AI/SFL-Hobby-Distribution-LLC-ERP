@@ -219,3 +219,46 @@ class ProductDeleteTests(TestCase):
         self.assertFalse(Product.objects.filter(pk=self.p.pk).exists())      # hidden
         self.assertTrue(Product.all_objects.filter(pk=self.p.pk).exists())   # recoverable
         self.assertTrue(StockMovement.objects.filter(product=self.p).exists())  # ledger kept
+
+
+
+class SupplierBillTests(TestCase):
+    """Receipts double as supplier bills: due date, paid state, balance."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from decimal import Decimal
+        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        self.admin = User.objects.create_superuser("billadmin", password="x")
+        self.client.force_login(self.admin)
+        self.p = Product.objects.create(sku="BILL-1", name="Box", default_price=Decimal("10"))
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="GTS"))
+        ReceiptLine.objects.create(receipt=self.r, product=self.p, qty=10, unit_cost=Decimal("50"))
+        self.r.post()
+
+    def test_posted_receipt_is_an_unpaid_bill_until_paid(self):
+        from decimal import Decimal
+        self.assertFalse(self.r.is_paid)
+        self.assertEqual(self.r.balance_due, Decimal("500.00"))
+        r = self.client.get("/inventory/receiving/?status=unpaid")
+        self.assertContains(r, "RCV-%d" % self.r.pk)
+
+    def test_bill_details_editable_after_posting(self):
+        from decimal import Decimal
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {
+            "action": "save_bill", "supplier_invoice_number": "INV-77",
+            "due_date": "2026-12-01", "paid_date": "2026-10-01", "payment_reference": "chk 1001",
+        })
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.supplier_invoice_number, "INV-77")
+        self.assertTrue(self.r.is_paid)
+        self.assertEqual(self.r.amount_paid, Decimal("500.00"))
+        page = self.client.get(f"/inventory/receiving/{self.r.pk}/")
+        self.assertContains(page, "Paid")
+        self.assertContains(page, "INV-77")
+
+    def test_detail_page_renders_bill_card(self):
+        page = self.client.get(f"/inventory/receiving/{self.r.pk}/")
+        self.assertContains(page, "Supplier bill")
+        self.assertContains(page, "Unpaid")

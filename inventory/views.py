@@ -10,7 +10,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from core.csvutils import csv_response
 from core.models import log_activity
 from core.roles import can_see_costs, module_required
-from inventory.forms import (AdjustmentForm, CycleCountForm, PriceListForm,
+from inventory.forms import (ReceiptBillForm, AdjustmentForm, CycleCountForm, PriceListForm,
                              PriceListItemForm, ProductForm, ReceiptForm,
                              ReceiptLineForm)
 from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
@@ -315,6 +315,9 @@ def receipt_list(request):
         qs = qs.filter(posted=False)
     elif status == "posted":
         qs = qs.filter(posted=True)
+    elif status == "unpaid":
+        qs = [r for r in qs.filter(posted=True).prefetch_related("supplier_payments")
+              if not r.is_paid]
     return render(request, "inventory/receipt_list.html", {"receipts": qs[:200]})
 
 
@@ -335,7 +338,19 @@ def receipt_detail(request, pk):
     receipt = get_object_or_404(Receipt, pk=pk)
     line_form = ReceiptLineForm()
     header_form = ReceiptForm(instance=receipt)
-    if request.method == "POST" and not receipt.posted:
+    bill_form = ReceiptBillForm(instance=receipt)
+    if request.method == "POST" and request.POST.get("action") == "save_bill":
+        # Bill / payment details stay editable after receiving
+        bill_form = ReceiptBillForm(request.POST, instance=receipt)
+        if bill_form.is_valid():
+            bill_form.save()
+            log_activity(request.user, "supplier_bill_updated", receipt,
+                         changes={f: str(bill_form.cleaned_data.get(f))
+                                  for f in bill_form.changed_data})
+            messages.success(request, "Bill details saved.")
+            return redirect("receipt_detail", pk)
+        messages.error(request, "Bill details not saved — check the fields.")
+    elif request.method == "POST" and not receipt.posted:
         action = request.POST.get("action")
         if action == "add_line":
             line_form = ReceiptLineForm(request.POST)
@@ -362,8 +377,11 @@ def receipt_detail(request, pk):
             except ValidationError as e:
                 messages.error(request, "; ".join(e.messages))
             return redirect("receipt_detail", pk)
+    linked_payments = (receipt.supplier_payments.filter(is_deleted=False)
+                       .exclude(status="ignored").select_related("account").order_by("-date"))
     return render(request, "inventory/receipt_detail.html", {
         "receipt": receipt, "line_form": line_form, "header_form": header_form,
+        "bill_form": bill_form, "linked_payments": linked_payments,
         "lines": receipt.lines.filter(is_deleted=False).select_related("product"),
         "products": Product.objects.filter(active=True),
     })

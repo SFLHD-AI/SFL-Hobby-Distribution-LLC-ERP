@@ -15,6 +15,11 @@
     <div class="field"><label>Reference</label>{{ form.reference }}</div>
   </div>
   <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Supplier invoice / bill #</label>{{ form.supplier_invoice_number }}</div>
+    <div class="field"><label>Bill due date</label>{{ form.due_date }}
+      <p class="text-xs text-slate-400 mt-1">Shows on the unpaid-bills report until it's paid.</p></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
     <div class="field"><label>Freight $</label>{{ form.freight_cost }}</div>
     <div class="field"><label>Duties $</label>{{ form.duties_cost }}</div>
   </div>

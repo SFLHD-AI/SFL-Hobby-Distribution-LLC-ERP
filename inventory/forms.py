@@ -48,10 +48,12 @@ class ReceiptForm(forms.ModelForm):
     class Meta:
         model = Receipt
         fields = ["supplier", "date", "expected_date", "reference",
+                  "supplier_invoice_number", "due_date",
                   "freight_cost", "duties_cost", "notes"]
         widgets = {
             "date": forms.DateInput(attrs={"type": "date"}),
             "expected_date": forms.DateInput(attrs={"type": "date"}),
+            "due_date": forms.DateInput(attrs={"type": "date"}),
             "notes": forms.Textarea(attrs={"rows": 2}),
         }
 
@@ -94,3 +96,24 @@ class CycleCountForm(forms.ModelForm):
     class Meta:
         model = CycleCount
         fields = ["name"]
+
+
+class ReceiptBillForm(forms.ModelForm):
+    """Supplier-bill details that stay editable after the goods are received:
+    invoice number, due date, and how/when it was paid. Matching a bank
+    transaction on the Banking screen fills the paid fields automatically."""
+
+    class Meta:
+        model = Receipt
+        fields = ["supplier_invoice_number", "due_date", "paid_date", "paid_from",
+                  "payment_reference"]
+        widgets = {
+            "due_date": forms.DateInput(attrs={"type": "date"}),
+            "paid_date": forms.DateInput(attrs={"type": "date"}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        from banking.models import BankAccount
+        self.fields["paid_from"].queryset = BankAccount.objects.filter(active=True)
+        self.fields["paid_from"].empty_label = "— paid personally / not from a tracked account —"
