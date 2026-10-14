@@ -15,5 +15,6 @@ urlpatterns = [
     path("accounts/new/", views.account_create, name="accounting_account_create"),
     path("accounts/<int:pk>/", views.account_edit, name="accounting_account_edit"),
     path("year-end/", views.year_end, name="accounting_year_end"),
+    path("month-close/", views.month_close, name="accounting_month_close"),
     path("close-books/", views.period_lock, name="accounting_period_lock"),
 ]

@@ -70,9 +70,10 @@
   {# ---- 6-month equity trend ---- #}
   <div class="card lg:col-span-2 overflow-x-auto">
     <div class="flex items-center justify-between px-4 pt-4">
-      <h2 class="font-semibold">Equity, last 6 months <span class="text-slate-400 font-normal text-sm">({{ basis_label|lower }})</span></h2>
-      <a href="{% url 'accounting_equity_trend' %}?basis={{ basis }}" class="text-sm text-indigo-600 hover:underline">Full trend & chart →</a>
+      <h2 class="font-semibold">Equity, last 6 months <span class="text-slate-400 font-normal text-sm">(accrual basis)</span></h2>
+      <a href="{% url 'accounting_equity_trend' %}?basis=accrual" class="text-sm text-indigo-600 hover:underline">Full trend & chart →</a>
     </div>
+    <p class="text-xs text-slate-500 px-4 mt-1">Always shown on the accrual basis, whatever the toggle says: inventory on the shelf and invoices waiting to be paid count, so this is the honest answer to "am I building equity?"</p>
     <table class="tbl mt-2">
       <thead><tr><th>Month</th><th class="num">Equity</th><th class="num">Change</th><th class="num hidden sm:table-cell">Net income</th></tr></thead>
       <tbody>
@@ -91,6 +92,16 @@
 
   {# ---- status ---- #}
   <div class="space-y-4">
+    <a href="{{ close_tile.url }}" class="card-pad block hover:border-indigo-300 transition-colors {% if close_tile.is_closed %}border-emerald-200{% else %}border-amber-200 bg-amber-50/40{% endif %}">
+      <div class="flex items-center justify-between gap-2">
+        <h2 class="font-semibold">Month close</h2>
+        {% if close_tile.is_closed %}<span class="badge bg-emerald-100 text-emerald-700">Closed</span>
+        {% else %}<span class="badge bg-amber-100 text-amber-800">{{ close_tile.done }} of {{ close_tile.total }} done</span>{% endif %}
+      </div>
+      <p class="text-lg font-semibold mt-1">{{ close_tile.label }}</p>
+      <p class="text-xs text-slate-500 mt-1">{% if close_tile.is_closed %}Done. Open the checklist to review or reopen it.{% else %}Empty the inbox, check statements, tick the boxes, then close the month. Takes ten minutes.{% endif %}</p>
+      <p class="text-sm text-indigo-600 mt-2">Open the checklist →</p>
+    </a>
     <div class="card-pad">
       <h2 class="font-semibold mb-2">Books status</h2>
       <dl class="text-sm space-y-2">
@@ -118,8 +129,8 @@
   <a href="{% url 'accounting_compare' %}" class="card-pad border-indigo-200 bg-indigo-50/40 hover:border-indigo-400 transition-colors">
     <p class="text-2xl mb-2">🔀</p><h3 class="font-semibold">Cash vs. accrual</h3>
     <p class="text-sm text-slate-500 mt-1">Both bases side by side with a plain-words bridge explaining every dollar of difference. Your key report.</p></a>
-  <a href="{% url 'accounting_equity_trend' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">📈</p><h3 class="font-semibold">Equity trend</h3>
+  <a href="{% url 'accounting_equity_trend' %}?basis=accrual" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📈</p><h3 class="font-semibold">Equity trend <span class="text-xs font-normal text-slate-400">(accrual basis)</span></h3>
     <p class="text-sm text-slate-500 mt-1">Month-end equity, assets and liabilities over time. Am I building equity?</p></a>
   <a href="{% url 'accounting_trial_balance' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🧮</p><h3 class="font-semibold">Trial balance</h3>
@@ -135,7 +146,10 @@
     <p class="text-sm text-slate-500 mt-1">The list of accounts money lands in, with current balances.</p></a>
   <a href="{% url 'accounting_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📦</p><h3 class="font-semibold">Year-end package</h3>
-    <p class="text-sm text-slate-500 mt-1">One ZIP with every statement on both bases plus the journals. Also available per month.</p></a>
+    <p class="text-sm text-slate-500 mt-1">One ZIP with every statement on both bases (CSV + PDF), trial balances, ledgers and journals. Also available per month.</p></a>
+  <a href="{% url 'accounting_month_close' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">✅</p><h3 class="font-semibold">Month close</h3>
+    <p class="text-sm text-slate-500 mt-1">The monthly checklist: inbox empty, receipts attached, bills paid, statements checked. Close the month when it is done.</p></a>
   {% if u_is_admin %}
   <a href="{% url 'accounting_period_lock' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🔒</p><h3 class="font-semibold">Close the books</h3>

@@ -22,6 +22,8 @@
   td { padding: 4.5px 8px; border-bottom: 0.4pt solid #e2e8f0; vertical-align: top; }
   .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .code { color: #94a3b8; font-size: 8pt; width: 34pt; }
+  .code.wide { width: 64pt; white-space: nowrap; color: #475569; }
+  .sub { display: block; color: #94a3b8; font-size: 7.5pt; margin-top: 1px; }
   tr.section td { padding-top: 12px; font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
                   color: #475569; border-bottom: 1px solid #cbd5e1; }
   tr.total td { font-weight: 700; border-top: 1px solid #94a3b8; border-bottom: none; }
@@ -50,8 +52,8 @@
 <table>
   <thead>
     <tr>
-      <th class="code"></th>
-      <th>Account</th>
+      <th class="code{% if wide_code %} wide{% endif %}">{{ code_heading|default:"" }}</th>
+      <th>{{ label_heading|default:"Account" }}</th>
       {% for c in columns %}<th class="r">{{ c }}</th>{% endfor %}
     </tr>
   </thead>
@@ -62,8 +64,8 @@
     {% endif %}
     {% for row in sec.rows %}
     <tr {% if row.computed %}class="computed"{% endif %}>
-      <td class="code">{{ row.code }}</td>
-      <td class="label">{{ row.label }}{% if row.computed %} <span class="note">(computed)</span>{% endif %}</td>
+      <td class="code{% if wide_code %} wide{% endif %}">{{ row.code }}</td>
+      <td class="label">{{ row.label }}{% if row.computed %} <span class="note">(computed)</span>{% endif %}{% if row.note %}<span class="sub">{{ row.note }}</span>{% endif %}</td>
       {% for v in row.amounts %}
       <td class="r">{% include "accounting/_money.html" with v=v %}</td>
       {% endfor %}

@@ -1,0 +1,102 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Month close · {{ label }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Month close</h1>
+    <p class="text-sm text-slate-500">Ten minutes once a month keeps year-end painless. Clear the automatic checks, tick the manual ones, then close the month.</p>
+  </div>
+  <a href="{% url 'accounting_index' %}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+</div>
+
+{# ---- month picker ---- #}
+<div class="card-pad mb-4 flex flex-wrap items-center justify-between gap-3">
+  <a href="{{ prev_url }}" class="btn-secondary">← {{ prev_label }}</a>
+  <div class="text-center">
+    <p class="text-xl font-semibold">{{ label }}</p>
+    <p class="text-xs text-slate-500">{{ status.start|date:"M j" }} – {{ status.end|date:"M j, Y" }}{% if is_current_month %} · still in progress{% endif %}</p>
+    <div class="mt-1 flex flex-wrap justify-center gap-1.5">
+      {% if status.is_closed %}<span class="badge bg-emerald-100 text-emerald-700">Closed {{ status.month_close.closed_at|date:"M j, Y" }}{% if status.month_close.closed_by %} by {{ status.month_close.closed_by.get_full_name|default:status.month_close.closed_by.username }}{% endif %}</span>
+      {% elif status.is_complete %}<span class="badge bg-emerald-100 text-emerald-700">Ready to close</span>
+      {% else %}<span class="badge bg-amber-100 text-amber-800">{{ status.done }} of {{ status.total }} done</span>{% endif %}
+      {% if status.locked %}<span class="badge bg-slate-200 text-slate-700">Books locked</span>{% endif %}
+    </div>
+  </div>
+  {% if next_url %}<a href="{{ next_url }}" class="btn-secondary">{{ next_label }} →</a>{% else %}<span class="btn-secondary opacity-40 cursor-default">Next month →</span>{% endif %}
+  <form method="get" class="w-full flex flex-wrap gap-2 items-end field-inline border-t border-slate-100 pt-3">
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_month">Jump to a month</label>
+      <input type="month" id="f_month" name="month" value="{{ month_param }}" max="{{ today|date:'Y-m' }}" pattern="[0-9]{4}-[0-9]{2}" placeholder="YYYY-MM" required></div>
+    <button class="btn-secondary">Go</button>
+  </form>
+</div>
+
+<div class="grid lg:grid-cols-5 gap-4">
+  {# ---- automatic checks ---- #}
+  <div class="card lg:col-span-3">
+    <div class="px-4 pt-4">
+      <h2 class="font-semibold">Checked automatically</h2>
+      <p class="text-xs text-slate-500">Live counts from your documents. Each link opens the exact list to clear.</p>
+    </div>
+    <ul class="divide-y divide-slate-100 mt-2">
+      {% for c in status.checks %}
+      <li class="flex flex-wrap items-start justify-between gap-3 px-4 py-3" data-check="{{ c.key }}">
+        <div class="flex items-start gap-3 min-w-0">
+          {% if c.ok %}<span class="badge bg-emerald-100 text-emerald-700 mt-0.5">✓</span>{% else %}<span class="badge bg-amber-100 text-amber-800 mt-0.5">{{ c.count }}</span>{% endif %}
+          <div class="min-w-0">
+            <p class="font-medium">{{ c.label }}</p>
+            <p class="text-xs text-slate-500">{{ c.help }}</p>
+          </div>
+        </div>
+        <div class="text-sm whitespace-nowrap">
+          {% if c.ok %}<span class="text-emerald-700">Done</span>
+          {% else %}<span class="text-amber-800">{{ c.count }} {{ c.noun }}{{ c.count|pluralize }}{% if c.amount %} · {% include "accounting/_money.html" with v=c.amount %}{% endif %}</span>
+            <a href="{{ c.url }}" class="text-indigo-600 hover:underline ml-2">{{ c.link_label }} →</a>{% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+    <div class="px-4 py-3 border-t border-slate-100 flex flex-wrap gap-3 text-sm">
+      <a href="{{ pnl_url }}" class="text-indigo-600 hover:underline">Income statement for {{ label }} →</a>
+      <a href="{{ package_url }}" class="text-indigo-600 hover:underline">Download the month-end package (ZIP) →</a>
+    </div>
+  </div>
+
+  {# ---- manual steps + close ---- #}
+  <form method="post" class="card-pad lg:col-span-2 space-y-4">
+    {% csrf_token %}
+    <input type="hidden" name="month" value="{{ month_param }}">
+    <div>
+      <h2 class="font-semibold">Tick these yourself</h2>
+      <p class="text-xs text-slate-500">Saved per month, so you can come back to it.</p>
+    </div>
+    <div class="space-y-3">
+      {% for f in form.step_fields %}
+      <label class="flex items-start gap-3 cursor-pointer">
+        {{ f }}
+        <span class="text-sm leading-tight">{{ f.label }}</span>
+      </label>
+      {% endfor %}
+    </div>
+    <div class="field">
+      <label for="{{ form.notes.id_for_label }}">Notes</label>
+      {{ form.notes }}
+      {% for e in form.notes.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    </div>
+    {% if can_lock and not status.is_closed %}
+    <label class="flex items-start gap-3 cursor-pointer text-sm">
+      {{ form.lock_books }}
+      <span>{{ form.lock_books.label }} <span class="block text-xs text-slate-500">Edits to documents dated on or before {{ status.end|date:"M j, Y" }} will warn first.{% if lock.locked_through %} Books are currently locked through {{ lock.locked_through|date:"M j, Y" }}.{% endif %}</span></span>
+    </label>
+    {% endif %}
+    <div class="flex flex-wrap gap-2 pt-1">
+      <button name="action" value="save" class="btn-secondary">Save</button>
+      {% if status.is_closed %}
+      <button name="action" value="reopen" class="btn-danger" onclick="return confirm('Reopen {{ label }}? You can close it again any time.')">Reopen</button>
+      {% else %}
+      <button name="action" value="close" class="btn-success" {% if not status.is_complete %}onclick="return confirm('Not every check is clear yet. Close {{ label }} anyway?')"{% endif %}>Close month</button>
+      {% endif %}
+    </div>
+    <p class="text-xs text-slate-400">Closing records that you finished the routine. It does not change any numbers.{% if not can_lock %} Only an administrator can lock the books.{% endif %}</p>
+  </form>
+</div>
+{% endblock %}

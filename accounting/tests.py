@@ -381,6 +381,8 @@ class AccountingUISetup(TestCase):
             reverse("accounting_account_edit", args=[Account.system("ar").pk]),
             reverse("accounting_year_end"),
             reverse("accounting_period_lock"),
+            reverse("accounting_month_close"),
+            reverse("accounting_month_close") + f"?month={TODAY:%Y-%m}",
         ]
 
 
@@ -560,9 +562,13 @@ class AccountingExports(AccountingUISetup):
         zf = zipfile.ZipFile(io.BytesIO(r.content))
         names = set(zf.namelist())
         expected = {"pnl_cash.csv", "pnl_accrual.csv", "balance_sheet_cash.csv", "balance_sheet_accrual.csv",
-                    "cash_vs_accrual.csv", "trial_balance_accrual.csv", "general_journal_accrual.csv",
-                    "general_journal_cash.csv", "README.txt"}
+                    "cash_vs_accrual.csv", "trial_balance_cash.csv", "trial_balance_accrual.csv",
+                    "general_ledger_cash.csv", "general_ledger_accrual.csv",
+                    "general_journal_accrual.csv", "general_journal_cash.csv",
+                    "pnl_cash.pdf", "pnl_accrual.pdf", "balance_sheet_cash.pdf",
+                    "balance_sheet_accrual.pdf", "cash_vs_accrual.pdf", "README.txt"}
         self.assertEqual(names, expected)
+        self.assertEqual(names, {n for n, _ in rp.PACKAGE_FILES} | {"README.txt"})
         readme = zf.read("README.txt").decode()
         self.assertIn("CASH basis", readme)
         for name in expected - {"README.txt"}:
@@ -843,7 +849,10 @@ class ReportHelpers(TestCase):
         self.assertEqual(len(zf.namelist()), len(rp.PACKAGE_FILES) + 1)
         for name, _ in rp.PACKAGE_FILES:
             self.assertIn(name, zf.namelist())
-            self.assertTrue(zf.read(name).decode().splitlines()[0])      # has a header row
+            if name.endswith(".pdf"):
+                self.assertTrue(zf.read(name).startswith(b"%PDF"), name)
+            else:
+                self.assertTrue(zf.read(name).decode().splitlines()[0])      # has a header row
 
 
 class ReviewReversalTests(TestCase):
@@ -1093,3 +1102,386 @@ class SplitTransactionTests(TestCase):
         self.txn.delete()
         self.assertEqual(Expense.objects.count(), 0)
         self.assertEqual(income_statement(CASH, YEAR_START, TODAY)["total_expenses"], D("0.00"))
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups: accrual-only trend widget, PDF exports, the richer
+# year-end package, the accountant checklist and the month close
+# ---------------------------------------------------------------------------
+from django.utils.html import escape
+
+from accounting import closing
+from accounting.models import MonthClose
+from expenses.models import RecurringExpense
+
+
+class ReviewFollowUpsUI(AccountingUISetup):
+    def test_hub_equity_trend_is_always_accrual(self):
+        r = self.client.get(reverse("accounting_index") + "?basis=cash")
+        self.assertEqual(r.context["basis"], CASH)
+        self.assertEqual(r.context["trend_basis"], ACCRUAL)
+        html = r.content.decode()
+        self.assertIn("Equity, last 6 months", html)
+        self.assertIn("(accrual basis)", html)
+        self.assertIn(reverse("accounting_equity_trend") + "?basis=accrual", html)
+        accrual = equity_trend(ACCRUAL, months=6)
+        self.assertEqual([t["equity"] for t in r.context["trend"]], [t["equity"] for t in accrual])
+        # the statements themselves still follow the toggle
+        self.assertEqual(r.context["snap"]["basis"], CASH)
+
+    def test_equity_trend_pdf_export(self):
+        r = self.client.get(reverse("accounting_equity_trend") + "?basis=accrual&months=6&export=pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertTrue(r.content.startswith(b"%PDF"))
+        self.assertIn("equity_trend_accrual_6m.pdf", r["Content-Disposition"])
+        html = self.client.get(reverse("accounting_equity_trend")).content.decode()
+        self.assertIn("export=pdf", html)
+
+    def test_equity_trend_default_months_follow_books_start(self):
+        s = CompanySettings.get()
+        self.assertIsNone(s.books_start_date)
+        self.assertEqual(rp.default_trend_months(), 12)
+        y, m = closing.shift_month(TODAY.year, TODAY.month, -4)        # 5 months incl. this one
+        s.books_start_date = date(y, m, 20); s.save()
+        self.assertEqual(rp.default_trend_months(), 5)
+        r = self.client.get(reverse("accounting_equity_trend"))
+        self.assertEqual(r.context["months"], 5)
+        self.assertEqual(len(r.context["rows"]), 5)
+        self.assertIn(5, r.context["month_options"])
+        r = self.client.get(reverse("accounting_equity_trend") + "?months=abc")
+        self.assertEqual(r.context["months"], 5)                     # garbage falls back to the default
+        r = self.client.get(reverse("accounting_equity_trend") + "?months=24")
+        self.assertEqual(r.context["months"], 24)                    # explicit choice wins
+        s.books_start_date = date(TODAY.year - 10, 1, 1); s.save()
+        self.assertEqual(rp.default_trend_months(), 36)              # clamped high
+        s.books_start_date = TODAY; s.save()
+        self.assertEqual(rp.default_trend_months(), 3)               # clamped low
+
+    def test_general_ledger_plain_words_and_pdf(self):
+        url = reverse("accounting_general_ledger") + f"?basis=accrual&account={Account.system('ar').pk}&preset=ytd"
+        html = self.client.get(url).content.decode()
+        self.assertIn("Debits", html)
+        self.assertIn("Credits", html)
+        self.assertNotIn(">Dr ", html)
+        self.assertIn("export=pdf", html)
+        r = self.client.get(url + "&export=pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        self.assertTrue(r.content.startswith(b"%PDF"))
+        self.assertIn("general_ledger_1200_accrual_", r["Content-Disposition"])
+        # no account picked: export is ignored and the chooser renders
+        r = self.client.get(reverse("accounting_general_ledger") + "?export=pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("text/html", r["Content-Type"])
+
+    def test_gl_pdf_sections_shape(self):
+        j = Journal(ACCRUAL, [YEAR_START - timedelta(days=1), TODAY])
+        gl = j.general_ledger(Account.system("ar"), YEAR_START, TODAY)
+        secs = rp.gl_pdf_sections(gl)
+        self.assertEqual(len(secs), 1)
+        self.assertEqual(secs[0]["rows"][0]["label"], "Opening balance")
+        self.assertEqual(len(secs[0]["rows"]), len(gl["rows"]) + 1)
+        self.assertEqual(secs[0]["totals"][2], gl["closing_balance"])
+        self.assertTrue(secs[0]["rows"][1]["note"])          # source document under the memo
+
+    def test_general_ledger_all_rows_match_single_account_ledgers(self):
+        j = Journal(ACCRUAL, [YEAR_START - timedelta(days=1), TODAY])
+        rows = rp.general_ledger_all_rows(j, YEAR_START, TODAY)
+        groups = {}
+        for r in rows:
+            groups.setdefault((r[0], r[1]), []).append(r)
+        self.assertIn((Account.system("ar").code, Account.system("ar").name), groups)
+        for (code, name), lines in groups.items():
+            acct = Account.objects.get(code=code, name=name)
+            gl = j.general_ledger(acct, YEAR_START, TODAY)
+            self.assertEqual(lines[0][3], "Opening balance")
+            self.assertEqual(lines[-1][3], "Closing balance")
+            self.assertEqual(lines[0][8], rp.money(gl["opening_balance"]))
+            self.assertEqual(lines[-1][8], rp.money(gl["closing_balance"]))
+            self.assertEqual(len(lines) - 2, len(gl["rows"]))
+            self.assertEqual(lines[-1][6], rp.money(sum((x["debit"] for x in gl["rows"]), D("0"))))
+
+    def test_package_has_pdfs_trial_balance_cash_and_general_ledgers(self):
+        r = self.client.get(reverse("accounting_year_end") + f"?month={TODAY:%Y-%m}")
+        zf = zipfile.ZipFile(io.BytesIO(r.content))
+        for name in ("pnl_cash.pdf", "pnl_accrual.pdf", "balance_sheet_cash.pdf",
+                     "balance_sheet_accrual.pdf", "cash_vs_accrual.pdf"):
+            with self.subTest(name=name):
+                data = zf.read(name)
+                self.assertTrue(data.startswith(b"%PDF"))
+                self.assertGreater(len(data), 1000)
+        tb = zf.read("trial_balance_cash.csv").decode().splitlines()
+        self.assertEqual(tb[0], ",".join(rp.TB_HEADER))
+        self.assertTrue(tb[-1].startswith(",TOTAL,"))
+        for name in ("general_ledger_accrual.csv", "general_ledger_cash.csv"):
+            gl = zf.read(name).decode().splitlines()
+            self.assertEqual(gl[0], ",".join(rp.GL_ALL_HEADER))
+            self.assertIn("Opening balance", gl[1])
+            self.assertTrue(any("Closing balance" in line for line in gl))
+        readme = zf.read("README.txt").decode()
+        self.assertIn("Print-ready statements (PDF)", readme)
+        self.assertIn("one section per account", readme)
+
+    def test_year_end_page_month_picker_checklist_and_expense_link(self):
+        r = self.client.get(reverse("accounting_year_end"))
+        html = r.content.decode()
+        self.assertIn('type="month"', html)
+        self.assertNotIn("address bar", html)
+        self.assertIn("Before you send to your accountant", html)
+        self.assertIn(reverse("expense_year_end"), html)
+        self.assertIn(reverse("accounting_month_close"), html)
+        for name, _ in rp.PACKAGE_FILES:
+            self.assertIn(name, html)
+        keys = [c["key"] for c in r.context["checklist"]]
+        self.assertEqual(keys, ["unreviewed", "statements_checked", "missing_receipts", "unpaid_overdue",
+                                "recurring_due", "months_closed"])
+        for c in r.context["checklist"]:
+            self.assertTrue(c["url"], c["key"])
+        # checklist covers the highlighted (last complete) fiscal year
+        self.assertEqual(r.context["check_start"], date(TODAY.year - 1, 1, 1))
+        self.assertEqual(r.context["check_end"], date(TODAY.year - 1, 12, 31))
+
+    def test_chart_of_accounts_links_to_expense_categories(self):
+        html = self.client.get(reverse("accounting_accounts")).content.decode()
+        self.assertIn(reverse("expense_categories"), html)
+        self.assertIn(reverse("bank_accounts"), html)
+
+
+class MonthCloseTests(TestCase):
+    """The previous month, with every kind of loose end present once."""
+
+    def setUp(self):
+        Account.ensure_system_accounts()
+        self.admin = User.objects.create_superuser("owner", password="x")
+        self.client.force_login(self.admin)
+        self.y, self.m = closing.previous_month(TODAY)
+        self.start, self.end = closing.month_bounds(self.y, self.m)
+        self.mid = self.start.replace(day=15)
+        self.checking = BankAccount.objects.create(
+            name="Checking", account_type="checking", opening_balance=D("1000.00"),
+            opening_date=self.start - timedelta(days=400))
+        self.cat = ExpenseCategory.objects.create(name="Software")
+        # bank: two unreviewed in the month, one in the next month, one categorized (with a receipt)
+        self.t1 = BankTransaction.objects.create(account=self.checking, date=self.mid, amount=D("-10.00"),
+                                                 description="AWS")
+        self.t2 = BankTransaction.objects.create(account=self.checking, date=self.end, amount=D("-20.00"),
+                                                 description="GITHUB")
+        BankTransaction.objects.create(account=self.checking, date=self.end + timedelta(days=1),
+                                       amount=D("-30.00"), description="NEXT MONTH")
+        t = BankTransaction.objects.create(account=self.checking, date=self.mid, amount=D("-40.00"),
+                                           description="ULINE", receipt_file="bank_receipts/u.jpg")
+        t.categorize(self.cat.ensure_account())
+        # expenses dated in the month
+        self.e_missing = Expense.objects.create(date=self.mid, category=self.cat, vendor="Adobe",
+                                                amount=D("60.00"), due_date=self.end)     # unpaid, due in month
+        Expense.objects.create(date=self.mid, category=self.cat, vendor="Zoom", amount=D("15.00"),
+                               paid_date=self.mid, receipt_file="expense_receipts/z.pdf")
+        Expense.objects.create(date=self.mid, category=self.cat, vendor="Ads", amount=D("25.00"),
+                               due_date=self.end + timedelta(days=10), receipt_file="expense_receipts/a.pdf")
+        # an older bill with no due date: aged from its date, so it is past due too
+        self.e_old = Expense.objects.create(date=self.start - timedelta(days=40), category=self.cat,
+                                            vendor="Old", amount=D("5.00"))
+        # supplier bills: one unpaid, one paid
+        sup = Supplier.objects.create(name="GTS")
+        p = Product.objects.create(sku="BOX-2", name="Box", default_price=D("100.00"))
+        self.bill = Receipt.objects.create(supplier=sup, date=self.mid)
+        ReceiptLine.objects.create(receipt=self.bill, product=p, qty=2, unit_cost=D("50.00"))
+        self.bill.post()
+        paid = Receipt.objects.create(supplier=sup, date=self.mid, paid_date=self.mid)
+        ReceiptLine.objects.create(receipt=paid, product=p, qty=1, unit_cost=D("10.00"))
+        paid.post()
+        # recurring: one due, one not yet, one retired
+        self.hosting = RecurringExpense.objects.create(name="Hosting", category=self.cat, amount=D("20.00"),
+                                                       next_date=TODAY - timedelta(days=3))
+        RecurringExpense.objects.create(name="Insurance", category=self.cat, amount=D("50.00"),
+                                        next_date=TODAY + timedelta(days=10))
+        RecurringExpense.objects.create(name="Retired", category=self.cat, amount=D("1.00"),
+                                        next_date=TODAY - timedelta(days=30), active=False)
+        self.url = reverse("accounting_month_close")
+        self.param = f"{self.y}-{self.m:02d}"
+
+    def test_month_status_counts(self):
+        st = closing.month_status(self.y, self.m)
+        self.assertEqual(st["unreviewed"], 2)
+        self.assertEqual(st["missing_receipts"], 1)          # Adobe; ULINE's receipt is on the bank txn
+        self.assertEqual(st["unpaid_overdue"], 3)            # Adobe 60 + Old 5 + supplier bill 100
+        self.assertEqual(st["unpaid_total"], D("165.00"))
+        self.assertEqual(st["recurring_due"], 1)
+        self.assertEqual(st["total"], 4 + len(MonthClose.MANUAL_STEPS))
+        self.assertEqual(st["done"], 0)
+        self.assertFalse(st["is_complete"])
+        self.assertFalse(st["is_closed"])
+        self.assertFalse(st["locked"])
+        self.assertEqual(st["label"], self.start.strftime("%B %Y"))
+        self.assertEqual(st["prev"], closing.shift_month(self.y, self.m, -1))
+        self.assertEqual(st["next"], (TODAY.year, TODAY.month))
+        self.assertTrue(MonthClose.objects.filter(year=self.y, month=self.m).exists())
+        self.assertEqual([c["key"] for c in st["checks"]],
+                         ["unreviewed", "missing_receipts", "unpaid_overdue", "recurring_due"])
+        self.assertEqual([m["key"] for m in st["manual"]], [k for k, _ in MonthClose.MANUAL_STEPS])
+        urls = {c["key"]: c["url"] for c in st["checks"]}
+        self.assertTrue(urls["unreviewed"].startswith(reverse("bank_inbox")))
+        self.assertIn("status=unreviewed", urls["unreviewed"])
+        self.assertIn(f"start={self.start}", urls["unreviewed"])
+        self.assertIn(f"end={self.end}", urls["unreviewed"])
+        self.assertTrue(urls["missing_receipts"].startswith(reverse("expense_report_missing_receipts")))
+        self.assertIn(f"start={self.start}", urls["missing_receipts"])
+        self.assertIn(f"end={self.end}", urls["missing_receipts"])
+        self.assertEqual(urls["unpaid_overdue"], reverse("expense_report_unpaid_bills"))
+        self.assertEqual(urls["recurring_due"], reverse("expense_recurring"))
+
+    def test_month_status_clears_as_the_work_gets_done(self):
+        for t in (self.t1, self.t2):
+            t.mark_ignored()
+        self.e_missing.receipt_file = "expense_receipts/adobe.pdf"
+        self.e_missing.save()
+        self.e_missing.mark_paid(self.mid)
+        self.e_old.mark_paid(TODAY)
+        self.bill.paid_date = self.mid
+        self.bill.save(update_fields=["paid_date"])
+        self.hosting.next_date = TODAY + timedelta(days=1)
+        self.hosting.save()
+        st = closing.month_status(self.y, self.m)
+        self.assertTrue(all(c["ok"] for c in st["checks"]), [c["key"] for c in st["checks"] if not c["ok"]])
+        self.assertEqual(st["done"], 4)
+        self.assertFalse(st["is_complete"])
+        row = st["month_close"]
+        row.steps = {k: True for k, _ in MonthClose.MANUAL_STEPS}
+        row.save()
+        st = closing.month_status(self.y, self.m)
+        self.assertTrue(st["is_complete"])
+        self.assertEqual(st["done"], st["total"])
+
+    def test_dashboard_tile(self):
+        tile = closing.dashboard_tile(TODAY)
+        self.assertEqual(set(tile), {"label", "year", "month", "done", "total", "is_closed", "url"})
+        self.assertEqual((tile["year"], tile["month"]), (self.y, self.m))
+        self.assertEqual(tile["label"], self.start.strftime("%B %Y"))
+        self.assertEqual(tile["url"], f"{self.url}?month={self.param}")
+        self.assertEqual((tile["done"], tile["total"]), (0, 4 + len(MonthClose.MANUAL_STEPS)))
+        self.assertFalse(tile["is_closed"])
+        tile = closing.dashboard_tile(date(2026, 1, 15))
+        self.assertEqual((tile["year"], tile["month"], tile["label"]), (2025, 12, "December 2025"))
+        self.assertFalse(MonthClose.objects.filter(year=2025, month=12).exists())   # tile never writes
+        tile_default = closing.dashboard_tile()
+        self.assertEqual((tile_default["year"], tile_default["month"]), (self.y, self.m))
+
+    def test_page_renders_previous_month_by_default(self):
+        r = self.client.get(self.url)
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual((r.context["year"], r.context["month"]), (self.y, self.m))
+        html = r.content.decode()
+        self.assertIn(self.start.strftime("%B %Y"), html)
+        self.assertIn("2 transactions", html)
+        self.assertIn("1 expense", html)
+        self.assertIn("3 bills", html)
+        self.assertIn("1 template", html)
+        self.assertIn(reverse("bank_inbox"), html)
+        self.assertIn(reverse("expense_report_missing_receipts"), html)
+        self.assertIn(reverse("expense_report_unpaid_bills"), html)
+        self.assertIn(reverse("expense_recurring"), html)
+        for _, label in MonthClose.MANUAL_STEPS:
+            self.assertIn(escape(label), html)
+        self.assertIn("Close month", html)
+        self.assertNotIn("Reopen", html)
+        self.assertIn(r.context["prev_url"], html)
+        self.assertIn(r.context["next_url"], html)           # next month is the current month
+        self.assertIn("Also lock the books", html)           # admin sees the lock switch
+        r = self.client.get(self.url + f"?month={self.param}")
+        self.assertEqual((r.context["year"], r.context["month"]), (self.y, self.m))
+        r = self.client.get(self.url + f"?month={TODAY:%Y-%m}")
+        self.assertEqual(r.context["next_url"], "")           # nothing after the current month
+
+    def test_bad_or_future_month_redirects_with_message(self):
+        r = self.client.get(self.url + "?month=2026-13", follow=True)
+        self.assertIn("YYYY-MM", r.content.decode())
+        r = self.client.get(self.url + f"?month={TODAY.year + 1}-01", follow=True)
+        self.assertIn("not started yet", r.content.decode())
+
+    def test_save_close_lock_and_reopen(self):
+        r = self.client.post(self.url, {"month": self.param, "action": "save",
+                                        "statements_checked": "on", "notes": "Visa off by $12"})
+        self.assertEqual(r.status_code, 302)
+        self.assertIn(f"month={self.param}", r["Location"])
+        row = MonthClose.objects.get(year=self.y, month=self.m)
+        self.assertTrue(row.steps["statements_checked"])
+        self.assertFalse(row.steps["statements_saved"])
+        self.assertEqual(row.notes, "Visa off by $12")
+        self.assertFalse(row.is_closed)
+        self.assertEqual(closing.month_status(self.y, self.m)["done"], 1)
+        html = self.client.get(self.url + f"?month={self.param}").content.decode()
+        self.assertIn("Visa off by $12", html)
+        self.assertIn("1 of 7 done", html)
+        # close, locking the books through month end
+        data = {"month": self.param, "action": "close", "lock_books": "on", "notes": "done"}
+        data.update({k: "on" for k, _ in MonthClose.MANUAL_STEPS})
+        r = self.client.post(self.url, data)
+        self.assertEqual(r.status_code, 302)
+        row.refresh_from_db()
+        self.assertTrue(row.is_closed)
+        self.assertEqual(row.closed_by, self.admin)
+        self.assertEqual(FiscalPeriodLock.get().locked_through, self.end)
+        self.assertTrue(closing.month_status(self.y, self.m)["locked"])
+        html = self.client.get(self.url + f"?month={self.param}").content.decode()
+        self.assertIn("Closed", html)
+        self.assertIn("Reopen", html)
+        self.assertNotIn("Close month", html)
+        self.assertNotIn("Also lock the books", html)
+        # the lock never moves backwards
+        lock = FiscalPeriodLock.get(); lock.locked_through = TODAY; lock.save()
+        py, pm = closing.shift_month(self.y, self.m, -1)
+        self.client.post(self.url, {"month": f"{py}-{pm:02d}", "action": "close", "lock_books": "on"})
+        self.assertEqual(FiscalPeriodLock.get().locked_through, TODAY)
+        self.assertTrue(MonthClose.objects.get(year=py, month=pm).is_closed)
+        # reopen
+        r = self.client.post(self.url, {"month": self.param, "action": "reopen"})
+        self.assertEqual(r.status_code, 302)
+        row.refresh_from_db()
+        self.assertFalse(row.is_closed)
+        self.assertIsNone(row.closed_by)
+        self.assertEqual(row.notes, "done")                   # checklist survives a reopen
+
+    def test_close_without_lock_leaves_books_open(self):
+        self.client.post(self.url, {"month": self.param, "action": "close"})
+        self.assertTrue(MonthClose.objects.get(year=self.y, month=self.m).is_closed)
+        self.assertIsNone(FiscalPeriodLock.get().locked_through)
+
+    def test_non_admin_can_close_but_cannot_lock(self):
+        user = _role_user("book", ["accounting", "banking", "expenses"], True)
+        self.client.force_login(user)
+        html = self.client.get(self.url).content.decode()
+        self.assertNotIn("Also lock the books", html)
+        self.assertIn("Only an administrator can lock the books", html)
+        self.client.post(self.url, {"month": self.param, "action": "close", "lock_books": "on"})
+        row = MonthClose.objects.get(year=self.y, month=self.m)
+        self.assertTrue(row.is_closed)
+        self.assertEqual(row.closed_by, user)
+        self.assertIsNone(FiscalPeriodLock.get().locked_through)
+
+    def test_user_without_costs_is_blocked(self):
+        user = _role_user("nocosts", ["accounting"], False)
+        self.client.force_login(user)
+        self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_hub_card_shows_the_tile(self):
+        html = self.client.get(reverse("accounting_index")).content.decode()
+        self.assertIn("Month close", html)
+        self.assertIn(self.start.strftime("%B %Y"), html)
+        self.assertIn(f"0 of {4 + len(MonthClose.MANUAL_STEPS)} done", html)
+        self.assertIn(f"{self.url}?month={self.param}", html)
+
+    def test_year_end_checklist_counts_reconciled_and_closed_months(self):
+        y = TODAY.year - 1
+        for m in range(1, 13):
+            MonthClose.objects.create(year=y, month=m, steps={"statements_checked": m <= 10},
+                                      closed_at=timezone.now() if m <= 9 else None)
+        r = self.client.get(reverse("accounting_year_end"))
+        by_key = {c["key"]: c for c in r.context["checklist"]}
+        self.assertEqual(by_key["statements_checked"]["progress"], "10 of 12 months")
+        self.assertFalse(by_key["statements_checked"]["ok"])
+        self.assertEqual(by_key["statements_checked"]["count"], 2)
+        self.assertIn(f"month={y}-11", by_key["statements_checked"]["url"])     # first unchecked month
+        self.assertEqual(by_key["months_closed"]["progress"], "9 of 12 months")
+        self.assertIn(f"month={y}-10", by_key["months_closed"]["url"])
+        self.assertIn("10 of 12 months", r.content.decode())

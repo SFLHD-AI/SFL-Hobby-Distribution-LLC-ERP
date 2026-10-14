@@ -1,7 +1,7 @@
-"""Forms for the chart of accounts and the period lock."""
+"""Forms for the chart of accounts, the period lock and the month close."""
 from django import forms
 
-from accounting.models import Account, AccountSubtype, AccountType, FiscalPeriodLock
+from accounting.models import Account, AccountSubtype, AccountType, FiscalPeriodLock, MonthClose
 
 # Which subtypes make sense for each account type. The engine uses subtypes to
 # decide how an account behaves, so a mismatch would produce nonsense statements.
@@ -125,3 +125,27 @@ class PeriodLockForm(forms.ModelForm):
             if day > timezone.localdate():
                 raise forms.ValidationError("You can only close periods that have already ended.")
         return day
+
+
+class MonthCloseForm(forms.Form):
+    """The manual month-close checklist: one checkbox per
+    ``MonthClose.MANUAL_STEPS`` entry, free-text notes and the optional
+    'lock the books' switch used by the Close button."""
+
+    notes = forms.CharField(required=False, widget=forms.Textarea(attrs={
+        "rows": 3, "placeholder": "Anything odd this month? e.g. 'Visa statement off by $12, pending charge'"}),
+        label="Notes")
+    lock_books = forms.BooleanField(required=False, label="Also lock the books through month end")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for key, label in MonthClose.MANUAL_STEPS:
+            self.fields[key] = forms.BooleanField(required=False, label=label)
+
+    @property
+    def step_fields(self):
+        return [self[key] for key, _ in MonthClose.MANUAL_STEPS]
+
+    def steps(self):
+        """{step key: bool} from the cleaned data."""
+        return {key: bool(self.cleaned_data.get(key)) for key, _ in MonthClose.MANUAL_STEPS}

@@ -36,7 +36,10 @@
     <div><label class="text-xs text-slate-500 block mb-1" for="f_end">To</label>
       <input type="date" id="f_end" name="end" value="{{ end|date:'Y-m-d' }}" required></div>
     <button class="btn-primary">Run</button>
-    {% if gl %}<a href="?{{ export_qs }}&export=csv" class="btn-secondary sm:ml-auto">⬇ CSV</a>{% endif %}
+    {% if gl %}<div class="flex gap-2 sm:ml-auto">
+      <a href="?{{ export_qs }}&export=csv" class="btn-secondary">⬇ CSV</a>
+      <a href="?{{ export_qs }}&export=pdf" target="_blank" class="btn-secondary">📄 PDF</a>
+    </div>{% endif %}
   </div>
   {% if account %}
   <div class="flex flex-wrap gap-1.5 text-xs">
@@ -57,7 +60,7 @@
 {% else %}
 <div class="grid sm:grid-cols-3 gap-3 mb-4">
   <div class="stat"><p class="lbl">Opening balance {{ start|date:"M j" }}</p><p class="val">{% include "accounting/_money.html" with v=gl.opening_balance %}</p></div>
-  <div class="stat"><p class="lbl">Activity</p><p class="val text-base">Dr {% include "accounting/_money.html" with v=total_debit %} <span class="text-slate-300">·</span> Cr {% include "accounting/_money.html" with v=total_credit %}</p></div>
+  <div class="stat"><p class="lbl">Activity</p><p class="val text-base">Debits {% include "accounting/_money.html" with v=total_debit %} <span class="text-slate-300">·</span> Credits {% include "accounting/_money.html" with v=total_credit %}</p></div>
   <div class="stat border-indigo-200"><p class="lbl">Closing balance {{ end|date:"M j" }}</p><p class="val">{% include "accounting/_money.html" with v=gl.closing_balance %}</p></div>
 </div>
 

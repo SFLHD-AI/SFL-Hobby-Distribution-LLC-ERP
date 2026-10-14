@@ -9,6 +9,7 @@ Nothing here touches the database model layer; it only reads
 """
 import io
 import zipfile
+from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -119,6 +120,19 @@ def last_complete_fiscal_year(today=None, start_month=None):
     return current_start.year - 1
 
 
+def default_trend_months(today=None, lo=3, hi=36):
+    """How many months the equity trend shows by default: every month since
+    the books started (clamped to ``lo``..``hi``), or 12 when the books
+    start date is not set."""
+    from core.models import CompanySettings
+    books_start = CompanySettings.get().books_start_date
+    if not books_start:
+        return 12
+    today = today or timezone.localdate()
+    n = (today.year - books_start.year) * 12 + (today.month - books_start.month) + 1
+    return max(lo, min(n, hi))
+
+
 def quarter_bounds(day):
     q_start_month = 3 * ((day.month - 1) // 3) + 1
     start = day.replace(month=q_start_month, day=1)
@@ -208,6 +222,8 @@ COMPARE_HEADER = ["Section", "Code", "Account", "Cash", "Accrual", "Difference"]
 TB_HEADER = ["Code", "Account", "Type", "Debit", "Credit"]
 JOURNAL_HEADER = ["Date", "Memo", "Source type", "Source id", "Code", "Account", "Debit", "Credit"]
 GL_HEADER = ["Date", "Memo", "Source type", "Source id", "Debit", "Credit", "Balance"]
+GL_ALL_HEADER = ["Account code", "Account", "Date", "Memo", "Source type", "Source id",
+                 "Debit", "Credit", "Balance"]
 EQUITY_HEADER = ["Month", "Assets", "Liabilities", "Equity", "Net income", "Change in equity"]
 
 
@@ -325,6 +341,40 @@ def gl_csv_rows(gl):
     return rows
 
 
+def general_ledger_all_rows(journal, start, end):
+    """One section per account with activity in [start, end]: an opening
+    balance line, every journal line with a running balance, and a closing
+    line with the period's total debits and credits. Balances use the
+    account's natural sign (like the on-screen ledger)."""
+    accts = journal.accounts()
+    opening = journal.balances_through(start - timedelta(days=1))
+    by_account = defaultdict(list)
+    for e in journal.entries_between(start, end):
+        for l in e.lines:
+            by_account[l.account_id].append((e, l))
+
+    def acct_for(pk):
+        return accts.get(pk) or journal.account(pk)
+
+    rows = []
+    for acct_id in sorted(by_account, key=lambda k: (acct_for(k).code, acct_for(k).name)):
+        acct = acct_for(acct_id)
+        running = opening.get(acct_id, ZERO)
+        rows.append([acct.code, acct.name, start.isoformat(), "Opening balance", "", "", "", "",
+                     money(acct.signed_balance(running))])
+        td = tc = ZERO
+        for e, l in by_account[acct_id]:
+            running += l.debit - l.credit
+            td += l.debit
+            tc += l.credit
+            rows.append([acct.code, acct.name, e.date.isoformat(), e.memo, e.source_type,
+                         e.source_id, money(l.debit), money(l.credit),
+                         money(acct.signed_balance(running))])
+        rows.append([acct.code, acct.name, end.isoformat(), "Closing balance", "", "",
+                     money(td), money(tc), money(acct.signed_balance(running))])
+    return rows
+
+
 def equity_csv_rows(rows):
     return [[r["label"], money(r["assets"]), money(r["liabilities"]), money(r["equity"]),
              money(r["net_income"]), money(r["equity_change"])] for r in rows]
@@ -404,6 +454,60 @@ def trial_balance_pdf_sections(tb):
         "emphasis": True}]
 
 
+EQUITY_PDF_COLUMNS = ["Assets", "Liabilities", "Equity", "Net income", "Change"]
+
+
+def equity_pdf_sections(rows):
+    """Equity trend as a table: one line per month end plus the change over
+    the whole period."""
+    if not rows:
+        return [{"heading": None, "rows": [], "total_label": "No months to show",
+                 "totals": [None] * len(EQUITY_PDF_COLUMNS)}]
+    first, last = rows[0], rows[-1]
+    return [{
+        "heading": None,
+        "rows": [{"label": r["label"], "code": r["month_end"].strftime("%m/%d"),
+                  "amounts": [r["assets"], r["liabilities"], r["equity"], r["net_income"],
+                              r["equity_change"]]} for r in rows],
+        "total_label": f"Change {first['label']} – {last['label']}",
+        "totals": [last["assets"] - first["assets"], last["liabilities"] - first["liabilities"],
+                   last["equity"] - first["equity"], sum((r["net_income"] for r in rows), ZERO),
+                   None],
+        "emphasis": True}]
+
+
+GL_PDF_COLUMNS = ["Debit", "Credit", "Balance"]
+
+
+def gl_pdf_sections(gl):
+    """One account's ledger for the PDF: opening line, every entry (memo with
+    the source document underneath), closing line with period totals."""
+    acct = gl["account"]
+    rows = [{"label": "Opening balance", "code": gl["start"].strftime("%b %-d, %Y"),
+             "amounts": [None, None, gl["opening_balance"]], "computed": True}]
+    td = tc = ZERO
+    for r in gl["rows"]:
+        td += r["debit"]
+        tc += r["credit"]
+        note = r["source_type"] + (f" #{r['source_id']}" if r["source_id"] else "")
+        rows.append({"label": r["memo"], "code": r["date"].strftime("%b %-d, %Y"),
+                     "note": note.strip(),
+                     "amounts": [r["debit"] or None, r["credit"] or None, r["balance"]]})
+    return [{"heading": f"{acct.code} {acct.name}", "rows": rows,
+             "total_label": f"Closing balance {gl['end']:%b %-d, %Y}",
+             "totals": [td, tc, gl["closing_balance"]], "emphasis": True}]
+
+
+def statement_pdf_context(title, subtitle, sections, columns, company=None, generated=None, **extra):
+    """Context for templates/pdf/financial_statement.html."""
+    from core.models import CompanySettings
+    ctx = {"title": title, "subtitle": subtitle, "sections": sections, "columns": columns,
+           "company": company or CompanySettings.get(),
+           "generated": generated or timezone.localtime()}
+    ctx.update(extra)
+    return ctx
+
+
 # ---------------------------------------------------------------------------
 # Year-end / month-end package
 # ---------------------------------------------------------------------------
@@ -413,10 +517,20 @@ PACKAGE_FILES = [
     ("balance_sheet_cash.csv", "Balance sheet at the last day of the period, cash basis (no AR, AP or inventory)."),
     ("balance_sheet_accrual.csv", "Balance sheet at the last day of the period, accrual basis (AR, inventory, AP included)."),
     ("cash_vs_accrual.csv", "Side-by-side income statement on both bases with the bridge that explains the difference."),
+    ("trial_balance_cash.csv", "Every account's debit or credit balance at period end, cash basis."),
     ("trial_balance_accrual.csv", "Every account's debit or credit balance at period end, accrual basis."),
+    ("general_ledger_cash.csv", "Every account with activity, cash basis: opening balance, each line with a running balance, closing balance."),
+    ("general_ledger_accrual.csv", "Every account with activity, accrual basis: opening balance, each line with a running balance, closing balance."),
     ("general_journal_accrual.csv", "Every journal line in the period, accrual basis, with the source document."),
     ("general_journal_cash.csv", "Every journal line in the period, cash basis."),
+    ("pnl_cash.pdf", "Print-ready income statement, cash basis."),
+    ("pnl_accrual.pdf", "Print-ready income statement, accrual basis."),
+    ("balance_sheet_cash.pdf", "Print-ready balance sheet, cash basis."),
+    ("balance_sheet_accrual.pdf", "Print-ready balance sheet, accrual basis."),
+    ("cash_vs_accrual.pdf", "Print-ready cash vs. accrual comparison with the bridge."),
 ]
+PACKAGE_CSV_FILES = [(n, d) for n, d in PACKAGE_FILES if n.endswith(".csv")]
+PACKAGE_PDF_FILES = [(n, d) for n, d in PACKAGE_FILES if n.endswith(".pdf")]
 
 
 def _csv_bytes(header, rows):
@@ -449,11 +563,18 @@ def package_readme(label, start, end, company_name, generated):
         "(money earned / money owed / your stake). Negative numbers are shown with a",
         "leading minus sign.",
         "",
-        "Files in this package:",
+        "Spreadsheets (CSV) in this package:",
     ]
-    for name, desc in PACKAGE_FILES:
+    for name, desc in PACKAGE_CSV_FILES:
         lines.append(f"  {name:<30} {desc}")
-    lines += ["", "Open any CSV in Excel, Google Sheets or QuickBooks.", ""]
+    lines += ["", "Print-ready statements (PDF):"]
+    for name, desc in PACKAGE_PDF_FILES:
+        lines.append(f"  {name:<30} {desc}")
+    lines += ["",
+              "Open any CSV in Excel, Google Sheets or QuickBooks. The general ledger files",
+              "have one section per account: an opening balance line, every entry with a",
+              "running balance, and a closing line with the period's total debits and credits.",
+              ""]
     return "\n".join(lines)
 
 
@@ -461,21 +582,48 @@ def build_package_zip(start, end, label):
     """Return ZIP bytes for the period [start, end] with every statement on
     both bases plus a README. Built in memory."""
     from core.models import CompanySettings
+    from core.pdf import render_pdf
     company = CompanySettings.get()
     generated = timezone.localtime()
     checkpoints = [start - timedelta(days=1), end]
     cash_j = Journal(CASH, checkpoints)
     acc_j = Journal(ACCRUAL, checkpoints)
+    pnl_c, pnl_a = cash_j.income_statement(start, end), acc_j.income_statement(start, end)
+    bs_c, bs_a = cash_j.balance_sheet(end), acc_j.balance_sheet(end)
+    cmp = compare_bases(start, end)
+    period = period_label(start, end)
+
+    def pdf(title, subtitle, sections, columns, **extra):
+        return render_pdf("pdf/financial_statement.html",
+                          statement_pdf_context(title, subtitle, sections, columns,
+                                                company=company, generated=generated, **extra))
+
+    def bs_badge(bs):
+        return {"badge": "Balanced" if bs["balanced"] else f"OUT OF BALANCE by ${bs['difference']}",
+                "badge_ok": bs["balanced"]}
 
     files = {
-        "pnl_cash.csv": _csv_bytes(PNL_HEADER, pnl_rows(cash_j.income_statement(start, end))),
-        "pnl_accrual.csv": _csv_bytes(PNL_HEADER, pnl_rows(acc_j.income_statement(start, end))),
-        "balance_sheet_cash.csv": _csv_bytes(BS_HEADER, balance_sheet_rows(cash_j.balance_sheet(end))),
-        "balance_sheet_accrual.csv": _csv_bytes(BS_HEADER, balance_sheet_rows(acc_j.balance_sheet(end))),
-        "cash_vs_accrual.csv": _csv_bytes(COMPARE_HEADER, compare_rows(compare_bases(start, end))),
+        "pnl_cash.csv": _csv_bytes(PNL_HEADER, pnl_rows(pnl_c)),
+        "pnl_accrual.csv": _csv_bytes(PNL_HEADER, pnl_rows(pnl_a)),
+        "balance_sheet_cash.csv": _csv_bytes(BS_HEADER, balance_sheet_rows(bs_c)),
+        "balance_sheet_accrual.csv": _csv_bytes(BS_HEADER, balance_sheet_rows(bs_a)),
+        "cash_vs_accrual.csv": _csv_bytes(COMPARE_HEADER, compare_rows(cmp)),
+        "trial_balance_cash.csv": _csv_bytes(TB_HEADER, trial_balance_rows(cash_j.trial_balance(end))),
         "trial_balance_accrual.csv": _csv_bytes(TB_HEADER, trial_balance_rows(acc_j.trial_balance(end))),
+        "general_ledger_cash.csv": _csv_bytes(GL_ALL_HEADER, general_ledger_all_rows(cash_j, start, end)),
+        "general_ledger_accrual.csv": _csv_bytes(GL_ALL_HEADER, general_ledger_all_rows(acc_j, start, end)),
         "general_journal_accrual.csv": _csv_bytes(JOURNAL_HEADER, journal_csv_rows(acc_j.journal_rows(start, end))),
         "general_journal_cash.csv": _csv_bytes(JOURNAL_HEADER, journal_csv_rows(cash_j.journal_rows(start, end))),
+        "pnl_cash.pdf": pdf("Income statement", f"{BASIS_LABELS[CASH]} · {period}",
+                            pnl_pdf_sections(pnl_c), ["Amount"]),
+        "pnl_accrual.pdf": pdf("Income statement", f"{BASIS_LABELS[ACCRUAL]} · {period}",
+                               pnl_pdf_sections(pnl_a), ["Amount"]),
+        "balance_sheet_cash.pdf": pdf("Balance sheet", f"{BASIS_LABELS[CASH]} · as of {end:%b %-d, %Y}",
+                                      balance_sheet_pdf_sections(bs_c), ["Amount"], **bs_badge(bs_c)),
+        "balance_sheet_accrual.pdf": pdf("Balance sheet", f"{BASIS_LABELS[ACCRUAL]} · as of {end:%b %-d, %Y}",
+                                         balance_sheet_pdf_sections(bs_a), ["Amount"], **bs_badge(bs_a)),
+        "cash_vs_accrual.pdf": pdf("Cash vs. accrual", period, compare_pdf_sections(cmp),
+                                   ["Cash", "Accrual", "Difference"]),
         "README.txt": package_readme(label, start, end, company.company_name, generated).encode("utf-8"),
     }
     buf = io.BytesIO()

@@ -6,24 +6,26 @@ Every page here reveals costs and profit, so each view carries both
 ``?basis=cash|accrual`` plus ``?export=csv|pdf`` where an export exists.
 """
 import calendar
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 
 from django.contrib import messages
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
 
+from accounting import closing
 from accounting import reports as rp
-from accounting.forms import (AccountForm, CODE_RANGES, PeriodLockForm, SystemAccountForm,
-                              SUBTYPES_BY_TYPE)
+from accounting.forms import (AccountForm, CODE_RANGES, MonthCloseForm, PeriodLockForm,
+                              SystemAccountForm, SUBTYPES_BY_TYPE)
 from accounting.ledger import (Journal, compare_bases, dashboard_snapshot, equity_trend,
                                fiscal_year_start)
-from accounting.models import ACCRUAL, CASH, Account, AccountType, FiscalPeriodLock
+from accounting.models import ACCRUAL, CASH, Account, AccountType, FiscalPeriodLock, MonthClose
 from core.csvutils import csv_response
 from core.models import CompanySettings, log_activity
 from core.pdf import pdf_response
-from core.roles import admin_required, costs_required, module_required
+from core.roles import admin_required, costs_required, is_admin, module_required
 
 ZERO = Decimal("0.00")
 JOURNAL_HTML_CAP = 2500       # rows shown on screen; CSV always has everything
@@ -49,10 +51,7 @@ def _common(request, basis, **extra):
 
 
 def _pdf(request, title, subtitle, sections, columns, filename, extra=None):
-    ctx = {"title": title, "subtitle": subtitle, "sections": sections, "columns": columns,
-           "company": CompanySettings.get(), "generated": timezone.localtime()}
-    if extra:
-        ctx.update(extra)
+    ctx = rp.statement_pdf_context(title, subtitle, sections, columns, **(extra or {}))
     return pdf_response("pdf/financial_statement.html", ctx, filename)
 
 
@@ -69,7 +68,8 @@ def index(request):
     basis = rp.basis_from_request(request)
     today = timezone.localdate()
     snapshots = {CASH: dashboard_snapshot(CASH, today), ACCRUAL: dashboard_snapshot(ACCRUAL, today)}
-    trend = equity_trend(basis, months=6, as_of=today)
+    # "Am I building equity?" is an accrual question: the trend widget ignores the toggle.
+    trend = equity_trend(ACCRUAL, months=6, as_of=today)
     settings_row = CompanySettings.get()
     fy_start = fiscal_year_start(today, settings_row.fiscal_year_start_month)
     pick = snapshots[basis]
@@ -83,6 +83,8 @@ def index(request):
                   mtd_gap=snapshots[ACCRUAL]["net_income_mtd"] - snapshots[CASH]["net_income_mtd"],
                   fy_start=fy_start, settings_row=settings_row,
                   month_start=today.replace(day=1),
+                  trend_basis=ACCRUAL, trend_basis_label=rp.BASIS_LABELS[ACCRUAL],
+                  close_tile=closing.dashboard_tile(today),
                   account_count=Account.objects.count())
     return render(request, "accounting/index.html", ctx)
 
@@ -173,20 +175,32 @@ def compare(request):
 @costs_required
 def equity_trend_view(request):
     basis = rp.basis_from_request(request)
+    default_months = rp.default_trend_months()
     try:
-        months = int(request.GET.get("months", 12))
+        months = int(request.GET.get("months", default_months))
     except (TypeError, ValueError):
-        months = 12
+        months = default_months
     months = max(1, min(months, 60))
     rows = equity_trend(basis, months=months)
-    if request.GET.get("export") == "csv":
+    export = request.GET.get("export")
+    if export == "csv":
         return csv_response(f"equity_trend_{basis}_{months}m.csv",
                             rp.EQUITY_HEADER, rp.equity_csv_rows(rows))
+    if export == "pdf":
+        return _pdf(request, "Equity trend",
+                    f"{rp.BASIS_LABELS[basis]} · {rows[0]['label']} – {rows[-1]['label']}",
+                    rp.equity_pdf_sections(rows), rp.EQUITY_PDF_COLUMNS,
+                    f"equity_trend_{basis}_{months}m.pdf",
+                    extra={"label_heading": "Month end", "code_heading": "",
+                           "footnote": "Equity = what you own minus what you owe. 'Change' compares "
+                                       "each month end to the one before. The current month shows "
+                                       "the position as of today."})
     first, last = rows[0], rows[-1]
     ctx = _common(request, basis, rows=rows, months=months, chart=rp.equity_chart(rows),
                   title="Equity trend", first=first, last=last,
                   total_change=last["equity"] - first["equity"],
-                  month_options=[3, 6, 12, 24, 36], hide_period=True,
+                  month_options=sorted({3, 6, 12, 24, 36, default_months}),
+                  default_months=default_months, hide_period=True,
                   months_up=sum(1 for r in rows if r["equity_change"] is not None and r["equity_change"] > 0),
                   months_down=sum(1 for r in rows if r["equity_change"] is not None and r["equity_change"] < 0))
     return render(request, "accounting/equity_trend.html", ctx)
@@ -248,9 +262,19 @@ def general_ledger(request):
     gl = None
     if account is not None:
         gl = Journal(basis, [start - timedelta(days=1), end]).general_ledger(account, start, end)
-        if request.GET.get("export") == "csv":
+        export = request.GET.get("export")
+        if export == "csv":
             return csv_response(f"general_ledger_{account.code}_{_slug(basis, start, end)}.csv",
                                 rp.GL_HEADER, rp.gl_csv_rows(gl))
+        if export == "pdf":
+            return _pdf(request, "General ledger",
+                        f"{rp.BASIS_LABELS[basis]} · {rp.period_label(start, end)}",
+                        rp.gl_pdf_sections(gl), rp.GL_PDF_COLUMNS,
+                        f"general_ledger_{account.code}_{_slug(basis, start, end)}.pdf",
+                        extra={"wide_code": True, "code_heading": "Date", "label_heading": "Memo",
+                               "footnote": "Balance is shown the natural way for this account: "
+                                           "positive for money in an asset, positive for an amount "
+                                           "owed, positive for income earned."})
     ctx = _common(request, basis, groups=_account_groups(accounts), account=account, gl=gl,
                   start=start, end=end, title="General ledger",
                   period_text=rp.period_label(start, end),
@@ -449,13 +473,140 @@ def year_end(request):
     for _ in range(12):
         months.append({"value": cur.strftime("%Y-%m"), "label": cur.strftime("%B %Y")})
         cur = (cur.replace(day=1) - timedelta(days=1))
+    check_start, check_end = rp.fiscal_year_bounds(default_year, start_month)
     ctx = _common(request, rp.basis_from_request(request), title="Year-end package",
                   years=years, months=months, default_year=default_year,
-                  files=rp.PACKAGE_FILES, start_month=start_month,
+                  files=rp.PACKAGE_FILES, csv_files=rp.PACKAGE_CSV_FILES,
+                  pdf_files=rp.PACKAGE_PDF_FILES, start_month=start_month,
                   start_month_name=calendar.month_name[start_month],
                   hide_period=True, hide_basis=True,
-                  this_month=today.strftime("%Y-%m"))
+                  this_month=today.strftime("%Y-%m"), last_month=last_month_end.strftime("%Y-%m"),
+                  checklist=_accountant_checklist(check_start, check_end, today),
+                  check_start=check_start, check_end=check_end,
+                  check_label=rp.fiscal_year_label(check_start, check_end))
     return render(request, "accounting/year_end.html", ctx)
+
+
+def _accountant_checklist(start, end, today):
+    """'Before you send to your accountant' rows for the fiscal year
+    [start, end]: the live automatic checks plus how many of the year's
+    months were reconciled and closed."""
+    items = []
+    for c in closing.automatic_checks(start, end):
+        items.append({"key": c["key"], "label": c["label"], "ok": c["ok"], "count": c["count"],
+                      "amount": c["amount"], "url": c["url"], "link_label": c["link_label"],
+                      "noun": c["noun"], "help": c["help"]})
+    months = [ym for ym in closing.months_in_range(start, end) if date(ym[0], ym[1], 1) <= today]
+    if not months:
+        return items
+    rows = closing.close_rows_for(months)
+    checked = [ym for ym in months if ym in rows and (rows[ym].steps or {}).get("statements_checked")]
+    closed = [ym for ym in months if ym in rows and rows[ym].is_closed]
+    first_open = next((ym for ym in months if ym not in checked), None)
+    items.insert(1, {
+        "key": "statements_checked", "label": "Every bank and card account checked against its statement",
+        "ok": len(checked) == len(months), "count": len(months) - len(checked), "amount": None,
+        "url": closing.month_url(*first_open) if first_open else closing.month_url(*months[-1]),
+        "link_label": "Open month close", "noun": "month",
+        "progress": f"{len(checked)} of {len(months)} months",
+        "help": "Ticked on the month-close page once each statement balance matches the books."})
+    items.append({
+        "key": "months_closed", "label": "Every month is closed",
+        "ok": len(closed) == len(months), "count": len(months) - len(closed), "amount": None,
+        "url": closing.month_url(*next((ym for ym in months if ym not in closed), months[-1])),
+        "link_label": "Close it", "noun": "month",
+        "progress": f"{len(closed)} of {len(months)} months",
+        "help": "Closing a month records that you finished its checklist."})
+    return items
+
+
+# ---------------------------------------------------------------------------
+# 10b. month close
+# ---------------------------------------------------------------------------
+@module_required("accounting")
+@costs_required
+def month_close(request):
+    today = timezone.localdate()
+    raw = request.POST.get("month") if request.method == "POST" else request.GET.get("month")
+    ym = rp.parse_month(raw)
+    if raw and ym is None:
+        messages.error(request, "Enter the month as YYYY-MM, e.g. 2026-03.")
+        return redirect("accounting_month_close")
+    if ym is None:
+        year, month = closing.previous_month(today)
+    else:
+        if ym[0] > today:
+            messages.error(request, "That month has not started yet.")
+            return redirect("accounting_month_close")
+        year, month = ym[0].year, ym[0].month
+    label = closing.month_label(year, month)
+    here = closing.month_url(year, month)
+
+    if request.method == "POST":
+        row, _ = MonthClose.objects.get_or_create(year=year, month=month)
+        action = request.POST.get("action", "save")
+        if action == "reopen":
+            row.closed_at = None
+            row.closed_by = None
+            row.save(update_fields=["closed_at", "closed_by", "updated_at"])
+            log_activity(request.user, "update", row, note=f"{label} reopened")
+            messages.success(request, f"{label} is open again. Finish the checklist and close it when ready.")
+            return redirect(here)
+        form = MonthCloseForm(request.POST)
+        if form.is_valid():
+            row.steps = form.steps()
+            row.notes = form.cleaned_data["notes"]
+            if action == "close":
+                row.closed_at = timezone.now()
+                row.closed_by = request.user
+                row.save()
+                note = f"{label} closed"
+                if form.cleaned_data["lock_books"] and is_admin(request.user):
+                    end = closing.month_bounds(year, month)[1]
+                    lock = FiscalPeriodLock.get()
+                    if lock.locked_through is None or lock.locked_through < end:
+                        lock.locked_through = end
+                        lock.note = f"Month close: {label}"
+                        lock.save()
+                        log_activity(request.user, "update", lock,
+                                     changes={"locked_through": str(end)}, note=lock.note)
+                        note += f"; books locked through {end:%b %-d, %Y}"
+                        messages.success(request, f"{label} closed and the books are locked through "
+                                                  f"{end:%b %-d, %Y}.")
+                    else:
+                        messages.success(request, f"{label} closed. The books were already locked "
+                                                  f"through {lock.locked_through:%b %-d, %Y}.")
+                else:
+                    messages.success(request, f"{label} closed. Nice work — the habit is what matters.")
+                log_activity(request.user, "update", row, changes={"steps": row.steps}, note=note)
+            else:
+                row.save()
+                log_activity(request.user, "update", row, changes={"steps": row.steps},
+                             note=f"{label} checklist saved")
+                messages.success(request, "Checklist saved.")
+            return redirect(here)
+        messages.error(request, "Please fix the highlighted fields.")
+        status = closing.month_status(year, month)
+    else:
+        status = closing.month_status(year, month)
+        initial = {m["key"]: m["checked"] for m in status["manual"]}
+        initial["notes"] = status["month_close"].notes
+        form = MonthCloseForm(initial=initial)
+
+    prev_y, prev_m = status["prev"]
+    ctx = {
+        "status": status, "form": form, "title": f"Month close · {label}", "label": label,
+        "year": year, "month": month, "month_param": closing.month_param(year, month),
+        "today": today, "lock": FiscalPeriodLock.get(),
+        "prev_url": closing.month_url(prev_y, prev_m), "prev_label": closing.month_label(prev_y, prev_m),
+        "next_url": closing.month_url(*status["next"]) if status["next"] else "",
+        "next_label": closing.month_label(*status["next"]) if status["next"] else "",
+        "package_url": f"{reverse('accounting_year_end')}?month={closing.month_param(year, month)}",
+        "pnl_url": f"{reverse('accounting_pnl')}?basis=accrual&start={status['start']}&end={status['end']}",
+        "can_lock": is_admin(request.user),
+        "is_current_month": (year, month) == (today.year, today.month),
+    }
+    return render(request, "accounting/month_close.html", ctx)
 
 
 # ---------------------------------------------------------------------------

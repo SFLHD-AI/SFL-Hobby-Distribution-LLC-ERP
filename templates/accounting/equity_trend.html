@@ -25,8 +25,11 @@
       {% if months not in month_options %}<option value="{{ months }}" selected>{{ months }}</option>{% endif %}
     </select></div>
   <button class="btn-primary">Run</button>
-  <a href="?{{ export_qs }}&export=csv" class="btn-secondary sm:ml-auto">⬇ CSV</a>
-  <p class="w-full text-xs text-slate-500">{{ basis_help }}</p>
+  <div class="flex gap-2 sm:ml-auto">
+    <a href="?{{ export_qs }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="?{{ export_qs }}&export=pdf" target="_blank" class="btn-secondary">📄 PDF</a>
+  </div>
+  <p class="w-full text-xs text-slate-500">{{ basis_help }}{% if months == default_months %} Showing every month since your books started.{% endif %}</p>
 </form>
 
 <div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% load humanize %}
 {% block title %}Year-end package{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -10,8 +10,35 @@
 </div>
 
 <div class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 text-sm px-4 py-3 mb-5">
-  The package holds every statement on <b>both</b> bases. Hand your CPA the cash-basis files for the return and keep the accrual files
+  The package holds every statement on <b>both</b> bases, as spreadsheets and as print-ready PDFs. Hand your CPA the cash-basis files for the return and keep the accrual files
   for yourself: they show whether the year actually built equity. A README inside explains each file.
+</div>
+
+{# ---- before you send ---- #}
+<div class="card mb-5">
+  <div class="flex flex-wrap items-center justify-between gap-2 px-4 pt-4">
+    <h2 class="font-semibold">Before you send to your accountant</h2>
+    <span class="text-xs text-slate-500">Checked for {{ check_label }} · {{ check_start|date:"M j, Y" }} – {{ check_end|date:"M j, Y" }}</span>
+  </div>
+  <ul class="divide-y divide-slate-100 mt-2">
+    {% for c in checklist %}
+    <li class="flex flex-wrap items-start justify-between gap-3 px-4 py-2.5">
+      <div class="flex items-start gap-3 min-w-0">
+        {% if c.ok %}<span class="badge bg-emerald-100 text-emerald-700 mt-0.5">✓</span>{% else %}<span class="badge bg-amber-100 text-amber-800 mt-0.5">{{ c.count }}</span>{% endif %}
+        <div class="min-w-0">
+          <p class="font-medium">{{ c.label }}{% if c.progress %} <span class="text-xs text-slate-500 font-normal">({{ c.progress }})</span>{% endif %}</p>
+          <p class="text-xs text-slate-500">{{ c.help }}</p>
+        </div>
+      </div>
+      <div class="text-sm whitespace-nowrap">
+        {% if c.ok %}<span class="text-emerald-700">All clear</span>
+        {% else %}<span class="text-amber-800">{{ c.count }} {{ c.noun }}{{ c.count|pluralize }}{% if c.amount %} · {% include "accounting/_money.html" with v=c.amount %}{% endif %}</span>
+          <a href="{{ c.url }}" class="text-indigo-600 hover:underline ml-2">{{ c.link_label }} →</a>{% endif %}
+      </div>
+    </li>
+    {% endfor %}
+  </ul>
+  <p class="text-xs text-slate-400 px-4 py-3 border-t border-slate-100">Nothing here blocks the download; it just saves a round of questions from your accountant.</p>
 </div>
 
 <div class="grid lg:grid-cols-2 gap-4 mb-5">
@@ -47,7 +74,35 @@
         </select></div>
       <button class="btn-primary">⬇ ZIP</button>
     </form>
-    <p class="text-xs text-slate-400 mt-3">Or type any month in the address bar as <code>?month=YYYY-MM</code>.</p>
+    <form method="get" class="mt-3 flex flex-wrap gap-2 items-end field-inline">
+      <div><label class="text-xs text-slate-500 block mb-1" for="f_month_any">Any other month</label>
+        <input type="month" id="f_month_any" name="month" value="{{ last_month }}" max="{{ this_month }}" pattern="[0-9]{4}-[0-9]{2}" placeholder="YYYY-MM" required></div>
+      <button class="btn-secondary">⬇ ZIP</button>
+    </form>
+    <p class="text-xs text-slate-400 mt-3">Closing a month? The <a href="{% url 'accounting_month_close' %}" class="text-indigo-600 hover:underline">month-close checklist</a> walks you through it.</p>
+  </div>
+</div>
+
+{# ---- the two packages ---- #}
+<div class="grid lg:grid-cols-2 gap-4 mb-5">
+  <div class="card-pad border-indigo-200">
+    <h2 class="font-semibold">This package: the books</h2>
+    <p class="text-sm text-slate-500 mt-1">Financial statements on both bases, trial balances, the general ledger and the journals — what a CPA uses to prepare the return and check the numbers tie out.</p>
+    <ul class="text-sm text-slate-700 mt-2 list-disc pl-5 space-y-0.5">
+      <li>Income statement and balance sheet, cash <i>and</i> accrual, as CSV and PDF</li>
+      <li>Cash vs. accrual side by side with the bridge that explains the gap</li>
+      <li>Trial balances, general ledger (every account) and general journal, both bases</li>
+    </ul>
+  </div>
+  <div class="card-pad">
+    <h2 class="font-semibold">Expenses package: the receipts side</h2>
+    <p class="text-sm text-slate-500 mt-1">The supporting detail for deductions, built in the Expenses module. Send both packages together.</p>
+    <ul class="text-sm text-slate-700 mt-2 list-disc pl-5 space-y-0.5">
+      <li>Expenses by category mapped to Schedule C lines, and every expense with its receipt status</li>
+      <li>1099 vendors and what you paid them</li>
+      <li>Mileage log, missing receipts, unpaid bills at year end</li>
+    </ul>
+    <a href="{% url 'expense_year_end' %}" class="btn-secondary mt-3 inline-block">Open the expenses year-end page →</a>
   </div>
 </div>
 
@@ -55,7 +110,12 @@
   <table class="tbl">
     <thead><tr><th>File</th><th>What it is</th></tr></thead>
     <tbody>
-      {% for name, desc in files %}
+      <tr class="bg-slate-50"><td colspan="2" class="text-xs font-bold uppercase tracking-wider text-slate-500">Spreadsheets (CSV)</td></tr>
+      {% for name, desc in csv_files %}
+      <tr><td class="font-mono text-xs whitespace-nowrap">{{ name }}</td><td class="text-sm">{{ desc }}</td></tr>
+      {% endfor %}
+      <tr class="bg-slate-50"><td colspan="2" class="text-xs font-bold uppercase tracking-wider text-slate-500">Print-ready statements (PDF)</td></tr>
+      {% for name, desc in pdf_files %}
       <tr><td class="font-mono text-xs whitespace-nowrap">{{ name }}</td><td class="text-sm">{{ desc }}</td></tr>
       {% endfor %}
       <tr><td class="font-mono text-xs">README.txt</td><td class="text-sm">Which basis each file uses and how to read the numbers.</td></tr>
