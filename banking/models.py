@@ -307,6 +307,104 @@ class BankTransaction(SoftDeleteModel):
         self.reviewed_by = user if getattr(user, "is_authenticated", False) else None
         self.reviewed_at = timezone.now()
 
+    # --- link bookkeeping -------------------------------------------------------
+    def _release_documents(self, user=None, keep_expense=False):
+        """Undo every side effect of a previous review decision so the next
+        one starts clean. Paid-by-hand fields that THIS transaction wrote onto
+        a receipt or expense are cleared (otherwise the ledger would book the
+        payment twice: once from the bank row, once from the document)."""
+        # supplier bills
+        for r in self.receipts.all():
+            if r.paid_date == self.date and r.paid_from_id == self.account_id:
+                r.paid_date = None
+                r.paid_from = None
+                r.save(update_fields=["paid_date", "paid_from"])
+        self.receipts.clear()
+        # customer payments
+        self.payments.clear()
+        # transfer twin
+        peer = self.transfer_peer
+        if peer is not None:
+            self.transfer_peer = None
+            if peer.transfer_peer_id == self.pk:
+                peer.transfer_peer = None
+                peer.category_account = None
+                peer.status = self.UNREVIEWED
+                peer.save(update_fields=["transfer_peer", "category_account", "status"])
+        # split parts (and the expense rows they created)
+        for sp in self.splits.select_related("expense"):
+            if sp.expense_id and not sp.expense.is_deleted and sp.expense.source == "bank":
+                sp.expense.delete(user=user)
+            sp.delete()
+        # expense register row
+        exp = self.expense if self.expense_id else None
+        if exp is not None and not keep_expense:
+            if exp.source == "bank" and not exp.is_deleted:
+                exp.delete(user=user)          # auto-created from this row: retire it
+            elif exp.paid_date == self.date and exp.paid_from_id == self.account_id:
+                exp.paid_date = None           # hand-entered bill matched here: un-pay it
+                exp.paid_from = None
+                if exp.payment_method in ("card", "ach"):
+                    exp.payment_method = ""
+                exp.save(update_fields=["paid_date", "paid_from", "payment_method", "updated_at"])
+            self.expense = None
+
+    def delete(self, using=None, keep_parents=False, user=None):
+        """Soft-delete a transaction and undo everything it did to other documents."""
+        with transaction.atomic():
+            self._release_documents(user=user)
+            self.save()
+            super().delete(user=user)
+
+    def split(self, parts, user=None, note=None):
+        """Divide this transaction across several categories.
+
+        ``parts`` = [(Account, Decimal amount, note), ...] whose amounts sum
+        to |amount|. Expense-category parts become Expense rows (source
+        "bank") linked through BankTransactionSplit so the register stays
+        complete and nothing is counted twice."""
+        from accounting.models import AccountType
+        from expenses.models import Expense, ExpenseCategory
+        parts = [(a, Decimal(amt), (n or "")) for a, amt, n in parts if Decimal(amt) != 0]
+        if len(parts) < 2:
+            raise ValueError("A split needs at least two parts.")
+        if any(amt <= 0 for _, amt, _ in parts):
+            raise ValueError("Each part must be a positive amount.")
+        if sum((amt for _, amt, _ in parts), Decimal("0")) != abs(self.amount):
+            raise ValueError(f"Parts must add up to ${abs(self.amount):,.2f}.")
+        sign = -1 if self.amount < 0 else 1
+        with transaction.atomic():
+            self._release_documents(user=user)
+            self.category_account = None
+            if note is not None:
+                self.notes = note
+            self.suggested_account = None
+            self._stamp_review(user, self.CATEGORIZED)
+            self.save()
+            for account, amt, part_note in parts:
+                sp = BankTransactionSplit.objects.create(
+                    transaction=self, account=account, amount=amt, note=part_note[:200])
+                category = (ExpenseCategory.for_account(account)
+                            if account.type == AccountType.EXPENSE else None)
+                if category is not None:
+                    sp.expense = Expense.objects.create(
+                        date=self.date, category=category, vendor_link=self.vendor,
+                        vendor=self.vendor.name if self.vendor_id else (self.merchant_name or self.description[:200]),
+                        amount=amt * (1 if sign < 0 else -1),   # outflow -> expense, inflow -> refund
+                        note=part_note or f"Split of {self.description[:120]}",
+                        paid_date=self.date, paid_from=self.account,
+                        payment_method="card" if self.account.account_type == "credit_card" else "ach",
+                        source="bank", is_reviewed=True,
+                        created_by=user if getattr(user, "is_authenticated", False) else None)
+                    sp.save(update_fields=["expense"])
+            log_activity(user, "bank_txn_split", self,
+                         note="; ".join(f"{a.name} ${amt}" for a, amt, _ in parts))
+        return self
+
+    @property
+    def is_split(self):
+        return self.splits.exists()
+
     # --- review actions (the only way status should change) -----------------
     def categorize(self, account, user=None, vendor=None, note=None, create_expense=True,
                    rule=None, auto=False):
@@ -315,6 +413,10 @@ class BankTransaction(SoftDeleteModel):
         from accounting.models import AccountType
         from expenses.models import Expense, ExpenseCategory
         with transaction.atomic():
+            category = ExpenseCategory.for_account(account) if account.type == AccountType.EXPENSE else None
+            # Keep an existing expense row only when the new account is still an
+            # expense category (its category is updated below); otherwise release it.
+            self._release_documents(user=user, keep_expense=bool(category is not None and self.expense_id))
             self.category_account = account
             if vendor is not None:
                 self.vendor = vendor
@@ -324,13 +426,8 @@ class BankTransaction(SoftDeleteModel):
             self.auto_categorized = auto
             self.suggested_account = None
             self._stamp_review(user, self.CATEGORIZED)
-            # clear document links that no longer apply
-            self.transfer_peer = None
-            self.payments.clear()
-            self.receipts.clear()
-            category = ExpenseCategory.for_account(account) if account.type == AccountType.EXPENSE else None
             if category is not None and create_expense:
-                if self.expense_id:
+                if self.expense_id and not self.expense.is_deleted:
                     exp = self.expense
                     exp.category = category
                     exp.amount = -self.amount
@@ -352,10 +449,6 @@ class BankTransaction(SoftDeleteModel):
                         source="bank", is_reviewed=not auto,
                         created_by=user if getattr(user, "is_authenticated", False) else None)
                     self.expense = exp
-            elif self.expense_id and self.expense.source == "bank":
-                # was an expense before, now something else: retire the auto row
-                self.expense.delete(user=user)
-                self.expense = None
             self.save()
             if rule is not None:
                 type(rule).objects.filter(pk=rule.pk).update(
@@ -368,6 +461,7 @@ class BankTransaction(SoftDeleteModel):
         """Match to an expense that was entered by hand before the card
         charge showed up. Marks the expense paid from this account."""
         with transaction.atomic():
+            self._release_documents(user=user)
             self.expense = expense
             self.category_account = expense.category.ensure_account() if expense.category_id else None
             self.vendor = expense.vendor_link
@@ -385,6 +479,7 @@ class BankTransaction(SoftDeleteModel):
         """A deposit = one or more customer payments."""
         from accounting.models import Account
         with transaction.atomic():
+            self._release_documents(user=user)
             self.payments.set(list(payments))
             self.category_account = Account.system("undeposited")
             self._stamp_review(user, self.MATCHED)
@@ -397,6 +492,7 @@ class BankTransaction(SoftDeleteModel):
         """An outflow that pays one or more posted supplier receipts (bills)."""
         from accounting.models import Account
         with transaction.atomic():
+            self._release_documents(user=user)
             receipts = list(receipts)
             self.receipts.set(receipts)
             self.category_account = Account.system("inventory_purchases")
@@ -418,6 +514,8 @@ class BankTransaction(SoftDeleteModel):
         if (peer.amount > 0) == (self.amount > 0):
             raise ValueError("Transfer sides must have opposite signs.")
         with transaction.atomic():
+            self._release_documents(user=user)
+            peer._release_documents(user=user)
             for side, other in ((self, peer), (peer, self)):
                 side.transfer_peer = other
                 side.category_account = other.account.ensure_ledger_account()
@@ -428,13 +526,8 @@ class BankTransaction(SoftDeleteModel):
 
     def mark_ignored(self, user=None, note=""):
         with transaction.atomic():
-            if self.expense_id and self.expense.source == "bank":
-                self.expense.delete(user=user)
-                self.expense = None
+            self._release_documents(user=user)
             self.category_account = None
-            self.transfer_peer = None
-            self.payments.clear()
-            self.receipts.clear()
             if note:
                 self.notes = note
             self._stamp_review(user, self.IGNORED)
@@ -445,13 +538,7 @@ class BankTransaction(SoftDeleteModel):
     def reset_review(self, user=None):
         """Back to the inbox."""
         with transaction.atomic():
-            if self.expense_id and self.expense.source == "bank":
-                self.expense.delete(user=user)
-            self.expense = None
-            peer = self.transfer_peer
-            self.transfer_peer = None
-            self.payments.clear()
-            self.receipts.clear()
+            self._release_documents(user=user)
             self.category_account = None
             self.rule_applied = None
             self.auto_categorized = False
@@ -459,12 +546,25 @@ class BankTransaction(SoftDeleteModel):
             self.reviewed_by = None
             self.reviewed_at = None
             self.save()
-            if peer is not None:
-                peer.transfer_peer = None
-                peer.category_account = None
-                peer.status = self.UNREVIEWED
-                peer.save(update_fields=["transfer_peer", "category_account", "status"])
         return self
+
+
+class BankTransactionSplit(models.Model):
+    """One slice of a transaction that was split across categories."""
+
+    transaction = models.ForeignKey(BankTransaction, on_delete=models.CASCADE, related_name="splits")
+    account = models.ForeignKey("accounting.Account", on_delete=models.PROTECT, related_name="splits")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, help_text="Positive share of the transaction")
+    note = models.CharField(max_length=200, blank=True)
+    expense = models.OneToOneField("expenses.Expense", null=True, blank=True, on_delete=models.SET_NULL,
+                                   related_name="bank_split")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["id"]
+
+    def __str__(self):
+        return f"{self.transaction_id}: {self.account} ${self.amount}"
 
 
 class CategoryRule(SoftDeleteModel):
@@ -539,9 +639,10 @@ class CategoryRule(SoftDeleteModel):
             if self.match_type == "exact" and h == p:
                 return True
             if self.match_type == "regex":
-                try:
-                    if re.search(pat, hay, re.IGNORECASE):
-                        return True
-                except re.error:
+                from banking.regex_guard import compile_safe
+                rx = compile_safe(pat)
+                if rx is None:          # invalid or unsafe pattern: never matches
                     return False
+                if rx.search(hay):
+                    return True
         return False

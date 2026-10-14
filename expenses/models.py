@@ -215,8 +215,17 @@ class Expense(SoftDeleteModel):
     # --- state ---------------------------------------------------------------
     @property
     def bank_transaction(self):
-        """The bank/card transaction this expense was created from (if any)."""
-        return getattr(self, "bank_txn", None)
+        """The live bank/card transaction this expense was created from or
+        matched to (directly, or as one slice of a split)."""
+        txn = getattr(self, "bank_txn", None)
+        if txn is None:
+            try:
+                txn = self.bank_split.transaction
+            except Exception:       # no split row
+                txn = None
+        if txn is not None and (txn.is_deleted or txn.status == "ignored"):
+            return None
+        return txn
 
     @property
     def is_paid(self):
@@ -270,6 +279,9 @@ class RecurringExpense(SoftDeleteModel):
         default=False, help_text="Create as already paid (auto-pay) instead of an open bill")
     note = models.CharField(max_length=300, blank=True)
     active = models.BooleanField(default=True)
+    anchor_day = models.PositiveSmallIntegerField(
+        null=True, blank=True, editable=False,
+        help_text="Day of month the schedule is anchored to (31 = last day), so Jan 31 -> Feb 28 -> Mar 31")
     last_generated = models.DateField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -278,6 +290,20 @@ class RecurringExpense(SoftDeleteModel):
 
     def __str__(self):
         return f"{self.name} ${self.amount} {self.get_frequency_display()}"
+
+    def save(self, *args, **kwargs):
+        if self.anchor_day is None and self.next_date:
+            self.anchor_day = self.next_date.day
+        super().save(*args, **kwargs)
+
+    @property
+    def is_finished(self):
+        return self.end_date is not None and self.next_date > self.end_date
+
+    @property
+    def is_due(self):
+        from django.utils import timezone as tz
+        return self.active and not self.is_finished and self.next_date <= tz.localdate()
 
     def advance(self, from_date):
         from datetime import timedelta
@@ -291,7 +317,8 @@ class RecurringExpense(SoftDeleteModel):
             m -= 12
             y += 1
         import calendar
-        day = min(from_date.day, calendar.monthrange(y, m)[1])
+        anchor = self.anchor_day or from_date.day
+        day = min(anchor, calendar.monthrange(y, m)[1])
         return from_date.replace(year=y, month=m, day=day)
 
     def generate_due(self, today=None, user=None):
@@ -313,6 +340,9 @@ class RecurringExpense(SoftDeleteModel):
             created.append(exp)
             self.last_generated = self.next_date
             self.next_date = self.advance(self.next_date)
+        if self.is_finished and self.active:
+            self.active = False          # ran past its end date: retire quietly
+            self.save(update_fields=["active"])
         if created:
             self.save(update_fields=["next_date", "last_generated"])
         return created

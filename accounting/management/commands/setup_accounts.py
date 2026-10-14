@@ -43,7 +43,16 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         accounts = Account.ensure_system_accounts()
-        self.stdout.write(f"system accounts: {len(accounts)} present")
+        # keep system account names/descriptions current with the code
+        from accounting.models import SYSTEM_ACCOUNTS
+        renamed = 0
+        for key, acct in accounts.items():
+            code, name, type_, subtype, desc = SYSTEM_ACCOUNTS[key]
+            if acct.name != name or acct.description != desc:
+                acct.name, acct.description = name, desc
+                acct.save(update_fields=["name", "description"])
+                renamed += 1
+        self.stdout.write(f"system accounts: {len(accounts)} present ({renamed} renamed)")
         if options["no_categories"]:
             return
         from expenses.models import ExpenseCategory

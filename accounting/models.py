@@ -82,7 +82,7 @@ class AccountSubtype(models.TextChoices):
 SYSTEM_ACCOUNTS = {
     "cash_on_hand": ("1000", "Cash on hand", AccountType.ASSET, AccountSubtype.CASH_ON_HAND,
                      "Petty cash and cash sales not deposited yet."),
-    "undeposited": ("1050", "Undeposited funds", AccountType.ASSET, AccountSubtype.UNDEPOSITED,
+    "undeposited": ("1050", "Payments received, not yet deposited", AccountType.ASSET, AccountSubtype.UNDEPOSITED,
                     "Customer payments recorded but not yet matched to a bank deposit."),
     "ar": ("1200", "Accounts receivable", AccountType.ASSET, AccountSubtype.AR,
            "Open customer invoices (accrual basis only)."),
@@ -99,12 +99,12 @@ SYSTEM_ACCOUNTS = {
                     "Shipping label / freight costs recorded on shipments but not yet paid."),
     "sales_tax": ("2200", "Sales tax payable", AccountType.LIABILITY, AccountSubtype.SALES_TAX,
                   "Sales tax collected from customers and not yet remitted to the state."),
-    "customer_deposits": ("2300", "Customer deposits / unapplied payments", AccountType.LIABILITY,
+    "customer_deposits": ("2300", "Customer payments not yet applied", AccountType.LIABILITY,
                           AccountSubtype.CUSTOMER_DEPOSITS,
                           "Payments received that are not applied to an invoice yet."),
     "loans": ("2500", "Loans & lines of credit", AccountType.LIABILITY, AccountSubtype.LOAN,
               "Loan proceeds and principal repayments."),
-    "opening_balance": ("3000", "Opening balance equity", AccountType.EQUITY, AccountSubtype.OPENING_BALANCE,
+    "opening_balance": ("3000", "Starting balances (opening balance equity)", AccountType.EQUITY, AccountSubtype.OPENING_BALANCE,
                         "Offset for opening balances brought in from before this system."),
     "owner_contribution": ("3100", "Owner contributions", AccountType.EQUITY, AccountSubtype.OWNER_CONTRIBUTION,
                            "Money you put into the business, including expenses paid personally."),
@@ -254,3 +254,35 @@ class FiscalPeriodLock(models.Model):
 
     def is_locked(self, day):
         return bool(self.locked_through and day and day <= self.locked_through)
+
+
+class MonthClose(models.Model):
+    """The month-end routine, tracked so it becomes a habit: a row per month
+    with the manual checkboxes; the automatic checks (inbox empty, receipts,
+    bills) are computed live by ``accounting.closing``."""
+
+    MANUAL_STEPS = [
+        ("statements_checked", "Checked each bank/card account against its statement"),
+        ("statements_saved", "Saved the month's financial statements (PDF/CSV)"),
+        ("notes_reviewed", "Looked over the P&L for anything odd"),
+    ]
+
+    year = models.PositiveSmallIntegerField()
+    month = models.PositiveSmallIntegerField()
+    steps = models.JSONField(default=dict, blank=True, help_text="manual step key -> true/false")
+    notes = models.TextField(blank=True)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    closed_by = models.ForeignKey("auth.User", null=True, blank=True, on_delete=models.SET_NULL,
+                                  related_name="+")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["year", "month"], name="uniq_month_close")]
+        ordering = ["-year", "-month"]
+
+    def __str__(self):
+        return f"Month close {self.year}-{self.month:02d}"
+
+    @property
+    def is_closed(self):
+        return self.closed_at is not None

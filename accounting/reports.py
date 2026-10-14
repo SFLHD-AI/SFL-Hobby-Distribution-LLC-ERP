@@ -30,29 +30,29 @@ BASIS_HELP = {
 
 # Plain-words explanation for every bridge row produced by ledger.compare_bases.
 BRIDGE_EXPLANATIONS = {
-    "Invoiced but not yet collected (Δ accounts receivable)":
+    "Invoiced but not yet collected":
         "You sent invoices for this amount that customers have not paid yet. Accrual "
         "counts it as income now; cash basis will count it when the money arrives.",
-    "Unapplied customer payments (Δ customer deposits)":
+    "Customer payments not yet applied to an invoice":
         "Customers paid you money that is not matched to an invoice yet. Cash basis "
         "treats it as income already; accrual holds it as a deposit until an invoice "
         "uses it up.",
-    "Inventory bought but not yet sold (Δ inventory)":
+    "Inventory bought but not yet sold":
         "Product you bought is still on the shelf. Cash basis wrote it off as a cost "
         "when you paid for it; accrual keeps it as an asset until it sells, so accrual "
         "profit is higher by this amount.",
-    "Supplier prepayments (Δ supplier deposits)":
+    "Paid to suppliers ahead of delivery":
         "Money you paid suppliers for product you have not received yet (allocations, "
         "pre-orders). Cash basis counts it as a cost now; accrual treats it as money "
         "owed back to you until the product arrives.",
-    "Bills received but not yet paid (Δ accounts payable)":
+    "Supplier bills received but not yet paid":
         "Bills and supplier invoices you have recorded but not paid. Accrual counts "
         "the cost now; cash basis waits until the payment leaves your account.",
-    "Carrier charges not yet paid (Δ AP carriers)":
+    "Shipping charges not yet paid":
         "Shipping labels and freight recorded on shipments that have not hit your card "
         "yet. Accrual counts the cost when you ship; cash basis when the carrier charges "
         "you.",
-    "Sales tax collected vs. remitted (Δ sales tax payable)":
+    "Sales tax collected but not yet sent to the state":
         "Sales tax you collected from customers belongs to the state and is never income "
         "on either basis. This row only moves when the two bases recognise a taxable "
         "invoice in different periods.",

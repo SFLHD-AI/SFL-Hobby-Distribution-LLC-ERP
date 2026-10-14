@@ -269,8 +269,8 @@ class SalesCycle(TestCase):
         self.assertEqual(cmp["cash"]["net_income"], D("0.00"))
         self.assertEqual(cmp["net_difference"], D("170.00"))
         bridge = dict(cmp["bridge"])
-        self.assertEqual(bridge["Invoiced but not yet collected (Δ accounts receivable)"], D("438.70"))
-        self.assertEqual(bridge["Inventory bought but not yet sold (Δ inventory)"], D("360.00"))
+        self.assertEqual(bridge["Invoiced but not yet collected"], D("438.70"))
+        self.assertEqual(bridge["Inventory bought but not yet sold"], D("360.00"))
 
     def test_equity_trend_runs_and_balances(self):
         rows = equity_trend(ACCRUAL, months=3)
@@ -443,7 +443,7 @@ class AccountingPagesRender(AccountingUISetup):
         r = self.client.get(reverse("accounting_compare") + f"?start={YEAR_START}&end={TODAY}")
         html = r.content.decode()
         for label in ("Invoiced but not yet collected", "Inventory bought but not yet sold",
-                      "Bills received but not yet paid", "Sales tax collected vs. remitted"):
+                      "Supplier bills received but not yet paid", "Sales tax collected but not yet sent to the state"):
             self.assertIn(label, html)
         self.assertIn("customers have not paid yet", html)        # explanation text
         self.assertIn("Net income on a cash basis", html)
@@ -451,8 +451,8 @@ class AccountingPagesRender(AccountingUISetup):
         cmp = r.context["cmp"]
         self.assertEqual(cmp["accrual"]["net_income"] - cmp["cash"]["net_income"], cmp["net_difference"])
         bridge = dict(cmp["bridge"])
-        self.assertEqual(bridge["Invoiced but not yet collected (Δ accounts receivable)"], D("438.70"))
-        self.assertEqual(bridge["Bills received but not yet paid (Δ accounts payable)"], D("-660.00"))
+        self.assertEqual(bridge["Invoiced but not yet collected"], D("438.70"))
+        self.assertEqual(bridge["Supplier bills received but not yet paid"], D("-660.00"))
 
     def test_equity_trend_clamps_months_and_draws_svg(self):
         r = self.client.get(reverse("accounting_equity_trend") + "?months=500")
@@ -844,3 +844,252 @@ class ReportHelpers(TestCase):
         for name, _ in rp.PACKAGE_FILES:
             self.assertIn(name, zf.namelist())
             self.assertTrue(zf.read(name).decode().splitlines()[0])      # has a header row
+
+
+class ReviewReversalTests(TestCase):
+    """Changing your mind on a bank transaction must never leave money
+    counted twice (ledger review findings 1-3, 5-8)."""
+
+    def setUp(self):
+        Account.ensure_system_accounts()
+        self.checking = BankAccount.objects.create(name="Checking", opening_balance=D("1000.00"),
+                                                   opening_date=TODAY - timedelta(days=60))
+        self.card = BankAccount.objects.create(name="Visa", account_type="credit_card",
+                                               opening_balance=D("0.00"),
+                                               opening_date=TODAY - timedelta(days=60))
+        self.supplies = ExpenseCategory.objects.create(name="Shipping supplies")
+        self.supplier = Supplier.objects.create(name="GTS")
+        self.p = Product.objects.create(sku="RV-1", name="Box", default_price=D("100"))
+        r = Receipt.objects.create(supplier=self.supplier, date=TODAY - timedelta(days=10))
+        ReceiptLine.objects.create(receipt=r, product=self.p, qty=10, unit_cost=D("60"))
+        r.post()
+        self.receipt = r
+
+    def _cogs(self, basis):
+        return income_statement(basis, YEAR_START, TODAY)["total_cogs"]
+
+    def _expenses(self, basis):
+        return income_statement(basis, YEAR_START, TODAY)["total_expenses"]
+
+    def test_unlinking_a_receipt_payment_unpays_the_bill(self):
+        t = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("-600.00"),
+                                           description="GTS ACH")
+        t.link_receipts([self.receipt])
+        self.assertEqual(self._cogs(CASH), D("600.00"))
+        t.categorize(Account.system("inventory_purchases"))      # changed mind: plain purchase
+        self.receipt.refresh_from_db()
+        self.assertIsNone(self.receipt.paid_date)
+        self.assertEqual(self._cogs(CASH), D("600.00"))          # once, not twice
+        _assert_balanced(self, CASH); _assert_balanced(self, ACCRUAL)
+        t.reset_review()
+        self.assertEqual(self._cogs(CASH), D("0.00"))
+
+    def test_matching_a_rule_created_expense_to_a_bill_retires_the_expense(self):
+        t = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("-600.00"),
+                                           description="GTS DISTRIBUTION")
+        t.categorize(self.supplies.ensure_account(), auto=True)   # rule got it wrong
+        self.assertEqual(Expense.objects.count(), 1)
+        t.link_receipts([self.receipt])                            # owner fixes it
+        self.assertEqual(Expense.objects.count(), 0)               # auto row retired
+        self.assertEqual(self._expenses(CASH), D("0.00"))
+        self.assertEqual(self._cogs(CASH), D("600.00"))
+        j, bs = _assert_balanced(self, ACCRUAL)
+        self.assertNotIn("ap", {r["account"].system_key for r in bs["liabilities"]})
+        self.assertEqual(self._expenses(ACCRUAL), D("0.00"))
+
+    def test_hand_entered_expense_unlinked_becomes_unpaid_again(self):
+        exp = Expense.objects.create(date=TODAY - timedelta(days=3), category=self.supplies,
+                                     vendor="ULINE", amount=D("500.00"))
+        t = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("-500.00"),
+                                           description="ULINE")
+        t.link_expense(exp)
+        exp.refresh_from_db(); self.assertTrue(exp.is_paid)
+        t.reset_review()
+        exp.refresh_from_db()
+        self.assertFalse(exp.is_paid)
+        self.assertIsNone(exp.paid_from)
+        # cash: nothing (unpaid bill + uncategorized card row) ... the card row shows as uncategorized
+        pl = income_statement(CASH, YEAR_START, TODAY)
+        keys = {r["account"].system_key: r["amount"] for r in pl["expenses"]}
+        self.assertEqual(keys.get("uncat_expense"), D("500.00"))
+        self.assertNotIn(self.supplies.account_id, {r["account"].pk for r in pl["expenses"]})
+        _assert_balanced(self, ACCRUAL)
+
+    def test_recategorizing_one_side_of_a_transfer_frees_the_twin(self):
+        out = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("-250.00"),
+                                             description="Payment to Visa")
+        inn = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("250.00"),
+                                             description="PAYMENT THANK YOU")
+        out.mark_transfer(inn)
+        out.categorize(self.supplies.ensure_account())
+        inn.refresh_from_db()
+        self.assertEqual(inn.status, BankTransaction.UNREVIEWED)
+        self.assertIsNone(inn.transfer_peer)
+        j, bs = _assert_balanced(self, CASH)
+        card_rows = [r for r in bs["liabilities"] if r["account"].pk == self.card.ledger_account_id]
+        card_ledger = card_rows[0]["amount"] if card_rows else D("0.00")
+        self.assertEqual(card_ledger, self.card.current_balance)   # ledger agrees with the register
+        self.assertEqual(card_ledger, D("-250.00"))                 # card now has a credit balance
+
+    def test_ignoring_a_transfer_side_frees_the_twin(self):
+        out = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("-100.00"),
+                                             description="XFER")
+        inn = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("100.00"),
+                                             description="XFER")
+        out.mark_transfer(inn)
+        out.mark_ignored()
+        inn.refresh_from_db()
+        self.assertEqual(inn.status, BankTransaction.UNREVIEWED)
+        j, bs = _assert_balanced(self, CASH)
+        card_rows = [r for r in bs["liabilities"] if r["account"].pk == self.card.ledger_account_id]
+        self.assertEqual(card_rows[0]["amount"], D("-100.00"))
+
+    def test_supplier_refund_reduces_cogs_on_accrual_not_ap(self):
+        t = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("100.00"),
+                                           description="GTS REFUND")
+        t.categorize(Account.system("inventory_purchases"))
+        j, bs = _assert_balanced(self, ACCRUAL)
+        ap = [r for r in bs["liabilities"] if r["account"].system_key == "ap"][0]
+        self.assertEqual(ap["amount"], D("600.00"))                 # unchanged by the refund
+        pl = j.income_statement(YEAR_START, TODAY)
+        cogs = {r["account"].system_key: r["amount"] for r in pl["cogs"]}
+        self.assertEqual(cogs.get("inventory_purchases"), D("-100.00"))
+
+    def test_prepaid_unposted_receipt_counts_when_paid_by_hand(self):
+        panini = Supplier.objects.create(name="Panini")
+        pre = Receipt.objects.create(supplier=panini, date=TODAY, paid_date=TODAY,
+                                     paid_from=self.checking)
+        ReceiptLine.objects.create(receipt=pre, product=self.p, qty=10, unit_cost=D("50"))
+        self.assertEqual(self._cogs(CASH), D("500.00"))
+        j, bs = _assert_balanced(self, ACCRUAL)
+        assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+        liab = {r["account"].system_key: r["amount"] for r in bs["liabilities"]}
+        # Panini prepayment is an asset even though GTS is still owed $600
+        self.assertEqual(assets.get("supplier_deposits"), D("500.00"))
+        self.assertEqual(liab.get("ap"), D("600.00"))
+
+    def test_prepayment_to_same_supplier_nets_against_their_open_bill(self):
+        pre = Receipt.objects.create(supplier=self.supplier, date=TODAY, paid_date=TODAY,
+                                     paid_from=self.checking)
+        ReceiptLine.objects.create(receipt=pre, product=self.p, qty=10, unit_cost=D("50"))
+        j, bs = _assert_balanced(self, ACCRUAL)
+        assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+        liab = {r["account"].system_key: r["amount"] for r in bs["liabilities"]}
+        self.assertNotIn("supplier_deposits", assets)
+        self.assertEqual(liab.get("ap"), D("100.00"))
+
+    def test_deleted_payment_inside_a_deposit_surfaces_as_uncategorized(self):
+        cust = make_customer("Shop", cert=True)
+        pay = Payment.objects.create(customer=cust, amount=D("200.00"), method="check")
+        dep = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("200.00"),
+                                             description="DEPOSIT")
+        dep.link_payments([pay])
+        pay.delete()
+        j, bs = _assert_balanced(self, CASH)
+        assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+        self.assertNotIn("undeposited", assets)
+        pl = j.income_statement(YEAR_START, TODAY)
+        self.assertEqual({r["account"].system_key: r["amount"] for r in pl["income"]}.get("uncat_income"),
+                         D("200.00"))
+
+    def test_categorize_to_owner_draw_releases_hand_entered_expense(self):
+        exp = Expense.objects.create(date=TODAY, category=self.supplies, vendor="X", amount=D("50.00"))
+        t = BankTransaction.objects.create(account=self.checking, date=TODAY, amount=D("-50.00"),
+                                           description="ATM")
+        t.link_expense(exp)
+        t.categorize(Account.system("owner_draw"))
+        t.refresh_from_db(); exp.refresh_from_db()
+        self.assertIsNone(t.expense)
+        self.assertFalse(exp.is_paid)
+        self.assertEqual(self._expenses(CASH), D("0.00"))
+
+
+class BackdatedPaymentTests(TestCase):
+    """A check received last month but typed in today is last month's income."""
+
+    def setUp(self):
+        Account.ensure_system_accounts()
+        self.cust = make_customer("Late Entry LLC", cert=True)
+        self.p = Product.objects.create(sku="BD-1", name="Box", default_price=D("100"))
+        self.p.apply_movement(movement_type="receipt", qty_delta=10, unit_cost=D("40"),
+                              new_avg_cost=D("40"))
+        po = PurchaseOrder.objects.create(customer=self.cust)
+        POLine.objects.create(po=po, product=self.p, qty_ordered=4, unit_price=D("100.00"))
+        po.confirm(); po.finalize()
+        self.inv = Invoice.build_from_pos([po])
+        self.inv.date = TODAY - timedelta(days=40)
+        self.inv.save(update_fields=["date"])
+
+    def test_backdated_payment_recognised_on_its_own_date(self):
+        received = TODAY - timedelta(days=30)
+        pay = Payment.objects.create(customer=self.cust, amount=D("400.00"), method="check",
+                                     date=received)
+        pay.apply_to_invoice(self.inv, D("400.00"))          # applied today, in the same sitting
+        pl = income_statement(CASH, received, received)
+        self.assertEqual(pl["total_income"], D("400.00"))
+        pl_today = income_statement(CASH, TODAY, TODAY)
+        self.assertEqual(pl_today["total_income"], D("0.00"))
+        j, bs = _assert_balanced(self, ACCRUAL, TODAY - timedelta(days=1))
+        self.assertNotIn("customer_deposits", {r["account"].system_key for r in bs["liabilities"]})
+
+
+
+class SplitTransactionTests(TestCase):
+    """One card charge split across supplies, inventory and personal."""
+
+    def setUp(self):
+        Account.ensure_system_accounts()
+        self.card = BankAccount.objects.create(name="Visa", account_type="credit_card",
+                                               opening_balance=D("0.00"),
+                                               opening_date=TODAY - timedelta(days=30))
+        self.supplies = ExpenseCategory.objects.create(name="Shipping supplies")
+        self.txn = BankTransaction.objects.create(account=self.card, date=TODAY, amount=D("-300.00"),
+                                                  description="COSTCO WHSE")
+
+    def test_split_posts_each_part_once_on_both_bases(self):
+        self.txn.split([(self.supplies.ensure_account(), D("120.00"), "tape & boxes"),
+                        (Account.system("inventory_purchases"), D("130.00"), "blasters"),
+                        (Account.system("owner_draw"), D("50.00"), "groceries")])
+        self.assertTrue(self.txn.is_split)
+        self.assertEqual(self.txn.status, BankTransaction.CATEGORIZED)
+        self.assertEqual(Expense.objects.count(), 1)
+        exp = Expense.objects.get()
+        self.assertEqual(exp.amount, D("120.00"))
+        self.assertTrue(exp.is_paid)
+        self.assertEqual(exp.bank_transaction, self.txn)
+        for basis in (CASH, ACCRUAL):
+            j, bs = _assert_balanced(self, basis)
+            pl = j.income_statement(YEAR_START, TODAY)
+            self.assertEqual(pl["total_expenses"], D("120.00"), basis)
+            cogs = {r["account"].system_key: r["amount"] for r in pl["cogs"]}
+            if basis == CASH:
+                self.assertEqual(cogs.get("inventory_purchases"), D("130.00"))
+            else:
+                # accrual: the inventory part is a payment on account (AP debit -> supplier deposit)
+                assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+                self.assertEqual(assets.get("supplier_deposits"), D("130.00"))
+            equity = {(r["account"].system_key if r["account"] else "ni"): r["amount"] for r in bs["equity"]}
+            self.assertEqual(equity.get("owner_draw"), D("-50.00"))
+            card = [r for r in bs["liabilities"] if r["account"].pk == self.card.ledger_account_id][0]
+            self.assertEqual(card["amount"], D("300.00"))
+
+    def test_split_must_add_up(self):
+        with self.assertRaises(ValueError):
+            self.txn.split([(self.supplies.ensure_account(), D("100.00"), ""),
+                            (Account.system("owner_draw"), D("100.00"), "")])
+
+    def test_recategorize_after_split_removes_parts_and_expenses(self):
+        self.txn.split([(self.supplies.ensure_account(), D("200.00"), ""),
+                        (Account.system("owner_draw"), D("100.00"), "")])
+        self.txn.categorize(Account.system("owner_draw"))
+        self.assertFalse(self.txn.is_split)
+        self.assertEqual(Expense.objects.count(), 0)
+        j, bs = _assert_balanced(self, CASH)
+        self.assertEqual(j.income_statement(YEAR_START, TODAY)["total_expenses"], D("0.00"))
+
+    def test_soft_deleting_a_transaction_retires_its_expense(self):
+        self.txn.categorize(self.supplies.ensure_account())
+        self.assertEqual(Expense.objects.count(), 1)
+        self.txn.delete()
+        self.assertEqual(Expense.objects.count(), 0)
+        self.assertEqual(income_statement(CASH, YEAR_START, TODAY)["total_expenses"], D("0.00"))

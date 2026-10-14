@@ -284,7 +284,7 @@ class RecurringTests(ExpenseTestBase):
                                               next_date=date(2025, 1, 31))
         created = tpl.generate_due(today=date(2025, 3, 1))
         self.assertEqual([e.date for e in created], [date(2025, 1, 31), date(2025, 2, 28)])
-        self.assertEqual(tpl.next_date, date(2025, 3, 28))
+        self.assertEqual(tpl.next_date, date(2025, 3, 31))   # anchored to month end, no drift
         self.assertEqual(tpl.last_generated, date(2025, 2, 28))
         for e in created:
             self.assertEqual(e.source, "recurring")
@@ -292,7 +292,7 @@ class RecurringTests(ExpenseTestBase):
             self.assertFalse(e.is_paid)                 # open bill (auto_mark_paid off)
             self.assertEqual(e.recurring, tpl)
         self.assertEqual(tpl.advance(date(2024, 1, 31)), date(2024, 2, 29))   # leap year
-        self.assertEqual(tpl.advance(date(2025, 12, 15)), date(2026, 1, 15))
+        self.assertEqual(tpl.advance(date(2025, 12, 15)), date(2026, 1, 31))   # anchored to the template's day (31)
 
     def test_autopay_creates_paid_rows_and_respects_end_date(self):
         tpl = RecurringExpense.objects.create(name="Adobe", category=self.software, amount=D("54.99"),
@@ -725,3 +725,33 @@ class PageAccessTests(ExpenseTestBase):
         self.client.force_login(user)
         self.assertEqual(self.client.get(reverse("expense_list")).status_code, 200)
         self.assertEqual(self.client.get(reverse("expense_report_by_month")).status_code, 200)
+
+
+
+class RecurringAnchorTests(TestCase):
+    def test_month_end_anchor_does_not_drift(self):
+        from datetime import date
+        from expenses.models import ExpenseCategory, RecurringExpense
+        cat = ExpenseCategory.objects.create(name="Rent & storage")
+        t = RecurringExpense.objects.create(name="Storage unit", category=cat, amount=Decimal("150"),
+                                            frequency="monthly", next_date=date(2026, 1, 31))
+        d = t.advance(t.next_date)
+        self.assertEqual(d, date(2026, 2, 28))
+        d = t.advance(d)
+        self.assertEqual(d, date(2026, 3, 31))         # back to the 31st, not stuck on the 28th
+        d = t.advance(d)
+        self.assertEqual(d, date(2026, 4, 30))
+
+    def test_template_past_end_date_is_not_due_and_retires(self):
+        from datetime import date, timedelta
+        from django.utils import timezone
+        from expenses.models import ExpenseCategory, RecurringExpense
+        cat = ExpenseCategory.objects.create(name="Software")
+        today = timezone.localdate()
+        t = RecurringExpense.objects.create(name="Old tool", category=cat, amount=Decimal("9"),
+                                            frequency="monthly", next_date=today - timedelta(days=3),
+                                            end_date=today - timedelta(days=10))
+        self.assertFalse(t.is_due)
+        self.assertEqual(t.generate_due(), [])
+        t.refresh_from_db()
+        self.assertFalse(t.active)

@@ -80,6 +80,7 @@ class Line:
     account_id: int
     debit: Decimal = ZERO
     credit: Decimal = ZERO
+    tag: str = ""        # optional dimension, e.g. "s12" = supplier 12 (used for per-supplier AP)
 
 
 @dataclass
@@ -91,7 +92,7 @@ class Entry:
     source_url: str = ""
     lines: list = field(default_factory=list)
 
-    def add(self, account, debit=ZERO, credit=ZERO):
+    def add(self, account, debit=ZERO, credit=ZERO, tag=""):
         debit, credit = q(debit), q(credit)
         if debit < 0:                 # normalise negatives to the other side
             credit, debit = credit - debit, ZERO
@@ -100,17 +101,17 @@ class Entry:
         if debit == 0 and credit == 0:
             return
         acct_id = account.pk if isinstance(account, Account) else account
-        self.lines.append(Line(acct_id, debit, credit))
+        self.lines.append(Line(acct_id, debit, credit, tag))
 
-    def pair(self, debit_account, credit_account, amount):
+    def pair(self, debit_account, credit_account, amount, tag=""):
         """Dr one account / Cr another for ``amount`` (negative flips sides)."""
         amount = q(amount)
         if amount == 0:
             return
         if amount < 0:
             debit_account, credit_account, amount = credit_account, debit_account, -amount
-        self.add(debit_account, debit=amount)
-        self.add(credit_account, credit=amount)
+        self.add(debit_account, debit=amount, tag=tag)
+        self.add(credit_account, credit=amount, tag=tag)
 
     @property
     def total_debits(self):
@@ -261,7 +262,7 @@ class Journal:
               .exclude(status=BankTransaction.IGNORED)
               .select_related("account", "category_account", "expense",
                               "transfer_peer", "transfer_peer__account")
-              .prefetch_related("payments", "receipts"))
+              .prefetch_related("payments", "receipts", "splits__account", "splits__expense"))
         for t in qs:
             bank = self._bank_acct(t.account)
             amt = abs(t.amount)
@@ -269,15 +270,22 @@ class Journal:
                       source_url=f"/banking/transactions/{t.pk}/")
             inflow = t.amount > 0
 
-            # a) transfers: one entry per pair, emitted from the outflow side
+            # a) transfers: one entry per pair, emitted from the outflow side.
+            #    Only trust the pairing when both sides still point at each other
+            #    and the twin is live; otherwise fall through and show the row.
             if t.status == BankTransaction.TRANSFER and t.transfer_peer_id:
-                if inflow:
+                peer = t.transfer_peer
+                paired = (peer is not None and not peer.is_deleted and not peer.pending
+                          and peer.status == BankTransaction.TRANSFER
+                          and peer.transfer_peer_id == t.pk)
+                if paired:
+                    if inflow:
+                        continue
+                    peer_bank = self._bank_acct(peer.account)
+                    e.memo = f"Transfer {t.account.name} → {peer.account.name}"
+                    e.pair(peer_bank, bank, amt)
+                    self._add(e)
                     continue
-                peer_bank = self._bank_acct(t.transfer_peer.account)
-                e.memo = f"Transfer {t.account.name} → {t.transfer_peer.account.name}"
-                e.pair(peer_bank, bank, amt)
-                self._add(e)
-                continue
 
             offsets = self._bank_offsets(t)
             # bank side
@@ -286,11 +294,13 @@ class Journal:
             else:
                 e.add(bank, credit=amt)
             # offset side(s)
-            for acct, portion in offsets:
+            for row in offsets:
+                acct, portion = row[0], row[1]
+                tag = row[2] if len(row) > 2 else ""
                 if inflow:
-                    e.add(acct, credit=portion)
+                    e.add(acct, credit=portion, tag=tag)
                 else:
-                    e.add(acct, debit=portion)
+                    e.add(acct, debit=portion, tag=tag)
             self._add(e)
 
     def _bank_offsets(self, t):
@@ -300,15 +310,9 @@ class Journal:
         amt = abs(t.amount)
         basis = self.basis
 
-        # b) expense linked (created from, or matched to, this transaction)
-        exp = t.expense if (t.expense_id and not t.expense.is_deleted) else None
-        if exp is not None:
-            if basis == CASH:
-                return [(self._expense_account(exp), amt)]
-            return [(self.sys("ap"), amt)]
-
         # c) deposit of customer payments
-        payments = [p for p in t.payments.all() if not p.is_deleted]
+        all_payments = list(t.payments.all())
+        payments = [p for p in all_payments if not p.is_deleted]
         if payments:
             total_pay = sum((p.amount for p in payments), ZERO)
             rows = [(self.sys("undeposited"), min(total_pay, amt))]
@@ -318,24 +322,66 @@ class Journal:
             elif diff < 0:      # deposit smaller: processor fees etc. shown as expense
                 rows = [(self.sys("undeposited"), total_pay), (self.sys("uncat_expense"), diff)]
             return rows
+        if all_payments:        # every linked payment was deleted: needs a fresh look
+            return [(self.sys("uncat_income") if t.amount > 0 else self.sys("uncat_expense"), amt)]
 
-        # d) supplier bill payment
+        # d) supplier bill payment (or supplier refund against a bill)
         receipts = [r for r in t.receipts.all() if not r.is_deleted]
         if receipts:
-            return [(self.sys("inventory_purchases") if basis == CASH else self.sys("ap"), amt)]
+            suppliers = {r.supplier_id for r in receipts}
+            tag = f"s{suppliers.pop()}" if len(suppliers) == 1 else ""
+            if basis == CASH:
+                return [(self.sys("inventory_purchases"), amt)]
+            return [(self.sys("ap"), amt, tag)]
+
+        # s) split across several categories (one Costco run = supplies + inventory + personal)
+        splits = [sp for sp in t.splits.all()]
+        if splits:
+            rows = []
+            for sp in splits:
+                exp = sp.expense if (sp.expense_id and not sp.expense.is_deleted) else None
+                if exp is not None:
+                    rows.append((self._expense_account(exp) if basis == CASH else self.sys("ap"), sp.amount))
+                else:
+                    rows.extend(self._category_offset(sp.account, sp.amount, t.amount > 0))
+            total = sum((r[1] for r in rows), ZERO)
+            if total != amt:                       # keep the entry balanced whatever was saved
+                rows.append((self.sys("uncat_income") if t.amount > 0 else self.sys("uncat_expense"),
+                             amt - total))
+            return rows
+
+        # b) expense linked (created from, or matched to, this transaction)
+        exp = t.expense if (t.expense_id and not t.expense.is_deleted) else None
+        if exp is not None:
+            if basis == CASH:
+                return [(self._expense_account(exp), amt)]
+            return [(self.sys("ap"), amt)]
 
         # e) categorized to an account
         acct = t.category_account if t.category_account_id else None
         if acct is not None:
-            sub = acct.subtype
-            if sub == AccountSubtype.INVENTORY_PURCHASES:
-                return [(acct if basis == CASH else self.sys("ap"), amt)]
-            if sub == AccountSubtype.SHIPPING_EXPENSE:
-                return [(acct if basis == CASH else self.sys("ap_carriers"), amt)]
-            return [(acct, amt)]
+            return self._category_offset(acct, amt, t.amount > 0)
 
         # f) not reviewed yet — keep it visible
         return [(self.sys("uncat_income") if t.amount > 0 else self.sys("uncat_expense"), amt)]
+
+    def _category_offset(self, acct, amt, inflow):
+        """Offset rows for an amount categorized straight to ``acct``."""
+        basis = self.basis
+        sub = acct.subtype
+        if sub == AccountSubtype.UNDEPOSITED:
+            # a deposit whose payments are gone: surface it instead of
+            # driving Undeposited funds negative
+            return [(self.sys("uncat_income") if inflow else self.sys("uncat_expense"), amt)]
+        if sub == AccountSubtype.INVENTORY_PURCHASES:
+            if inflow or basis == CASH:          # refund: credit COGS directly
+                return [(acct, amt)]
+            return [(self.sys("ap"), amt)]
+        if sub == AccountSubtype.SHIPPING_EXPENSE:
+            if inflow or basis == CASH:
+                return [(acct, amt)]
+            return [(self.sys("ap_carriers"), amt)]
+        return [(acct, amt)]
 
     # 3. customer payments ------------------------------------------------------
     def _customer_payments(self):
@@ -350,12 +396,18 @@ class Journal:
             e.add(self.sys("undeposited"), debit=p.amount)
             applied_total = ZERO
             later = []        # applications recorded after the payment date
+            entered_on = _local_date(p.created_at) or p.date
             for app in p.applications.all():
                 inv = app.invoice
                 if inv.is_deleted:
                     continue
                 applied_total += app.amount
                 app_date = _local_date(app.applied_at) or p.date
+                # A back-dated check entered and applied today counts on the
+                # check's date. Only an application made on a LATER day than the
+                # payment was entered is deferred (sat as a customer deposit).
+                if app_date <= entered_on:
+                    app_date = p.date
                 if app_date > p.date:
                     later.append((app, inv, app_date))
                     e.add(self.sys("customer_deposits"), credit=app.amount)
@@ -485,7 +537,8 @@ class Journal:
     # 8. supplier receipts (bills) ----------------------------------------------
     def _receipts(self):
         from inventory.models import Receipt
-        qs = (Receipt.objects.filter(is_deleted=False, posted=True)
+        qs = (Receipt.objects.filter(is_deleted=False)
+              .filter(models.Q(posted=True) | models.Q(paid_date__isnull=False))
               .select_related("supplier", "paid_from")
               .prefetch_related("lines", "supplier_payments"))
         for r in qs:
@@ -494,11 +547,12 @@ class Journal:
                 continue
             posted_day = _local_date(r.posted_at) or r.date
             label = f"RCV-{r.pk} {r.supplier or 'supplier'}"
-            if self.basis == ACCRUAL:
+            tag = f"s{r.supplier_id}" if r.supplier_id else ""
+            if self.basis == ACCRUAL and r.posted:
                 e = Entry(posted_day, f"Received {label}" + (f" inv {r.supplier_invoice_number}"
                                                                if r.supplier_invoice_number else ""),
                           "Receipt", str(r.pk), source_url=f"/inventory/receiving/{r.pk}/")
-                e.pair(self.sys("inventory"), self.sys("ap"), landed)
+                e.pair(self.sys("inventory"), self.sys("ap"), landed, tag=tag)
                 self._add(e)
             # payment by hand (no bank transaction linked)
             linked = [t for t in r.supplier_payments.all()
@@ -507,7 +561,7 @@ class Journal:
                 e = Entry(r.paid_date, f"Paid {label}", "Receipt", f"{r.pk}:paid",
                           source_url=f"/inventory/receiving/{r.pk}/")
                 debit = self.sys("ap") if self.basis == ACCRUAL else self.sys("inventory_purchases")
-                e.pair(debit, self._source_account(r.paid_from), landed)
+                e.pair(debit, self._source_account(r.paid_from), landed, tag=tag)
                 self._add(e)
 
     # 9. expenses -------------------------------------------------------------
@@ -515,9 +569,13 @@ class Journal:
         from expenses.models import Expense
         qs = (Expense.objects.filter(is_deleted=False)
               .select_related("paid_from", "bank_txn"))
+        split_txn = {}
+        from banking.models import BankTransactionSplit
+        for sp in BankTransactionSplit.objects.filter(expense__isnull=False).select_related("transaction"):
+            split_txn[sp.expense_id] = sp.transaction
         for x in qs:
             acct = self._expense_account(x)
-            txn = getattr(x, "bank_txn", None)
+            txn = getattr(x, "bank_txn", None) or split_txn.get(x.pk)
             if txn is not None and (txn.is_deleted or txn.status == "ignored"):
                 txn = None
             label = f"{x.vendor or x.category or 'Expense'}: {x.note[:60]}".rstrip(": ")
@@ -557,10 +615,12 @@ class Journal:
                 e = Entry(cp, "Inventory valuation true-up to stock ledger", "trueup:inventory", str(cp))
                 e.pair(inv_acct, adj_acct, diff)
                 self._add(e)
-            # (b) supplier AP with a debit balance = prepayments (an asset)
-            ap_nat = -bal.get(ap_acct.pk, ZERO)            # credit-normal
+            # (b) supplier AP with a debit balance = prepayments (an asset).
+            #     Judged per supplier: a deposit paid to Panini must not hide
+            #     behind a bill still owed to Topps.
+            by_supplier = self._ap_by_tag(ap_acct.pk, cp)
+            want_dep = sum((raw for raw in by_supplier.values() if raw > 0), ZERO)
             dep_cur = self._reclass_balance("trueup:ap", dep_acct.pk, cp)
-            want_dep = max(ZERO, -ap_nat)
             delta = q(want_dep - dep_cur)
             if delta != 0:
                 e = Entry(cp, "Supplier prepayments reclassified from accounts payable",
@@ -577,6 +637,17 @@ class Journal:
                           "trueup:apc", str(cp))
                 e.pair(ship_acct, apc_acct, delta)
                 self._add(e)
+
+    def _ap_by_tag(self, account_id, day):
+        """debits − credits of one account grouped by line tag (supplier)."""
+        out = defaultdict(lambda: ZERO)
+        for e in self.entries:
+            if e.date > day or e.source_type in ("trueup:ap", "trueup:apc"):
+                continue
+            for l in e.lines:
+                if l.account_id == account_id:
+                    out[l.tag] += l.debit - l.credit
+        return out
 
     def _raw_balances_through(self, day):
         """Balances excluding reclass true-ups (so they can be recomputed)."""
@@ -757,7 +828,7 @@ def inventory_valuation_as_of(day):
         if pid in seen:
             continue
         seen.add(pid)
-        total += Decimal(qty) * cost
+        total += q(Decimal(qty) * cost)      # per-product cents, like the valuation report
     return q(total)
 
 
@@ -813,13 +884,13 @@ def compare_bases(start, end):
         return a.signed_balance(after.get(a.pk, ZERO)) - a.signed_balance(before.get(a.pk, ZERO))
 
     bridge = [
-        ("Invoiced but not yet collected (Δ accounts receivable)", nat_delta("ar")),
-        ("Unapplied customer payments (Δ customer deposits)", -nat_delta("customer_deposits")),
-        ("Inventory bought but not yet sold (Δ inventory)", nat_delta("inventory")),
-        ("Supplier prepayments (Δ supplier deposits)", nat_delta("supplier_deposits")),
-        ("Bills received but not yet paid (Δ accounts payable)", -nat_delta("ap")),
-        ("Carrier charges not yet paid (Δ AP carriers)", -nat_delta("ap_carriers")),
-        ("Sales tax collected vs. remitted (Δ sales tax payable)", -nat_delta("sales_tax")),
+        ("Invoiced but not yet collected", nat_delta("ar")),
+        ("Customer payments not yet applied to an invoice", -nat_delta("customer_deposits")),
+        ("Inventory bought but not yet sold", nat_delta("inventory")),
+        ("Paid to suppliers ahead of delivery", nat_delta("supplier_deposits")),
+        ("Supplier bills received but not yet paid", -nat_delta("ap")),
+        ("Shipping charges not yet paid", -nat_delta("ap_carriers")),
+        ("Sales tax collected but not yet sent to the state", -nat_delta("sales_tax")),
     ]
     return {"start": start, "end": end, "cash": cash, "accrual": acc, "rows": rows,
             "net_difference": acc["net_income"] - cash["net_income"], "bridge": bridge}
