@@ -4,6 +4,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.shortcuts import get_object_or_404, redirect, render
+from django.utils import timezone
 
 from core.csvutils import csv_response
 from core.models import log_activity
@@ -170,7 +171,7 @@ def payment_create(request):
             with transaction.atomic():
                 payment = Payment.objects.create(
                     customer=customer, amount=amount,
-                    date=request.POST.get("date") or None,
+                    date=request.POST.get("date") or timezone.localdate(),   # blank date = today, not a crash
                     method=request.POST.get("method", "check"),
                     reference=request.POST.get("reference", ""),
                     notes=request.POST.get("notes", ""),

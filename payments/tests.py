@@ -172,3 +172,95 @@ class ArAdjustmentNotRevenueTests(TestCase):
         self.assertNotContains(r, "5000.00")
         r = self.client.get("/reports/sales-by-product/?group=category")
         self.assertNotContains(r, "5000.00")
+
+
+class PaymentFromBankDepositTests(TestCase):
+    """Record a payment straight from a bank deposit: the form is pre-filled
+    from the query string and the deposit is matched once the payment saves."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from django.urls import reverse
+        from accounting.models import Account
+        from banking.models import BankAccount, BankTransaction
+        Account.ensure_system_accounts()
+        self.admin = User.objects.create_superuser("bankpay", password="x")
+        self.client.force_login(self.admin)
+        self.c = Customer.objects.create(business_name="Card Shop LLC")
+        self.acct = BankAccount.objects.create(name="Checking", account_type="checking",
+                                               opening_date=timezone.localdate() - timedelta(days=400))
+        self.dep = BankTransaction.objects.create(account=self.acct, date=timezone.localdate() - timedelta(days=2),
+                                                  amount=Decimal("1250.00"), description="ZELLE FROM CARD SHOP")
+        self.url = reverse("payment_create")
+
+    def test_get_prefills_from_query_string(self):
+        r = self.client.get(self.url + f"?customer={self.c.pk}&amount=1250&date={self.dep.date.isoformat()}"
+                                       f"&reference=ZELLE+FROM+CARD+SHOP&bank_txn={self.dep.pk}")
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, 'value="1250.00"')
+        self.assertContains(r, f'value="{self.dep.date.isoformat()}"')
+        self.assertContains(r, 'value="ZELLE FROM CARD SHOP"')
+        self.assertContains(r, f'<input type="hidden" name="bank_txn" value="{self.dep.pk}">')
+        self.assertContains(r, "Back to the bank transaction")
+        self.assertContains(r, "Card Shop LLC")
+        # switching customer keeps the prefill (hidden inputs in the GET form)
+        self.assertContains(r, '<input type="hidden" name="amount" value="1250.00">')
+        # junk prefill never 500s and is simply dropped
+        r = self.client.get(self.url + f"?customer={self.c.pk}&amount=abc&date=2025-99-99&bank_txn=xyz")
+        self.assertEqual(r.status_code, 200)
+        self.assertNotContains(r, "Back to the bank transaction")
+        # plain form unchanged: today's date, empty amount
+        r = self.client.get(self.url + f"?customer={self.c.pk}")
+        self.assertContains(r, f'value="{timezone.localdate():%Y-%m-%d}"')
+        self.assertContains(r, 'id="payAmount" required value=""')
+
+    def test_post_with_bank_txn_matches_the_deposit(self):
+        from banking.models import BankTransaction
+        from accounting.models import Account
+        r = self.client.post(self.url, {"customer": self.c.pk, "amount": "1250.00", "date": self.dep.date.isoformat(),
+                                        "method": "zelle", "reference": "ZELLE FROM CARD SHOP",
+                                        "bank_txn": self.dep.pk}, follow=True)
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "Deposit matched")
+        pay = Payment.objects.get()
+        self.assertEqual((pay.customer, pay.amount, pay.method), (self.c, Decimal("1250.00"), "zelle"))
+        self.dep.refresh_from_db()
+        self.assertEqual(self.dep.status, BankTransaction.MATCHED)
+        self.assertEqual(list(self.dep.payments.all()), [pay])
+        self.assertEqual(self.dep.category_account, Account.system("undeposited"))
+        self.assertEqual(self.dep.reviewed_by, self.admin)
+        # unapplied credit warning from the existing flow is still there
+        self.assertContains(r, "unapplied")
+
+    def test_amount_mismatch_saves_payment_but_leaves_deposit_open(self):
+        from banking.models import BankTransaction
+        r = self.client.post(self.url, {"customer": self.c.pk, "amount": "300.00", "method": "check",
+                                        "bank_txn": self.dep.pk}, follow=True)
+        self.assertContains(r, "not matched to the bank deposit")
+        self.assertEqual(Payment.objects.count(), 1)
+        self.dep.refresh_from_db()
+        self.assertEqual(self.dep.status, BankTransaction.UNREVIEWED)
+        self.assertEqual(self.dep.payments.count(), 0)
+
+    def test_missing_or_bogus_bank_txn_is_ignored(self):
+        from banking.models import BankTransaction
+        for bogus in ("abc", "999999", ""):
+            Payment.all_objects.all().delete()
+            r = self.client.post(self.url, {"customer": self.c.pk, "amount": "10.00", "method": "cash",
+                                            "bank_txn": bogus}, follow=True)
+            self.assertEqual(r.status_code, 200, bogus)
+            self.assertNotContains(r, "Deposit matched")
+            self.assertEqual(Payment.objects.count(), 1, bogus)
+        # a soft-deleted deposit is not live
+        self.dep.delete(user=self.admin)
+        r = self.client.post(self.url, {"customer": self.c.pk, "amount": "1250.00", "method": "cash",
+                                        "bank_txn": self.dep.pk}, follow=True)
+        self.assertNotContains(r, "Deposit matched")
+        self.assertEqual(BankTransaction.all_objects.get(pk=self.dep.pk).payments.count(), 0)
+
+    def test_bad_amount_redirect_keeps_bank_txn(self):
+        r = self.client.post(self.url, {"customer": self.c.pk, "amount": "abc", "bank_txn": self.dep.pk})
+        self.assertEqual(r.status_code, 302)
+        self.assertIn(f"customer={self.c.pk}", r["Location"])
+        self.assertIn(f"bank_txn={self.dep.pk}", r["Location"])
+        self.assertEqual(Payment.objects.count(), 0)

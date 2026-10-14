@@ -217,7 +217,12 @@ def inbox(request):
     account_id = _int_or_none(g.get("account"))
     if account_id:
         qs = qs.filter(account_id=account_id)
-    d_from, d_to = _parse_date(g.get("from")), _parse_date(g.get("to"))
+    # the month-close page links here with ?start=&end=; from/to are the inbox's own names
+    filters = g.copy()
+    for own, alias in (("from", "start"), ("to", "end")):
+        if not filters.get(own) and filters.get(alias):
+            filters[own] = filters[alias]
+    d_from, d_to = _parse_date(filters.get("from")), _parse_date(filters.get("to"))
     if d_from:
         qs = qs.filter(date__gte=d_from)
     if d_to:
@@ -246,7 +251,7 @@ def inbox(request):
     ctx = {
         "page": page, "transactions": _attach_rule_patterns(list(page.object_list)), "status": status,
         "batch": batch,
-        "querystring": params.urlencode(), "filters": g,
+        "querystring": params.urlencode(), "filters": filters,
         "recent_batches": ImportBatch.objects.select_related("account").order_by("-created_at")[:15],
         "connections": BankConnection.objects.exclude(provider="manual").exclude(status="disconnected"),
         "next_url": request.get_full_path(),

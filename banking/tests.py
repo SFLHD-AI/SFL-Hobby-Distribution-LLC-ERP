@@ -326,9 +326,9 @@ class ImportRowsTests(BankingBase):
 
     def test_identical_same_day_rows_in_one_file_both_import(self):
         text = ("Date,Description,Amount\n01/10/2025,COFFEE,4.50\n01/10/2025,COFFEE,4.50\n")
-        batch = self._import(text)
+        batch = self._import(text, preset="amex")        # bare 3 columns no longer auto-detect
         self.assertEqual(batch.rows_imported, 2)
-        again = self._import(text)
+        again = self._import(text, preset="amex")
         self.assertEqual(again.rows_imported, 0)
         self.assertEqual(again.rows_duplicate, 2)
 
@@ -1567,16 +1567,26 @@ class GenericRulePatternTests(BankingBase):
         detail = self.client.get(reverse("bank_transaction_detail", args=[t.pk]))
         self.assertContains(detail, 'name="rule_pattern" value="PIRATE SHIP"')
         o1 = self.txn(desc="PIRATE SHIP 8449511111", amount="-9.00")
-        o2 = self.txn(desc="PIRATESHIP.COM LABEL", amount="-3.00")
+        o2 = self.txn(desc="PIRATE SHIP 8449522222", amount="-3.00")
+        o3 = self.txn(desc="PIRATE SHIP 1234 OTHER", amount="-3.00")       # outside the narrowed text
         resp = self.client.post(reverse("bank_inbox_action", args=[t.pk]),
                                 {"action": "save", "category": self.shipping_acct.pk, "always": "1",
-                                 "rule_pattern": "  pirate  "}, follow=True)
+                                 "rule_pattern": "  pirate ship 8449  "}, follow=True)
         self.assertContains(resp, "applied to 2 more")
         rule = CategoryRule.objects.get()
-        self.assertEqual((rule.pattern, rule.match_field, rule.auto_confirm), ("pirate", "description", True))
+        self.assertEqual((rule.pattern, rule.match_field, rule.auto_confirm), ("pirate ship 8449", "description", True))
         for o in (o1, o2):
             o.refresh_from_db()
             self.assertEqual(o.status, BankTransaction.CATEGORIZED)
+        o3.refresh_from_db()
+        self.assertEqual(o3.status, BankTransaction.UNREVIEWED)
+        # a short one-word edit ("pirate") is treated as generic: saved, but suggest-only
+        short = self.txn(desc="PIRATE SHIP 8449533333", amount="-2.00")
+        resp = self.client.post(reverse("bank_inbox_action", args=[short.pk]),
+                                {"action": "save", "category": self.shipping_acct.pk, "always": "1",
+                                 "rule_pattern": "pirate"}, follow=True)
+        self.assertContains(resp, "suggestion only")
+        self.assertFalse(CategoryRule.objects.get(pattern="pirate").auto_confirm)
         # a generic edit is honoured but only as a suggestion
         g = self.txn(desc="SQ *FOO 1", amount="-3.00", merchant_name="Foo Coffee")
         resp = self.client.post(reverse("bank_inbox_action", args=[g.pk]),
@@ -1748,16 +1758,16 @@ class LearnedSuggestionSourceTests(BankingBase):
         from payments.models import Payment
         cust = make_customer("Card Shop")
         p = Payment.objects.create(customer=cust, amount=D("500.00"), date=TODAY, method="zelle")
-        old = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 111", amount="500.00",
+        old = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 11111", amount="500.00",
                        day=TODAY - timedelta(days=20))
         old.link_payments([p], user=self.user)
-        new = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 222", amount="500.00")
+        new = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 22222", amount="500.00")
         c = apply_rules([new])
         new.refresh_from_db()
         self.assertEqual(c["learned"], 0)
         self.assertIsNone(new.suggested_account)
         # a categorized sibling does teach, and the suggestion is selectable
-        cat = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 333", amount="500.00",
+        cat = self.txn(account=self.checking, desc="ZELLE FROM CARD SHOP 33333", amount="500.00",
                        day=TODAY - timedelta(days=10))
         cat.categorize(Account.system("sales"), user=self.user)
         c = apply_rules([new])
@@ -1769,9 +1779,6 @@ class LearnedSuggestionSourceTests(BankingBase):
     def test_inbox_selects_reviewed_by(self):
         done = self.txn(desc="ULINE", amount="-120.00")
         done.categorize(self.shipping_acct, user=self.user)
-        with self.assertNumQueries(self.client.get(reverse("bank_inbox") + "?status=categorized")
-                                   and 0 or 0):
-            pass
         resp = self.client.get(reverse("bank_inbox") + "?status=categorized")
         self.assertContains(resp, self.user.username)
         self.assertIn("reviewed_by", str(resp.context["page"].object_list.query))
@@ -1963,3 +1970,25 @@ class InboxPhoneLayoutTests(BankingBase):
         self.assertIn("More…", html)
         # the compact Save and the full-width Save are both there (one per breakpoint)
         self.assertEqual(html.count('name="action" value="save"'), 2)
+
+
+class InboxDateAliasTests(BankingBase):
+    """The month-close page links with ?start=&end=; they filter like from/to."""
+
+    def test_start_end_alias_from_to(self):
+        inside = self.txn(desc="INSIDE", amount="-1.00", day=date(2025, 3, 10))
+        before = self.txn(desc="BEFORE", amount="-1.00", day=date(2025, 2, 28))
+        after = self.txn(desc="AFTER", amount="-1.00", day=date(2025, 4, 1))
+        url = reverse("bank_inbox") + "?status=unreviewed&start=2025-03-01&end=2025-03-31"
+        resp = self.client.get(url)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual([t.pk for t in resp.context["transactions"]], [inside.pk])
+        # the filter form reflects the range so the owner sees why rows are missing
+        self.assertContains(resp, 'name="from" value="2025-03-01"')
+        self.assertContains(resp, 'name="to" value="2025-03-31"')
+        # explicit from/to win when both spellings are present; junk never 500s
+        resp = self.client.get(reverse("bank_inbox") + "?from=2025-02-01&start=2025-03-01&end=2025-03-31")
+        self.assertEqual({t.pk for t in resp.context["transactions"]}, {inside.pk, before.pk})
+        self.assertEqual(self.client.get(reverse("bank_inbox") + "?start=garbage&end=2025-13-45").status_code, 200)
+        self.assertEqual(self.client.get(reverse("bank_inbox") + "?start=2025-03-01").context["transactions"][0].pk,
+                         after.pk)
