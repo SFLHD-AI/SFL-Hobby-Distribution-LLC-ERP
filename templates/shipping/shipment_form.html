@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Ship {{ po.number }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-2">Ship {{ po.number }}</h1>
+<p class="text-slate-500 text-sm mb-5">{{ po.customer.business_name }}{% if po.ship_to %} → {{ po.ship_to }}{% endif %}</p>
+
+<form method="post" class="max-w-2xl space-y-4">
+  {% csrf_token %}
+  <div class="card-pad space-y-4">
+    <div class="field"><label>Provider</label>
+      <select name="provider" id="providerSel">
+        <option value="shippo">Shippo — live rates & buy label in-app</option>
+        <option value="shipstation">ShipStation (parcel){% if not shipstation_ok %} — API not configured, manual mode{% endif %}</option>
+        <option value="pirateship">Pirate Ship (parcel, CSV/manual)</option>
+        <option value="uship">uShip (freight/LTL){% if not uship_ok %} — API not configured, manual mode{% endif %}</option>
+        <option value="local" {% if po.local_delivery %}selected{% endif %}>Local delivery (our driver)</option>
+        <option value="manual">Manual / other carrier</option>
+      </select></div>
+    <div class="field"><label>Service (optional)</label>
+      <input type="text" name="service" placeholder="UPS Ground, USPS Priority, LTL…"></div>
+    <div class="grid grid-cols-4 gap-3">
+      <div class="field"><label>Weight lb</label><input type="number" step="0.01" name="weight_lbs"></div>
+      <div class="field"><label>L in</label><input type="number" step="0.1" name="length_in"></div>
+      <div class="field"><label>W in</label><input type="number" step="0.1" name="width_in"></div>
+      <div class="field"><label>H in</label><input type="number" step="0.1" name="height_in"></div>
+    </div>
+  </div>
+  <div class="flex gap-2">
+    <button name="push" value="1" class="btn-primary" id="pushBtn">🚀 Save & push to provider API</button>
+    <button class="btn-secondary">Save for manual entry</button>
+    <a href="{% url 'po_detail' po.pk %}" class="btn-secondary">Cancel</a>
+  </div>
+  <p class="text-xs text-slate-400">Pushing sends the order (with the customer's saved address) to the carrier's API. If the API isn't configured the shipment is saved and you can paste tracking + cost manually — nothing is lost.</p>
+</form>
+<script>
+const sel = document.getElementById('providerSel');
+const pushBtn = document.getElementById('pushBtn');
+function upd() { pushBtn.style.display = (sel.value === 'shipstation' || sel.value === 'uship') ? '' : 'none'; }
+sel.addEventListener('change', upd); upd();
+</script>
+{% endblock %}

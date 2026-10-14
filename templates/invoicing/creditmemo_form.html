@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Credit memo{% endblock %}
+{% block content %}
+<h1 class="page-title mb-2">Credit / return against {{ invoice.number }}</h1>
+<p class="text-slate-500 text-sm mb-5">{{ invoice.customer.business_name }} — enter return quantities. Checked “restock” lines go back into inventory through the ledger.</p>
+<form method="post" class="space-y-4">
+  {% csrf_token %}
+  <div class="card overflow-x-auto">
+    <table class="tbl">
+      <thead><tr><th>Item</th><th class="num">Invoiced qty</th><th class="num">Unit $</th>
+        <th class="num">Return qty</th><th>Restock?</th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td>{{ l.description }}{% if l.product %} <span class="text-xs text-slate-400">({{ l.product.sku }})</span>{% endif %}</td>
+          <td class="num">{{ l.qty }}</td>
+          <td class="num">${{ l.unit_price|floatformat:2 }}</td>
+          <td class="num"><input type="number" name="qty_{{ l.pk }}" min="0" max="{{ l.qty }}"
+                 class="w-24 rounded-lg border-slate-300 text-sm text-right"></td>
+          <td><input type="checkbox" name="restock_{{ l.pk }}" checked class="rounded"></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-pad field-inline">
+    <label class="text-xs text-slate-500 block mb-1">Reason</label>
+    <input type="text" name="reason" class="w-full max-w-lg" placeholder="Damaged in transit, wrong item, etc.">
+  </div>
+  <div class="flex gap-2">
+    <button class="btn-primary" onclick="return confirm('Apply credit memo? Balance reduces and checked lines restock immediately.')">Apply credit memo</button>
+    <a href="{% url 'invoice_detail' invoice.pk %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter landscape; margin: 14mm;
+          @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #94a3b8; } }
+  body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; font-size: 8.5pt; margin: 0; }
+  h1 { font-size: 15pt; margin: 0 0 2px; color: #1e293b; }
+  .muted { color: #64748b; font-size: 8pt; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { font-size: 7pt; text-transform: uppercase; letter-spacing: .5px; color: #64748b;
+       text-align: left; padding: 4px 6px; border-bottom: 1.5px solid #4f46e5; }
+  th.r, td.r { text-align: right; }
+  td { padding: 3.5px 6px; border-bottom: 0.4pt solid #e2e8f0; }
+  tr.totals td { border-top: 1.5px solid #4f46e5; font-weight: 700; }
+</style>
+</head>
+<body>
+<h1>{{ title }}</h1>
+<p class="muted">{{ company.company_name }} · generated {{ generated|date:"M j, Y g:i A" }}{% if period and period != " – " %} · period {{ period }}{% endif %}</p>
+<table>
+  <thead><tr>{% for c in columns %}<th {% if not forloop.first %}class="r"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+  <tbody>
+  {% for row in rows %}
+    <tr>{% for cell in row %}<td {% if not forloop.first %}class="r"{% endif %}>{{ cell }}</td>{% endfor %}</tr>
+  {% endfor %}
+  {% if totals %}<tr class="totals">{% for cell in totals %}<td {% if not forloop.first %}class="r"{% endif %}>{{ cell }}</td>{% endfor %}</tr>{% endif %}
+  </tbody>
+</table>
+</body>
+</html>

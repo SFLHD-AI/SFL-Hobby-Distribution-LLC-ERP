@@ -1,0 +1,145 @@
+{% load humanize %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 16mm 15mm 20mm 15mm;
+          @bottom-center { content: element(footer); } }
+  * { box-sizing: border-box; }
+  body { font-family: Georgia, "Times New Roman", serif; color: #111827; font-size: 10pt; margin: 0; }
+
+  .headband { background: #1f2937; color: #fff; padding: 10px 14px;
+              display: flex; justify-content: space-between; align-items: center; }
+  .headband .logo { background: #fff; border-radius: 4px; padding: 4px 8px; }
+  .headband .logo img { max-height: 42px; max-width: 180px; display: block; }
+  .headband .cname { font-size: 15pt; font-weight: 700; }
+  .headband h1 { margin: 0; font-size: 20pt; letter-spacing: 3px; font-weight: 700; }
+
+  .company-meta { font-size: 8.5pt; color: #374151; padding: 8px 2px 0; line-height: 1.45; white-space: pre-line; }
+
+  table.meta-grid { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  table.meta-grid td, table.meta-grid th { border: 1pt solid #111827; padding: 6px 9px; font-size: 9pt; }
+  table.meta-grid th { background: #e5e7eb; font-size: 8pt; text-transform: uppercase;
+                       letter-spacing: 1px; text-align: left; }
+
+  .parties { display: flex; gap: 0; margin-top: 14px; }
+  .party { flex: 1; border: 1pt solid #111827; }
+  .party + .party { border-left: none; }
+  .party h3 { margin: 0; background: #e5e7eb; font-size: 8pt; letter-spacing: 1px;
+              text-transform: uppercase; padding: 5px 9px; border-bottom: 1pt solid #111827; }
+  .party div { padding: 8px 9px; white-space: pre-line; line-height: 1.5; min-height: 62px; }
+
+  table.items { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  table.items th, table.items td { border: 1pt solid #111827; padding: 5.5px 8px; }
+  table.items th { background: #1f2937; color: #fff; font-size: 8pt; text-transform: uppercase;
+                   letter-spacing: 1px; text-align: left; }
+  table.items th.r, table.items td.r { text-align: right; }
+  .po-group td { background: #f3f4f6; font-weight: 700; font-size: 8.5pt; letter-spacing: .5px; }
+  .sku { color: #6b7280; font-size: 8.5pt; font-style: italic; }
+
+  .bottom { display: flex; gap: 16px; margin-top: 0; }
+  .notes-box { flex: 1; margin-top: 12px; font-size: 8.5pt; }
+  .notes-box .inner { border: 1pt solid #9ca3af; padding: 8px; min-height: 50px; }
+  .notes-box h3 { font-size: 8pt; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 4px; }
+
+  table.totals { width: 64mm; border-collapse: collapse; margin-top: 12px; }
+  table.totals td { border: 1pt solid #111827; padding: 5px 9px; font-size: 9.5pt; }
+  table.totals td.r { text-align: right; }
+  table.totals tr.grand td { background: #1f2937; color: #fff; font-weight: 700; font-size: 11pt; }
+  .paid-row td { color: #065f46; }
+
+  #footer { position: running(footer); font-size: 8pt; color: #6b7280; text-align: center;
+            border-top: 1pt solid #9ca3af; padding-top: 5px; white-space: pre-line; }
+</style>
+</head>
+<body>
+
+<div id="footer">{{ company.invoice_footer|default:"Thank you for your business." }}
+{{ company.company_name }}{% if company.website %} · {{ company.website }}{% endif %}{% if company.phone %} · {{ company.phone }}{% endif %}</div>
+
+<div class="headband">
+  <div style="display:flex;align-items:center;gap:12px;">
+    {% if logo_url %}<div class="logo"><img src="{{ logo_url }}"></div>{% endif %}
+    <div class="cname">{{ company.company_name }}</div>
+  </div>
+  <h1>INVOICE</h1>
+</div>
+<div class="company-meta">{{ company.full_address }}{% if company.phone %} · {{ company.phone }}{% endif %}{% if company.email %} · {{ company.email }}{% endif %}{% if company.website %} · {{ company.website }}{% endif %}</div>
+
+<table class="meta-grid">
+  <tr>
+    <th>Invoice #</th><th>Invoice date</th><th>Terms</th><th>Due date</th>{% if po_refs %}<th>PO reference</th>{% endif %}
+  </tr>
+  <tr>
+    <td><b>{{ invoice.number }}</b></td>
+    <td>{{ invoice.date|date:"m/d/Y" }}</td>
+    <td>{{ terms_display }}</td>
+    <td><b>{{ invoice.due_date|date:"m/d/Y" }}</b></td>
+    {% if po_refs %}<td>{{ po_refs }}</td>{% endif %}
+  </tr>
+</table>
+
+<div class="parties">
+  <div class="party"><h3>Bill to</h3><div>{{ invoice.bill_to }}</div></div>
+  <div class="party"><h3>Ship to</h3><div>{{ invoice.ship_to|default:"—" }}</div></div>
+</div>
+
+<table class="items">
+  <thead>
+    <tr>
+      <th style="width:47%">Description</th>
+      <th class="r" style="width:10%">Qty</th>
+      <th class="r" style="width:14%">Unit price</th>
+      <th class="r" style="width:12%">Disc.</th>
+      <th class="r" style="width:17%">Amount</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for group in line_groups %}
+      {% if show_po_groups %}<tr class="po-group"><td colspan="5">{{ group.label }}</td></tr>{% endif %}
+      {% for line in group.lines %}
+      <tr>
+        <td>{{ line.description }}{% if line.sku %} <span class="sku">(SKU {{ line.sku }})</span>{% endif %}</td>
+        <td class="r">{{ line.qty }}</td>
+        <td class="r">${{ line.unit_price|floatformat:2|intcomma }}</td>
+        <td class="r">{% if line.discount_pct %}{{ line.discount_pct|floatformat:"-2" }}%{% else %}&nbsp;{% endif %}</td>
+        <td class="r">${{ line.line_total|floatformat:2|intcomma }}</td>
+      </tr>
+      {% endfor %}
+    {% endfor %}
+  </tbody>
+</table>
+
+<div class="bottom">
+  <div class="notes-box">
+    <h3>Notes / remarks</h3>
+    <div class="inner">{{ invoice.notes|default:""|linebreaksbr }}
+    {% if tax_exempt_note %}<br>{{ tax_exempt_note }}{% endif %}
+    {% if tracking_numbers %}<br><b>Tracking:</b> {{ tracking_numbers }}{% endif %}</div>
+  </div>
+  <div>
+    <table class="totals">
+      <tr><td>Subtotal</td><td class="r">${{ invoice.subtotal|floatformat:2|intcomma }}</td></tr>
+      {% if invoice.shipping_charge %}<tr><td>Shipping</td><td class="r">${{ invoice.shipping_charge|floatformat:2|intcomma }}</td></tr>{% endif %}
+      <tr><td>Sales tax{% if invoice.tax_rate and not invoice.tax_overridden %} ({{ invoice.tax_rate|floatformat:"-3" }}%){% endif %}</td>
+          <td class="r">${{ invoice.tax_amount|floatformat:2|intcomma }}</td></tr>
+      <tr class="grand"><td>TOTAL</td><td class="r">${{ invoice.total|floatformat:2|intcomma }}</td></tr>
+      {% if amount_paid %}<tr class="paid-row"><td>Paid</td><td class="r">−${{ amount_paid|floatformat:2|intcomma }}</td></tr>
+      <tr class="grand"><td>BALANCE DUE</td><td class="r">${{ balance_due|floatformat:2|intcomma }}</td></tr>{% endif %}
+    </table>
+    {% if include_balance %}
+    <table style="width:100%; border-collapse:collapse; margin-top:12px; border:1px solid #000; font-size:9pt;">
+      <tr><td colspan="2" style="font-weight:bold; padding:4px 8px; border-bottom:1px solid #000;">ACCOUNT SUMMARY</td></tr>
+      <tr><td style="padding:3px 8px;">This invoice</td>
+          <td style="text-align:right; padding:3px 8px;">${{ balance_due|floatformat:2|intcomma }}</td></tr>
+      <tr><td style="padding:3px 8px;">Other open invoices</td>
+          <td style="text-align:right; padding:3px 8px;">${{ previous_balance|floatformat:2|intcomma }}</td></tr>
+      <tr><td style="font-weight:bold; padding:3px 8px; border-top:1px solid #000;">TOTAL ACCOUNT BALANCE</td>
+          <td style="text-align:right; font-weight:bold; padding:3px 8px; border-top:1px solid #000;">${{ account_balance|floatformat:2|intcomma }}</td></tr>
+    </table>
+    {% endif %}
+  </div>
+</div>
+
+</body>
+</html>

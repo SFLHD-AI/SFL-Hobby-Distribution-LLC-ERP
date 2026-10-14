@@ -1,0 +1,72 @@
+# SFL ERP System — full stack in one command:
+#   cp .env.example .env   (edit secrets)
+#   docker compose up -d
+#   docker compose exec web python manage.py seed_demo   # optional demo data
+# App: http://localhost:8000  (admin / sflerp123 after seeding)
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-sfl_erp}
+      POSTGRES_USER: ${POSTGRES_USER:-sfl_erp}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-sfl_erp}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-sfl_erp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redisdata:/data
+
+  web:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - media:/app/media
+      - backups:/app/backups
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py setup_roles &&
+             python manage.py setup_schedules &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+      REDIS_HOST: redis
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - media:/app/media
+    command: python manage.py qcluster
+
+volumes:
+  pgdata:
+  redisdata:
+  media:
+  backups:

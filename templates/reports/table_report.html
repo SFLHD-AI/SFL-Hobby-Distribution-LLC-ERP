@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">{{ title }}</h1>
+  <div class="flex gap-2">
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="?{{ request.GET.urlencode }}&export=pdf" target="_blank" class="btn-secondary">📄 PDF</a>
+  </div>
+</div>
+
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  {% if show_as_of %}
+    <div><label class="text-xs text-slate-500 block mb-1">As of date</label>
+      <input type="date" name="as_of" value="{{ as_of|date:'Y-m-d' }}"></div>
+  {% endif %}
+  {% if show_period %}
+    <div><label class="text-xs text-slate-500 block mb-1">From</label>
+      <input type="date" name="start" value="{{ start|date:'Y-m-d' }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">To</label>
+      <input type="date" name="end" value="{{ end|date:'Y-m-d' }}"></div>
+  {% endif %}
+  {% if show_group_tabs %}
+    <div><label class="text-xs text-slate-500 block mb-1">Group by</label>
+      <select name="group">
+        <option value="sku" {% if group == 'sku' %}selected{% endif %}>SKU</option>
+        <option value="category" {% if group == 'category' %}selected{% endif %}>Category</option>
+        <option value="brand" {% if group == 'brand' %}selected{% endif %}>Brand</option>
+      </select></div>
+  {% endif %}
+  {% if show_sku_filter %}
+    <div><label class="text-xs text-slate-500 block mb-1">SKU contains</label>
+      <input type="text" name="sku" value="{{ sku }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Type</label>
+      <select name="type"><option value="">All</option>
+        {% for v, l in movement_types %}<option value="{{ v }}" {% if mtype == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select></div>
+  {% endif %}
+  {% if show_as_of or show_period or show_group_tabs or show_sku_filter %}
+  <button class="btn-secondary">Run</button>
+  {% endif %}
+</form>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr>{% for c in columns %}<th {% if not forloop.first %}class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr {% if highlight_rows and row.0 in highlight_rows %}class="!bg-indigo-50 font-bold"{% endif %}>
+        {% for cell in row %}<td {% if not forloop.first %}class="num tabular-nums"{% endif %}>{{ cell }}</td>{% endfor %}
+      </tr>
+    {% empty %}<tr><td colspan="{{ columns|length }}" class="text-center text-slate-400 py-8">No data for this selection.</td></tr>{% endfor %}
+    {% if totals %}
+      <tr class="!bg-slate-100 font-bold border-t-2 border-slate-300">
+        {% for cell in totals %}<td {% if not forloop.first %}class="num tabular-nums"{% endif %}>{{ cell }}</td>{% endfor %}
+      </tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+<p class="text-xs text-slate-400 mt-2">{{ rows|length }} rows</p>
+{% endblock %}

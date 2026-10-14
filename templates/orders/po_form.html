@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{% if po %}Edit {{ po.number }}{% else %}New order{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">{% if po %}Edit {{ po.number }}{% else %}New customer order{% endif %}</h1>
+<form method="post" class="max-w-3xl space-y-6" id="poForm">
+  {% csrf_token %}
+  {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Customer *</label>{{ form.customer }}</div>
+      <div class="field"><label>Ship to</label>{{ form.ship_to }}
+        <p class="text-xs text-slate-400 mt-1">Only the selected customer's saved addresses are shown — add more on their customer page.</p></div>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Priority</label>{{ form.priority }}</div>
+      <div class="field"><label>Customer PO ref</label>{{ form.customer_po_ref }}</div>
+      <div class="field"><label>Order discount %</label>{{ form.order_discount_pct }}</div>
+    </div>
+  </div>
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Shipping & tax</h2>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="rounded-lg border border-slate-200 p-3">
+        <label class="flex items-center gap-2 text-sm font-medium">{{ form.charge_shipping }} Charge shipping on this order</label>
+        <div class="field mt-2"><label>Shipping charge $</label>{{ form.shipping_charge }}</div>
+      </div>
+      <div class="rounded-lg border border-slate-200 p-3">
+        <label class="flex items-center gap-2 text-sm font-medium">{{ form.charge_tax }} Charge sales tax</label>
+        <div class="field mt-2"><label>Tax rate %</label>{{ form.tax_rate }}</div>
+        <p class="text-xs text-slate-400 mt-1">Defaults from Settings. Tax auto-applies if the customer lacks a valid resale certificate (per their policy).</p>
+      </div>
+    </div>
+    <div class="rounded-lg border border-slate-200 p-3">
+      <label class="flex items-center gap-2 text-sm font-medium">{{ form.local_delivery }}
+        🚐 Local delivery — our driver delivers this order (shows on the Deliveries screen)</label>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Notes (customer-visible)</label>{{ form.notes }}</div>
+      <div class="field"><label>Internal notes</label>{{ form.internal_notes }}</div>
+    </div>
+  </div>
+  <div class="flex gap-2">
+    <button class="btn-primary">{% if po %}Save{% else %}Create order & add items{% endif %}</button>
+    <a href="{% if po %}{% url 'po_detail' po.pk %}{% else %}{% url 'po_list' %}{% endif %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{{ addr_map|json_script:"addrMap" }}
+<script>
+// Ship-to dropdown always shows ONLY the selected customer's addresses
+(function () {
+  var addrMap = JSON.parse(document.getElementById('addrMap').textContent);
+  var custSel = document.getElementById('id_customer');
+  var shipSel = document.getElementById('id_ship_to');
+  if (!custSel || !shipSel) return;
+  function fill(keepCurrent) {
+    var current = keepCurrent ? shipSel.value : '';
+    var list = addrMap[custSel.value] || [];
+    shipSel.innerHTML = '<option value="">— no address / pick one —</option>';
+    var matched = false;
+    list.forEach(function (a) {
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.label + (a.def ? ' ★' : '');
+      if (String(current) === String(a.id)) { opt.selected = true; matched = true; }
+      shipSel.appendChild(opt);
+    });
+    if (!matched) {
+      var d = list.find(function (a) { return a.def; });
+      if (d) shipSel.value = d.id;
+    }
+  }
+  custSel.addEventListener('change', function () { fill(false); });
+  fill(true);
+})();
+</script>
+{% endblock %}

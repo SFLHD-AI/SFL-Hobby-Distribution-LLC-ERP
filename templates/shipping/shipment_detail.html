@@ -1,0 +1,183 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Shipment {{ shipment.po.number }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <div>
+    <h1 class="page-title">Shipment for
+      <a href="{% url 'po_detail' shipment.po.pk %}" class="text-indigo-600 hover:underline">{{ shipment.po.number }}</a></h1>
+    <p class="text-slate-500 text-sm">{{ shipment.get_provider_display }} · {{ shipment.get_status_display }}
+      {% if shipment.external_id %} · provider ref {{ shipment.external_id }}{% endif %}
+      {% if shipment.last_synced_at %} · synced {{ shipment.last_synced_at|date:"M j g:i A" }}{% endif %}</p>
+  </div>
+  <form method="post" onsubmit="return confirm('Delete shipment?')">{% csrf_token %}
+    <input type="hidden" name="action" value="delete"><button class="btn-danger">Delete</button></form>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4 mb-4">
+  <form method="post" class="card-pad space-y-4">
+    {% csrf_token %}<input type="hidden" name="action" value="manual_update">
+    <h2 class="font-semibold">Tracking & cost {% if shipment.provider == 'pirateship' %}<span class="text-xs text-slate-400">(paste back from Pirate Ship)</span>{% endif %}</h2>
+    <div class="field"><label>Tracking number</label>
+      <input type="text" name="tracking_number" value="{{ shipment.tracking_number }}" class="font-mono"></div>
+    <div class="grid grid-cols-3 gap-3">
+      <div class="field"><label>Label/freight cost $</label>
+        <input type="number" step="0.01" name="cost" value="{{ shipment.cost|default_if_none:'' }}"></div>
+      <div class="field"><label>Service</label>
+        <input type="text" name="service" value="{{ shipment.service }}"></div>
+      <div class="field"><label>Ship date</label>
+        <input type="date" name="ship_date" value="{{ shipment.ship_date|date:'Y-m-d' }}"></div>
+    </div>
+    <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="email_customer" checked class="rounded">
+      Email tracking to {{ shipment.po.customer.email|default:"customer (no email on file!)" }}</label>
+    <button class="btn-primary">Save</button>
+  </form>
+
+  <div class="card-pad text-sm">
+    <h2 class="font-semibold mb-2">Ship to</h2>
+    <p class="whitespace-pre-line text-slate-600">{{ shipment.ship_to_text|default:"—" }}</p>
+    <div class="mt-3 pt-3 border-t border-slate-100 space-y-1">
+      {% with w=po_weight %}
+      <p class="text-slate-500">⚖ Order est. weight: <b>{{ w.weight }} lb</b>{% if w.missing_weights %} <span class="text-amber-600 text-xs">(some items missing unit weight)</span>{% endif %}</p>
+      {% endwith %}
+      {% if shipment.packages_weight_lbs %}<p class="text-slate-500">📦 Boxed weight: <b>{{ shipment.packages_weight_lbs }} lb</b> in {{ packages|length }} box{{ packages|length|pluralize:"es" }}</p>{% endif %}
+      {% if shipment.tracking_emailed_at %}<p class="text-emerald-600">✓ Tracking emailed {{ shipment.tracking_emailed_at|date:"M j g:i A" }}</p>{% endif %}
+    </div>
+  </div>
+</div>
+
+{# ================= Shippo: rates + label ================= #}
+<div class="card-pad mb-4">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+    <h2 class="font-semibold">🏷 Shippo — live rates & label
+      {% if not shippo_ok %}<span class="badge bg-slate-100 text-slate-500">add your token in Settings</span>{% endif %}</h2>
+    {% if shippo_ok and not shipment.label_url %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="shippo_rates">
+      <button class="btn-primary">Get rates</button></form>
+    {% endif %}
+  </div>
+  {% if shipment.label_url %}
+  <div class="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 flex flex-wrap items-center gap-3">
+    <span class="text-emerald-800 font-medium">✓ Label purchased — tracking
+      <span class="font-mono">{{ shipment.tracking_number }}</span></span>
+    <a href="{{ shipment.label_url }}" target="_blank" class="btn-success">🖨 Print 4×6 label</a>
+    {% if shipment.cost %}<span class="text-sm text-slate-500">cost ${{ shipment.cost }}</span>{% endif %}
+  </div>
+  {% elif shippo_rates %}
+  <table class="tbl mt-2">
+    <thead><tr><th>Carrier</th><th>Service</th><th>Est. days</th><th class="num">Price</th><th></th></tr></thead>
+    <tbody>
+    {% for r in shippo_rates %}
+      <tr>
+        <td class="font-medium">{{ r.carrier }}</td>
+        <td>{{ r.service }}</td>
+        <td>{{ r.days|default:"—" }}</td>
+        <td class="num font-bold">${{ r.amount }}</td>
+        <td><form method="post">{% csrf_token %}
+          <input type="hidden" name="action" value="shippo_buy">
+          <input type="hidden" name="rate_id" value="{{ r.rate_id }}">
+          <input type="hidden" name="amount" value="{{ r.amount }}">
+          <input type="hidden" name="service" value="{{ r.carrier }} {{ r.service }}">
+          <button class="btn-primary" onclick="return confirm('Buy {{ r.carrier }} {{ r.service }} label for ${{ r.amount }}? This charges your Shippo account.')">Buy label</button>
+        </form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="text-sm text-slate-500">Box up the order below (dims + weight), then hit <b>Get rates</b> to compare USPS / UPS / FedEx prices and buy the label without leaving this page.</p>
+  {% endif %}
+</div>
+
+{# ================= Package builder ================= #}
+<div class="card-pad">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+    <h2 class="font-semibold">📦 Packages — split this order into boxes</h2>
+    {% if all_boxed and packages %}<span class="badge bg-emerald-100 text-emerald-700">All items boxed ✓</span>{% endif %}
+  </div>
+  <p class="text-sm text-slate-500 mb-4">Add a box, assign items into it, and the weight fills in from product unit weights (override after weighing). Use the dims + weights for your labels/quotes.</p>
+
+  <div class="grid lg:grid-cols-3 gap-4">
+    {# ---- items to box ---- #}
+    <div>
+      <h3 class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">Items on this order</h3>
+      <table class="tbl">
+        <thead><tr><th>SKU</th><th class="num">Ship qty</th><th class="num">Boxed</th><th class="num">Left</th></tr></thead>
+        <tbody>
+        {% for r in line_rows %}
+          <tr><td class="text-xs font-medium">{{ r.line.product.sku }}</td>
+            <td class="num">{{ r.line.fulfilled_qty }}</td>
+            <td class="num">{{ r.boxed }}</td>
+            <td class="num font-bold {% if r.remaining > 0 %}text-amber-600{% else %}text-emerald-600{% endif %}">{{ r.remaining }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <form method="post" class="mt-4 bg-slate-50 rounded-lg p-3 space-y-2 field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="add_package">
+        <p class="text-xs font-bold uppercase tracking-wide text-slate-500">+ New box (est. dims, inches)</p>
+        <div class="flex gap-2">
+          <input type="number" step="0.1" name="length_in" placeholder="L" class="w-16">
+          <input type="number" step="0.1" name="width_in" placeholder="W" class="w-16">
+          <input type="number" step="0.1" name="height_in" placeholder="H" class="w-16">
+          <button class="btn-primary">Add box</button>
+        </div>
+      </form>
+    </div>
+
+    {# ---- boxes ---- #}
+    <div class="lg:col-span-2 space-y-3">
+      {% for pkg in packages %}
+      <div class="rounded-xl border border-slate-200 p-4">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <p class="font-bold">Box {{ pkg.number }}
+            <span class="text-slate-400 font-normal text-sm">{{ pkg.dims_display }}</span>
+            <span class="badge bg-slate-100 text-slate-700 ml-1">⚖ {{ pkg.weight_lbs|default_if_none:pkg.estimated_weight_lbs }} lb</span></p>
+          <form method="post" onsubmit="return confirm('Remove box {{ pkg.number }}?')">{% csrf_token %}
+            <input type="hidden" name="action" value="del_package"><input type="hidden" name="package_id" value="{{ pkg.pk }}">
+            <button class="text-red-500 text-sm hover:underline">remove box</button></form>
+        </div>
+
+        <table class="tbl mb-2">
+          <tbody>
+          {% for item in pkg.items.all %}
+            <tr>
+              <td class="text-xs">{{ item.po_line.product.sku }} — {{ item.po_line.product.name|truncatechars:40 }}</td>
+              <td class="num font-semibold">×{{ item.qty }}</td>
+              <td class="num text-slate-400 text-xs">{% if item.po_line.product.weight_lbs %}{{ item.po_line.product.weight_lbs }} lb/ea{% else %}no wt{% endif %}</td>
+              <td><form method="post">{% csrf_token %}
+                <input type="hidden" name="action" value="pkg_del_item"><input type="hidden" name="item_id" value="{{ item.pk }}">
+                <button class="text-red-500 text-lg leading-none">×</button></form></td>
+            </tr>
+          {% empty %}<tr><td class="text-slate-400 text-sm py-2">Empty box — add items below.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+
+        <div class="flex flex-wrap gap-2 items-end field-inline">
+          <form method="post" class="flex flex-wrap gap-2 items-end">
+            {% csrf_token %}<input type="hidden" name="action" value="pkg_add_item">
+            <input type="hidden" name="package_id" value="{{ pkg.pk }}">
+            <select name="line_id" class="text-sm">
+              {% for r in line_rows %}{% if r.remaining > 0 %}
+                <option value="{{ r.line.pk }}">{{ r.line.product.sku }} ({{ r.remaining }} left)</option>
+              {% endif %}{% endfor %}
+            </select>
+            <input type="number" name="qty" value="1" min="1" class="w-20">
+            <button class="btn-secondary">Add to box</button>
+          </form>
+          <form method="post" class="flex flex-wrap gap-2 items-end ml-auto">
+            {% csrf_token %}<input type="hidden" name="action" value="pkg_dims">
+            <input type="hidden" name="package_id" value="{{ pkg.pk }}">
+            <input type="number" step="0.1" name="length_in" value="{{ pkg.length_in|default_if_none:'' }}" placeholder="L" class="w-14">
+            <input type="number" step="0.1" name="width_in" value="{{ pkg.width_in|default_if_none:'' }}" placeholder="W" class="w-14">
+            <input type="number" step="0.1" name="height_in" value="{{ pkg.height_in|default_if_none:'' }}" placeholder="H" class="w-14">
+            <input type="number" step="0.01" name="weight_lbs" value="{{ pkg.weight_lbs|default_if_none:'' }}" placeholder="lb" class="w-20">
+            <button class="btn-secondary">Save box</button>
+          </form>
+        </div>
+      </div>
+      {% empty %}
+      <p class="text-slate-400 text-sm border-2 border-dashed border-slate-200 rounded-xl p-8 text-center">No boxes yet — add your first box on the left.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

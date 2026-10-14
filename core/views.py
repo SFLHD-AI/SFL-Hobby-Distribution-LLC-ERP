@@ -1,0 +1,138 @@
+from datetime import timedelta
+from decimal import Decimal
+
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.db import models
+from django.shortcuts import redirect, render
+from django.utils import timezone
+
+from core.forms import CompanySettingsForm, NumberSequenceForm
+from core.models import ActivityLog, CompanySettings, NumberSequence, log_activity
+from core.roles import admin_required, module_required
+from customers.models import Customer, ResaleCertificate
+from inventory.models import Product, Receipt
+from invoicing.models import Invoice
+from orders.models import PurchaseOrder
+
+
+@login_required
+def dashboard(request):
+    today = timezone.localdate()
+    month_start = today.replace(day=1)
+
+    invoices = Invoice.objects.filter(is_deleted=False).exclude(status=Invoice.VOID)
+    today_revenue = invoices.filter(date=today).aggregate(t=models.Sum("total"))["t"] or 0
+    mtd_revenue = invoices.filter(date__gte=month_start).aggregate(t=models.Sum("total"))["t"] or 0
+
+    open_pos = (PurchaseOrder.objects.filter(is_deleted=False,
+                                             status__in=PurchaseOrder.OPEN_STATUSES)
+                .values("status").annotate(n=models.Count("id")))
+    status_counts = {r["status"]: r["n"] for r in open_pos}
+    pick_queue = PurchaseOrder.objects.filter(
+        is_deleted=False, status__in=[PurchaseOrder.CONFIRMED, PurchaseOrder.PICKING]).count()
+
+    low_stock = [p for p in Product.objects.filter(active=True)
+                              .select_related("brand")
+                 if p.is_low_stock and not p.low_stock_alert_muted][:12]
+
+    open_invoices = [i for i in invoices if i.balance_due > 0]
+    ar_total = sum((i.balance_due for i in open_invoices), Decimal("0"))
+    overdue = sum((i.balance_due for i in open_invoices if i.is_overdue), Decimal("0"))
+    debtor_totals = {}
+    for i in open_invoices:
+        debtor_totals[i.customer] = debtor_totals.get(i.customer, Decimal("0")) + i.balance_due
+    top_debtors = sorted(debtor_totals.items(), key=lambda kv: -kv[1])[:5]
+
+    soon = today + timedelta(days=30)
+    expiring_certs = (ResaleCertificate.objects
+                      .filter(is_deleted=False, expiration_date__lte=soon,
+                              customer__is_deleted=False, customer__active=True)
+                      .select_related("customer").order_by("expiration_date")[:10])
+
+    inbound = Receipt.objects.filter(is_deleted=False, posted=False)[:8]
+    recent_pos = PurchaseOrder.objects.filter(is_deleted=False).select_related("customer")[:8]
+
+    return render(request, "core/dashboard.html", {
+        "today_revenue": today_revenue, "mtd_revenue": mtd_revenue,
+        "status_counts": status_counts, "pick_queue": pick_queue,
+        "low_stock": low_stock, "ar_total": ar_total, "overdue": overdue,
+        "top_debtors": top_debtors, "expiring_certs": expiring_certs,
+        "inbound": inbound, "recent_pos": recent_pos,
+        "statuses": PurchaseOrder.STATUS_CHOICES,
+    })
+
+
+@admin_required
+def settings_edit(request):
+    obj = CompanySettings.get()
+    seqs = []
+    for key, label in NumberSequence.KEYS:
+        seq, _ = NumberSequence.objects.get_or_create(
+            key=key, defaults={"prefix": {"po": "PO-", "invoice": "INV-", "credit": "CM-"}[key]})
+        seqs.append((label, seq))
+    if request.method == "POST":
+        form = CompanySettingsForm(request.POST, request.FILES, instance=obj)
+        seq_forms = [(label, NumberSequenceForm(request.POST, instance=seq, prefix=f"seq_{seq.key}"))
+                     for label, seq in seqs]
+        if form.is_valid() and all(f.is_valid() for _, f in seq_forms):
+            form.save()
+            for _, f in seq_forms:
+                f.save()
+            log_activity(request.user, "settings_updated", obj)
+            messages.success(request, "Settings saved.")
+            return redirect("settings_edit")
+    else:
+        form = CompanySettingsForm(instance=obj)
+        seq_forms = [(label, NumberSequenceForm(instance=seq, prefix=f"seq_{seq.key}"))
+                     for label, seq in seqs]
+    from shipping.providers import get_provider
+    return render(request, "core/settings.html", {
+        "form": form, "seq_forms": seq_forms,
+        "shipstation_configured": get_provider("shipstation").is_configured(),
+        "uship_configured": get_provider("uship").is_configured(),
+        "shippo_configured": get_provider("shippo").is_configured(),
+    })
+
+
+@admin_required
+def activity_log(request):
+    qs = ActivityLog.objects.select_related("user")
+    model = request.GET.get("model")
+    if model:
+        qs = qs.filter(model=model)
+    user_id = request.GET.get("user")
+    if user_id:
+        qs = qs.filter(user_id=user_id)
+    q = request.GET.get("q")
+    if q:
+        qs = qs.filter(models.Q(object_repr__icontains=q) | models.Q(action__icontains=q))
+    models_list = (ActivityLog.objects.values_list("model", flat=True)
+                   .distinct().order_by("model"))
+    from django.contrib.auth.models import User
+    return render(request, "core/activity_log.html", {
+        "entries": qs[:300], "models_list": models_list,
+        "users": User.objects.filter(is_active=True).order_by("username"),
+    })
+
+
+@module_required("dashboard")
+def global_search(request):
+    q = (request.GET.get("q") or "").strip()
+    results = {"q": q}
+    if q:
+        from invoicing.models import Invoice as Inv
+        from shipping.models import Shipment
+        results["products"] = Product.objects.filter(
+            models.Q(sku__icontains=q) | models.Q(name__icontains=q) |
+            models.Q(upc__icontains=q))[:20]
+        results["customers"] = Customer.objects.filter(
+            models.Q(business_name__icontains=q) | models.Q(email__icontains=q) |
+            models.Q(phone__icontains=q))[:20]
+        results["pos"] = PurchaseOrder.objects.filter(
+            models.Q(number__icontains=q) | models.Q(customer_po_ref__icontains=q)
+        ).select_related("customer")[:20]
+        results["invoices"] = Inv.objects.filter(number__icontains=q).select_related("customer")[:20]
+        results["shipments"] = (Shipment.objects.filter(tracking_number__icontains=q)
+                                .select_related("po", "po__customer")[:20])
+    return render(request, "core/search.html", results)

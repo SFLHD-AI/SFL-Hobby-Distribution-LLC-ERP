@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Manual AR adjustment{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto">
+  <h1 class="page-title mb-2">Manual AR adjustment</h1>
+  <p class="text-slate-500 text-sm mb-5">Put an amount onto a customer's account — perfect for
+    <b>transferring open balances from your old system</b>. It creates a tax-free manual invoice
+    (no order, no inventory impact) with the date you choose, so old balances age correctly
+    in AR reports and appear on statements.</p>
+
+  <form method="post" class="card-pad space-y-4 field-inline">
+    {% csrf_token %}
+    <div><label class="text-xs text-slate-500 block mb-1">Customer *</label>
+      <select name="customer_id" required class="w-full">
+        <option value="">— choose —</option>
+        {% for c in customers %}<option value="{{ c.pk }}">{{ c.business_name }}</option>{% endfor %}
+      </select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Amount owed $ *</label>
+      <input type="number" step="0.01" min="0.01" name="amount" required class="w-full"
+             placeholder="e.g. 1250.00"></div>
+    <div class="grid grid-cols-2 gap-3">
+      <div><label class="text-xs text-slate-500 block mb-1">Original date <span class="text-slate-400">(backdate for correct aging)</span></label>
+        <input type="date" name="date" class="w-full"></div>
+      <div><label class="text-xs text-slate-500 block mb-1">Due date <span class="text-slate-400">(blank = customer's terms)</span></label>
+        <input type="date" name="due_date" class="w-full"></div>
+    </div>
+    <div><label class="text-xs text-slate-500 block mb-1">Memo</label>
+      <input type="text" name="memo" class="w-full" value="Opening balance transfer"></div>
+    <button class="btn-primary w-full">Add to AR balance</button>
+  </form>
+
+  <p class="text-xs text-slate-400 mt-4">Need to <b>reduce</b> what a customer owes? Record a
+    <a href="{% url 'payment_create' %}" class="text-indigo-600 hover:underline">payment</a> against their
+    invoice, or open the invoice and issue a credit — both keep a clean audit trail.</p>
+</div>
+{% endblock %}

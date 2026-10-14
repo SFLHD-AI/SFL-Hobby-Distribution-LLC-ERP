@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 16mm; }
+  body { font-family: Helvetica, Arial, sans-serif; color: #111; font-size: 10.5pt; margin: 0; }
+  h1 { font-size: 18pt; letter-spacing: 3px; margin: 0; text-align: right; }
+  .top { display: flex; justify-content: space-between; }
+  .muted { color: #555; font-size: 9pt; white-space: pre-line; line-height: 1.5; }
+  .logo img { max-height: 46px; max-width: 190px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  th, td { border: 1pt solid #111; padding: 7px 9px; }
+  th { background: #eee; font-size: 8pt; text-transform: uppercase; letter-spacing: 1px; text-align: left; }
+  .r { text-align: right; }
+  .check { width: 12mm; }
+  .bigqty { font-size: 13pt; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    {% if logo_url %}<div class="logo"><img src="{{ logo_url }}"></div>{% endif %}
+    <div style="font-size:13pt;font-weight:700">{{ company.company_name }}</div>
+    <div class="muted">{{ company.full_address }}</div>
+  </div>
+  <div>
+    <h1>PACKING SLIP</h1>
+    <div class="muted" style="text-align:right;margin-top:6px"><b style="color:#111">{{ po.number }}</b>
+      {{ po.created_at|date:"M j, Y" }}{% if po.customer_po_ref %} · Ref {{ po.customer_po_ref }}{% endif %}</div>
+  </div>
+</div>
+
+<div style="margin-top:16px;border:1pt solid #111;padding:9px;width:80mm">
+  <div style="font-size:8pt;text-transform:uppercase;letter-spacing:1px;color:#555">Ship to</div>
+  <b>{{ po.customer.business_name }}</b>
+  <div class="muted">{% if po.ship_to %}{{ po.ship_to.as_text }}{% endif %}</div>
+</div>
+
+<table>
+  <thead><tr><th class="check">✓</th><th>SKU</th><th>Item</th><th>Bin</th><th class="r">Qty ordered</th><th class="r">Qty shipped</th></tr></thead>
+  <tbody>
+  {% for l in lines %}
+    <tr><td></td><td>{{ l.product.sku }}</td><td>{{ l.description|default:l.product.name }}</td>
+      <td>{{ l.product.bin_location }}</td>
+      <td class="r bigqty">{{ l.qty_ordered }}</td>
+      <td class="r bigqty">{{ l.fulfilled_qty }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<p class="muted" style="margin-top:20px">No prices are shown on this document. Count and inspect contents on arrival; report discrepancies within 5 business days.</p>
+{% if po.notes %}<p class="muted"><b>Notes:</b> {{ po.notes }}</p>{% endif %}
+</body>
+</html>

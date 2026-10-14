@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}CC-{{ cc.pk }}{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">{{ cc.name }} (CC-{{ cc.pk }})
+    <span class="badge {% if cc.status == 'applied' %}bg-emerald-100 text-emerald-700{% elif cc.status == 'open' %}bg-amber-100 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ cc.get_status_display }}</span></h1>
+</div>
+<form method="post">
+  {% csrf_token %}
+  <div class="card overflow-x-auto mb-4">
+    <table class="tbl">
+      <thead><tr><th>Bin</th><th>SKU</th><th>Product</th><th class="num">System qty</th>
+        <th class="num">Counted</th><th class="num">Delta</th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td class="font-mono text-xs">{{ l.product.bin_location|default:"—" }}</td>
+          <td class="font-medium">{{ l.product.sku }}</td>
+          <td class="max-w-xs truncate">{{ l.product.name }}</td>
+          <td class="num">{{ l.snapshot_qty }}</td>
+          <td class="num">
+            {% if cc.status == 'open' %}
+              <input type="number" name="count_{{ l.pk }}" value="{{ l.counted_qty|default_if_none:'' }}"
+                     class="w-24 rounded-lg border-slate-300 text-sm text-right" inputmode="numeric">
+            {% else %}{{ l.counted_qty|default_if_none:"—" }}{% endif %}
+          </td>
+          <td class="num font-bold {% if l.delta and l.delta < 0 %}text-red-600{% elif l.delta and l.delta > 0 %}text-emerald-600{% endif %}">
+            {% if l.delta is not None %}{{ l.delta|stringformat:"+d" }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if cc.status == 'open' %}
+  <div class="flex gap-2">
+    <button name="action" value="save" class="btn-secondary">Save counts</button>
+    <button name="action" value="apply" class="btn-primary"
+            onclick="return confirm('Apply count? Adjustments will be written to the stock ledger.')">Apply adjustments</button>
+    <button name="action" value="cancel" class="btn-danger ml-auto"
+            onclick="return confirm('Cancel this count?')">Cancel count</button>
+  </div>
+  {% endif %}
+</form>
+{% endblock %}

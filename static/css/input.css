@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .nav-link { @apply block rounded-md px-2 py-1.5 hover:bg-slate-800 hover:text-white transition-colors; }
+  .btn { @apply inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors cursor-pointer; }
+  .btn-primary { @apply btn bg-indigo-600 text-white hover:bg-indigo-700; }
+  .btn-secondary { @apply btn bg-white border border-slate-300 text-slate-700 hover:bg-slate-50; }
+  .btn-danger { @apply btn bg-red-600 text-white hover:bg-red-700; }
+  .btn-success { @apply btn bg-emerald-600 text-white hover:bg-emerald-700; }
+  .card { @apply bg-white rounded-xl border border-slate-200 shadow-sm; }
+  .card-pad { @apply card p-4 lg:p-6; }
+  .page-title { @apply text-xl lg:text-2xl font-bold text-slate-900; }
+  .tbl { @apply w-full text-sm; }
+  .tbl thead th { @apply text-left text-[11px] uppercase tracking-wider text-slate-500 font-semibold px-3 py-2 border-b border-slate-200 whitespace-nowrap; }
+  .tbl tbody td { @apply px-3 py-2.5 border-b border-slate-100 align-middle; }
+  .tbl tbody tr:hover { @apply bg-slate-50; }
+  .tbl .num { @apply text-right tabular-nums; }
+  .badge { @apply inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium whitespace-nowrap; }
+  .field label { @apply block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1; }
+  .field input[type=text], .field input[type=number], .field input[type=email], .field input[type=date],
+  .field input[type=file], .field input[type=password], .field input[type=url], .field select, .field textarea {
+    @apply w-full rounded-lg border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500;
+  }
+  .field-inline input, .field-inline select { @apply rounded-lg border-slate-300 text-sm; }
+  .stat { @apply card p-4; }
+  .stat .lbl { @apply text-xs uppercase tracking-wide text-slate-500 font-semibold; }
+  .stat .val { @apply mt-1 text-2xl font-bold text-slate-900 tabular-nums; }
+}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Credit memos{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Credit memos</h1>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>#</th><th>Invoice</th><th>Customer</th><th>Date</th><th>Reason</th>
+      <th>Status</th><th class="num">Total</th></tr></thead>
+    <tbody>
+    {% for m in memos %}
+      <tr>
+        <td class="font-medium">{{ m.number }}</td>
+        <td><a class="text-indigo-600 hover:underline" href="{% url 'invoice_detail' m.invoice.pk %}">{{ m.invoice.number }}</a></td>
+        <td>{{ m.customer.business_name }}</td>
+        <td>{{ m.date|date:"M j, Y" }}</td>
+        <td class="text-xs">{{ m.reason }}</td>
+        <td><span class="badge {% if m.status == 'applied' %}bg-emerald-100 text-emerald-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ m.get_status_display }}</span></td>
+        <td class="num font-semibold">${{ m.total|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No credit memos.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

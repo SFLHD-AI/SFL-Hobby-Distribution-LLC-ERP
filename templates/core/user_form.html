@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}{% if edit_user %}Edit {{ edit_user.username }}{% else %}New user{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">{% if edit_user %}Edit user: {{ edit_user.username }}{% else %}New user{% endif %}</h1>
+<form method="post" class="max-w-xl card-pad space-y-4">
+  {% csrf_token %}
+  {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Username *</label>{{ form.username }}</div>
+    <div class="field"><label>Role *</label>{{ form.role }}
+      <p class="text-xs text-slate-400 mt-1">Manage roles <a href="{% url 'role_list' %}" class="text-indigo-600 hover:underline">here</a>.</p></div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>First name</label>{{ form.first_name }}</div>
+    <div class="field"><label>Last name</label>{{ form.last_name }}</div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Email</label>{{ form.email }}</div>
+    <div class="field"><label>Phone</label>{{ form.phone }}</div>
+  </div>
+  <div class="field"><label>{% if edit_user %}New password (blank = unchanged){% else %}Password *{% endif %}</label>{{ form.password }}</div>
+  <label class="flex items-center gap-2 text-sm">{{ form.is_active }} Account active (unchecking blocks sign-in)</label>
+  <div class="flex gap-2">
+    <button class="btn-primary">Save user</button>
+    <a href="{% url 'user_list' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

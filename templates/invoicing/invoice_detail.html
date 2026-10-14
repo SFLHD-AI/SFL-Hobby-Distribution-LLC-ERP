@@ -1,0 +1,145 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ invoice.number }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+  <div>
+    <h1 class="page-title">{{ invoice.number }}
+      {% if invoice.status == 'paid' %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>
+      {% elif invoice.status == 'partial' %}<span class="badge bg-amber-100 text-amber-700">Partially paid</span>
+      {% elif invoice.status == 'void' %}<span class="badge bg-slate-200 text-slate-500">VOID</span>
+      {% elif invoice.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue {{ invoice.days_past_due }}d</span>
+      {% else %}<span class="badge bg-sky-100 text-sky-700">Open</span>{% endif %}</h1>
+    <p class="text-slate-500 text-sm">
+      <a href="{% url 'customer_detail' invoice.customer.pk %}" class="text-indigo-600 hover:underline">{{ invoice.customer.business_name }}</a>
+      · {{ invoice.date|date:"M j, Y" }} · due {{ invoice.due_date|date:"M j, Y" }}
+      {% if invoice.po_numbers %} · from {{ invoice.po_numbers|join:", " }}{% endif %}
+      {% if invoice.emailed_at %} · ✉ emailed {{ invoice.emailed_at|date:"M j g:i A" }}{% endif %}</p>
+  </div>
+  <div class="flex flex-wrap gap-2 items-center">
+    <label class="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 rounded-lg px-2.5 py-2 cursor-pointer select-none"
+           title="Adds the customer's total account balance to the PDF">
+      <input type="checkbox" id="balToggle" class="rounded"
+             onchange="document.getElementById('pdfBtn').href='{% url 'invoice_pdf' invoice.pk %}'+(this.checked?'?balance=1':'')">
+      show account balance
+    </label>
+    <a href="{% url 'invoice_pdf' invoice.pk %}" target="_blank" id="pdfBtn" class="btn-secondary">📄 PDF</a>
+    <a href="{% url 'invoice_email' invoice.pk %}" class="btn-secondary"
+       onclick="return confirm('Email invoice with PDF to {{ invoice.customer.email|default:'customer' }}?')">✉ Email</a>
+    {% if invoice.status != 'void' %}
+    <a href="{% url 'payment_create' %}?customer={{ invoice.customer.pk }}&invoice={{ invoice.pk }}" class="btn-primary">💵 Record payment</a>
+    <a href="{% url 'creditmemo_create' invoice.pk %}" class="btn-secondary">↩ Credit / return</a>
+    <form method="post" onsubmit="return confirm('Void this invoice?')">{% csrf_token %}
+      <input type="hidden" name="action" value="void"><button class="btn-danger">Void</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 card-pad overflow-x-auto">
+    <table class="tbl">
+      <thead><tr><th>PO</th><th>Item</th><th class="num">Qty</th><th class="num">Unit $</th>
+        <th class="num">Disc</th><th class="num">Total</th>
+        {% if show_costs %}<th class="num">Profit</th>{% endif %}</tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td class="text-xs text-slate-500">{% if l.is_manual %}<span class="badge bg-violet-100 text-violet-700">manual</span>{% else %}{{ l.po.number|default:"—" }}{% endif %}</td>
+          <td>{{ l.description }}{% if l.product %}<br><span class="text-xs text-slate-400">{{ l.product.sku }}</span>{% endif %}{% if l.category %}<br><span class="text-xs text-slate-400">{{ l.category.name }}</span>{% endif %}
+            {% if l.is_manual and invoice.status != 'void' and invoice.amount_paid == 0 %}
+            <form method="post" class="inline">{% csrf_token %}
+              <input type="hidden" name="action" value="remove_manual">
+              <input type="hidden" name="line_id" value="{{ l.pk }}">
+              <button class="text-red-500 text-xs hover:underline ml-1"
+                      onclick="return confirm('Remove {{ l.description|escapejs }} from this invoice?')">remove</button>
+            </form>{% endif %}</td>
+          <td class="num">{{ l.qty }}</td>
+          <td class="num">${{ l.unit_price|floatformat:2 }}</td>
+          <td class="num">{% if l.discount_pct %}{{ l.discount_pct|floatformat:"-2" }}%{% else %}—{% endif %}</td>
+          <td class="num font-semibold">${{ l.line_total|floatformat:2|intcomma }}</td>
+          {% if show_costs %}<td class="num {% if l.line_profit and l.line_profit < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+            {% if l.line_profit is not None %}${{ l.line_profit|floatformat:2 }}{% endif %}</td>{% endif %}
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+
+    {% if invoice.status != 'void' and invoice.status != 'paid' and invoice.amount_paid == 0 %}
+    <details class="mt-4">
+      <summary class="cursor-pointer text-sm font-semibold text-indigo-600">＋ Add manual item (not in inventory)</summary>
+      <form method="post" class="grid md:grid-cols-6 gap-2 items-end field-inline border border-slate-200 rounded-xl p-3 mt-2">
+        {% csrf_token %}<input type="hidden" name="action" value="add_manual">
+        <datalist id="catlist">{% for c in categories %}<option value="{{ c.name }}">{% endfor %}</datalist>
+        <div class="md:col-span-2"><label class="text-xs text-slate-500 block mb-1">Description *</label>
+          <input type="text" name="m_desc" required class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Category <span class="text-slate-400">(type new to create)</span></label>
+          <input type="text" name="m_cat" list="catlist" class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
+          <input type="number" name="m_qty" min="1" value="1" class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Price $ *</label>
+          <input type="number" step="0.01" name="m_price" required class="w-full"></div>
+        <div class="flex gap-2 items-end">
+          {% if show_costs %}<div class="flex-1"><label class="text-xs text-slate-500 block mb-1">Cost $</label>
+          <input type="number" step="0.01" name="m_cost" class="w-full"></div>{% endif %}
+          <button class="btn-primary">Add</button>
+        </div>
+      </form>
+    </details>
+    {% endif %}
+
+    {% if applications or credits %}
+    <h3 class="font-semibold text-sm mt-5 mb-2">Payments & credits applied</h3>
+    <table class="tbl">
+      <tbody>
+      {% for a in applications %}
+        <tr><td>{{ a.payment.date|date:"M j, Y" }}</td>
+          <td>{{ a.payment.get_method_display }} {{ a.payment.reference }}</td>
+          <td class="num text-emerald-600 font-semibold">−${{ a.amount|floatformat:2|intcomma }}</td></tr>
+      {% endfor %}
+      {% for c in credits %}
+        <tr><td>{{ c.date|date:"M j, Y" }}</td>
+          <td>Credit memo {{ c.number }} ({{ c.get_status_display }}) {{ c.reason }}</td>
+          <td class="num text-orange-600 font-semibold">{% if c.status == 'applied' %}−${{ c.total|floatformat:2|intcomma }}{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+
+  <div class="space-y-4">
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-3">Totals</h2>
+      <div class="space-y-1.5">
+        <div class="flex justify-between"><span class="text-slate-500">Subtotal</span><span>${{ invoice.subtotal|floatformat:2|intcomma }}</span></div>
+        {% if invoice.shipping_charge %}<div class="flex justify-between"><span class="text-slate-500">Shipping</span><span>${{ invoice.shipping_charge|floatformat:2 }}</span></div>{% endif %}
+        <div class="flex justify-between"><span class="text-slate-500">Tax{% if invoice.tax_overridden %} (manual){% elif invoice.tax_rate %} ({{ invoice.tax_rate|floatformat:"-3" }}%){% endif %}</span>
+          <span>${{ invoice.tax_amount|floatformat:2 }}</span></div>
+        <div class="flex justify-between border-t border-slate-200 pt-2 font-bold text-base"><span>Total</span><span>${{ invoice.total|floatformat:2|intcomma }}</span></div>
+        <div class="flex justify-between text-emerald-600"><span>Paid / credited</span><span>−${{ invoice.amount_paid|add:invoice.amount_credited|floatformat:2|intcomma }}</span></div>
+        <div class="flex justify-between font-bold text-lg {% if invoice.balance_due > 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
+          <span>Balance due</span><span>${{ invoice.balance_due|floatformat:2|intcomma }}</span></div>
+        {% if show_costs %}
+          {% if invoice.is_ar_adjustment %}
+          <div class="flex justify-between border-t border-slate-200 pt-2 text-slate-400 text-xs"><span>AR adjustment / balance transfer</span><span>not counted as revenue or profit</span></div>
+          {% else %}
+          <div class="flex justify-between border-t border-slate-200 pt-2 text-slate-500"><span>COGS</span><span>${{ invoice.cogs|floatformat:2|intcomma }}</span></div>
+          <div class="flex justify-between font-semibold text-emerald-700"><span>Gross profit</span><span>${{ invoice.gross_profit|floatformat:2|intcomma }}</span></div>
+          {% endif %}
+        {% endif %}
+      </div>
+      {% if invoice.status != 'void' and invoice.status != 'paid' %}
+      <form method="post" class="mt-4 pt-3 border-t border-slate-100 flex gap-2 items-end field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="update_tax">
+        <div class="flex-1"><label class="text-xs text-slate-500 block mb-1">Override tax amount $</label>
+          <input type="number" step="0.01" name="tax_amount" value="{{ invoice.tax_amount }}" class="w-full"></div>
+        <button class="btn-secondary">Set</button>
+      </form>
+      {% endif %}
+    </div>
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">Bill to / ship to</h2>
+      <p class="whitespace-pre-line text-slate-600">{{ invoice.bill_to }}</p>
+      {% if invoice.ship_to %}<p class="mt-3 pt-3 border-t border-slate-100 whitespace-pre-line text-slate-600">{{ invoice.ship_to }}</p>{% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

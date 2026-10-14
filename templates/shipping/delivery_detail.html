@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Delivery {{ shipment.po.number }}{% endblock %}
+{% block content %}
+<div class="max-w-xl mx-auto">
+  <h1 class="page-title mb-1">{{ shipment.po.customer.business_name }}</h1>
+  <p class="text-slate-500 mb-4">{{ shipment.po.number }} · {{ shipment.ship_date|date:"l, M j"|default:"unscheduled" }}
+    {% if shipment.status == 'delivered' %}<span class="badge bg-emerald-100 text-emerald-700 ml-1">✓ Delivered</span>{% endif %}</p>
+
+  <div class="card-pad mb-4">
+    <p class="whitespace-pre-line text-lg">{{ shipment.ship_to_text|default:"⚠ No address on the order" }}</p>
+    {% if shipment.po.customer.phone %}<a href="tel:{{ shipment.po.customer.phone }}" class="btn-secondary mt-3">📞 {{ shipment.po.customer.phone }}</a>{% endif %}
+    {% if apple_url %}<a href="{{ apple_url }}" target="_blank" class="btn-primary mt-3 ml-2"> Navigate (Apple Maps)</a>{% endif %}
+    {% if maps_url %}<a href="{{ maps_url }}" target="_blank" class="btn-secondary mt-3 ml-2">🗺 Google Maps</a>{% endif %}
+  </div>
+
+  <div class="card-pad mb-4">
+    <h2 class="font-semibold mb-2">Items ({{ shipment.po.picked_units|default:shipment.po.total_units }} units)</h2>
+    <table class="tbl">
+      <tbody>
+      {% for l in shipment.po.live_lines.all %}
+        <tr><td>{{ l.product.sku }}</td><td class="text-xs text-slate-500">{{ l.product.name|truncatechars:40 }}</td>
+        <td class="num font-bold">×{{ l.fulfilled_qty }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if shipment.status != 'delivered' %}
+  <form method="post" enctype="multipart/form-data" class="card-pad space-y-4 border-2 border-emerald-200">
+    {% csrf_token %}<input type="hidden" name="action" value="deliver">
+    <h2 class="font-semibold text-emerald-700">Complete this delivery</h2>
+    <div class="field"><label>📷 Proof photo (take one at drop-off)</label>
+      <input type="file" name="proof_photo" accept="image/*" capture="environment"
+             class="w-full text-sm"></div>
+    <div class="field"><label>Notes (optional)</label>
+      <input type="text" name="notes" placeholder="Left with manager, signed by…"></div>
+    <button class="w-full rounded-xl bg-emerald-600 text-white font-bold py-3.5 text-lg">✓ Mark delivered</button>
+  </form>
+  <form method="post" class="mt-3 flex gap-2 items-center justify-center field-inline">
+    {% csrf_token %}<input type="hidden" name="action" value="reschedule">
+    <span class="text-sm text-slate-500">Reschedule to</span>
+    <input type="date" name="date" class="text-sm">
+    <button class="btn-secondary">Move</button>
+  </form>
+  {% else %}
+  <div class="card-pad text-center">
+    <p class="text-emerald-700 font-bold text-lg mb-2">✓ Delivered {{ shipment.delivered_at|date:"M j, g:i A" }}
+      {% if shipment.delivered_by %}by {{ shipment.delivered_by.get_full_name|default:shipment.delivered_by.username }}{% endif %}</p>
+    {% if shipment.delivery_notes %}<p class="text-slate-500 text-sm mb-3">{{ shipment.delivery_notes }}</p>{% endif %}
+    {% if shipment.proof_photo %}<img src="{{ shipment.proof_photo.url }}" class="rounded-xl mx-auto max-h-96 border">{% else %}<p class="text-slate-400 text-sm">No photo was attached.</p>{% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

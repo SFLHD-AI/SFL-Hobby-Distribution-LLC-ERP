@@ -1,0 +1,190 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ po.number }}{% endblock %}
+{% block content %}
+
+{% if cert_warning %}
+<div class="mb-4 rounded-lg {% if cert_warning == 'block' %}bg-red-50 border-red-200 text-red-800{% else %}bg-amber-50 border-amber-200 text-amber-800{% endif %} border px-4 py-3 text-sm font-medium">
+  ⚠ {{ po.customer.business_name }} has no valid resale certificate —
+  {% if cert_warning == 'block' %}finalization will be <b>blocked</b> until one is uploaded (or their policy is changed).
+  {% else %}this order should <b>charge sales tax</b>. The tax checkbox {% if po.charge_tax %}is on ✓{% else %}is currently OFF — review before invoicing.{% endif %}{% endif %}
+</div>
+{% endif %}
+
+<div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+  <div>
+    <h1 class="page-title">{{ po.number }} {% include "orders/_status_badge.html" with status=po.status %}
+      {% if po.parent %}<a href="{% url 'po_detail' po.parent.pk %}" class="badge bg-orange-100 text-orange-700 hover:underline">backorder of {{ po.parent.number }}</a>{% endif %}</h1>
+    <p class="text-slate-500 text-sm">
+      <a href="{% url 'customer_detail' po.customer.pk %}" class="text-indigo-600 hover:underline">{{ po.customer.business_name }}</a>
+      · created {{ po.created_at|date:"M j, Y g:i A" }} by {{ po.created_by|default:"—" }}
+      {% if po.customer_po_ref %} · their ref: {{ po.customer_po_ref }}{% endif %}</p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+    <a href="{% url 'po_pdf' po.pk %}" target="_blank" class="btn-secondary">📄 PO PDF</a>
+    <a href="{% url 'packing_slip_pdf' po.pk %}" target="_blank" class="btn-secondary">📦 Packing slip</a>
+    {% if po.is_editable %}<a href="{% url 'po_edit' po.pk %}" class="btn-secondary">Edit header</a>{% endif %}
+  </div>
+</div>
+
+{# --- status actions --- #}
+<div class="card-pad mb-4 flex flex-wrap items-center gap-2">
+  {% if po.status == 'draft' %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="confirm">
+      <button class="btn-primary">✓ Confirm order (commit inventory)</button></form>
+  {% elif po.status == 'confirmed' %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="start_picking">
+      <button class="btn-primary">→ Send to pick queue</button></form>
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="finalize">
+      <button class="btn-secondary" onclick="return confirm('Finalize without warehouse picking? Stock will be decremented at ordered quantities.')">Finalize without picking</button></form>
+  {% elif po.status == 'picking' %}
+    <div class="flex items-center gap-3">
+      <span class="text-sm font-medium text-amber-700">Being picked — {{ po.picked_units }}/{{ po.total_units }} units</span>
+      <div class="w-40 bg-slate-200 rounded-full h-2.5"><div class="bg-amber-500 h-2.5 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
+      <a href="{% url 'pick_detail' po.pk %}" class="text-indigo-600 text-sm hover:underline">open pick screen →</a>
+    </div>
+    <script>setTimeout(()=>location.reload(), 7000);</script>
+  {% elif po.status == 'picked' %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="finalize">
+      <button class="btn-primary" onclick="return confirm('Finalize? On-hand stock decrements and costs are snapshotted.')">✓ Finalize (decrement stock)</button></form>
+  {% elif po.status == 'finalized' %}
+    <a href="{% url 'invoice_create' %}?po={{ po.pk }}" class="btn-primary">→ Create invoice</a>
+    <a href="{% url 'shipment_create' po.pk %}" class="btn-secondary">✈ Ship it</a>
+    {% if u_is_admin %}
+    <form method="post" onsubmit="return confirm('Un-finalize {{ po.number }}? Stock goes back in, cost snapshots are cleared, and the order returns to its pre-finalized status so you can fix costs and finalize again.')">
+      {% csrf_token %}<input type="hidden" name="action" value="unfinalize">
+      <button class="btn-secondary" title="Admin repair: reverse a finalization done by mistake">↩ Un-finalize</button>
+    </form>
+    {% endif %}
+  {% elif po.status == 'invoiced' %}
+    <a href="{% url 'shipment_create' po.pk %}" class="btn-secondary">✈ Ship it</a>
+  {% endif %}
+  {% if has_shorts and not existing_backorders %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="backorder">
+      <button class="btn-secondary">↩ Create backorder for shorts</button></form>
+  {% endif %}
+  {% for bo in existing_backorders %}
+    <a href="{% url 'po_detail' bo.pk %}" class="badge bg-orange-100 text-orange-700 hover:underline">backorder {{ bo.number }}</a>
+  {% endfor %}
+  {% if po.status == 'draft' or po.status == 'confirmed' or po.status == 'picking' or po.status == 'picked' %}
+    <form method="post" class="ml-auto" onsubmit="return confirm('Cancel {{ po.number }}? Commitments are released.')">
+      {% csrf_token %}<input type="hidden" name="action" value="cancel">
+      <button class="btn-danger">✕ Cancel order</button></form>
+  {% endif %}
+</div>
+
+<div class="grid lg:grid-cols-4 gap-4 mb-4">
+  <div class="lg:col-span-3 card-pad overflow-x-auto">
+    <h2 class="font-semibold mb-3">Items</h2>
+    <table class="tbl">
+      <thead><tr><th>SKU</th><th>Product</th><th class="num">Avail</th><th class="num">Qty</th>
+        <th class="num">Unit $</th><th class="num">Disc %</th><th class="num">Total</th>
+        {% if po.picking_started_at %}<th class="num">Picked</th>{% endif %}
+        {% if show_costs and po.finalized_at %}<th class="num">Cost snap</th><th class="num">Profit</th>{% endif %}
+        <th></th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td class="font-medium"><a href="{% url 'product_detail' l.product.pk %}" class="hover:underline">{{ l.product.sku }}</a></td>
+          <td class="max-w-[16rem] truncate">{{ l.description|default:l.product.name }}</td>
+          <td class="num text-slate-400">{{ l.product.qty_available }}</td>
+          {% if po.is_editable %}
+          <td colspan="3">
+            <form method="post" class="flex gap-1.5 justify-end items-center">
+              {% csrf_token %}<input type="hidden" name="action" value="update_line"><input type="hidden" name="line_id" value="{{ l.pk }}">
+              <input name="qty" type="number" min="1" value="{{ l.qty_ordered }}" class="w-16 rounded border-slate-300 text-sm text-right">
+              <input name="price" type="number" step="0.01" value="{{ l.unit_price }}" class="w-24 rounded border-slate-300 text-sm text-right">
+              <input name="disc" type="number" step="0.01" value="{{ l.discount_pct }}" class="w-16 rounded border-slate-300 text-sm text-right">
+              <button class="text-indigo-600 text-xs font-bold hover:underline">save</button>
+            </form>
+          </td>
+          {% else %}
+          <td class="num">{{ l.qty_ordered }}</td>
+          <td class="num">${{ l.unit_price|floatformat:2 }}</td>
+          <td class="num">{% if l.discount_pct %}{{ l.discount_pct|floatformat:"-2" }}%{% else %}—{% endif %}</td>
+          {% endif %}
+          <td class="num font-semibold">${{ l.line_total|floatformat:2|intcomma }}</td>
+          {% if po.picking_started_at %}
+          <td class="num {% if l.qty_picked < l.qty_ordered %}text-amber-600 font-bold{% else %}text-emerald-600{% endif %}">
+            {{ l.qty_picked }}{% if l.short_reason %} <span class="badge bg-red-100 text-red-700">short: {{ l.get_short_reason_display }}</span>{% endif %}</td>
+          {% endif %}
+          {% if show_costs and po.finalized_at %}
+          <td class="num text-slate-500">{% if l.cost_snapshot is not None %}${{ l.cost_snapshot|floatformat:4 }}{% endif %}</td>
+          <td class="num {% if l.line_profit and l.line_profit < 0 %}text-red-600{% else %}text-emerald-600{% endif %} font-semibold">
+            {% if l.line_profit is not None %}${{ l.line_profit|floatformat:2 }}{% endif %}</td>
+          {% endif %}
+          <td>{% if po.is_editable %}
+            <form method="post" onsubmit="return confirm('Remove line?')">{% csrf_token %}
+              <input type="hidden" name="action" value="del_line"><input type="hidden" name="line_id" value="{{ l.pk }}">
+              <button class="text-red-500 hover:text-red-700 text-lg leading-none">×</button></form>{% endif %}</td>
+        </tr>
+      {% empty %}<tr><td colspan="10" class="text-center text-slate-400 py-8">No items yet — scan or add below.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    {% if po.is_editable %}
+    <div class="mt-4 grid md:grid-cols-2 gap-3">
+      {# Scan box #}
+      <form method="post" class="bg-slate-50 rounded-lg p-3">
+        {% csrf_token %}<input type="hidden" name="action" value="scan_add">
+        <label class="text-xs font-semibold uppercase tracking-wide text-slate-500 block mb-1">⌨ Scan barcode / type SKU + Enter (adds 1)</label>
+        <input name="barcode" autofocus autocomplete="off"
+               class="w-full rounded-lg border-slate-300 text-sm font-mono" placeholder="scan here…">
+      </form>
+      {# Search & add #}
+      <form method="post" class="bg-slate-50 rounded-lg p-3 flex flex-wrap gap-2 items-end field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="add_line">
+        <div class="flex-1 min-w-[12rem]"><label class="text-xs font-semibold uppercase tracking-wide text-slate-500 block mb-1">Add by product</label>
+          <select name="product" required class="w-full">
+            <option value="">— pick product —</option>
+            {% for p in products %}<option value="{{ p.pk }}">{{ p.sku }} — {{ p.name|truncatechars:36 }} ({{ p.qty_available }} avail)</option>{% endfor %}
+          </select></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
+          <input type="number" name="qty" value="1" min="1" class="w-20"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Price $ <span class="normal-case text-slate-400">(blank = customer price)</span></label>
+          <input type="number" name="price" step="0.01" class="w-28" placeholder="auto"></div>
+        <button class="btn-primary">Add</button>
+      </form>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="space-y-4">
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-3">Totals</h2>
+      <div class="space-y-1.5">
+        <div class="flex justify-between"><span class="text-slate-500">Lines subtotal</span><span>${{ po.lines_subtotal|floatformat:2|intcomma }}</span></div>
+        {% if po.order_discount_pct %}<div class="flex justify-between"><span class="text-slate-500">Order discount ({{ po.order_discount_pct|floatformat:"-2" }}%)</span><span>−${{ po.order_discount_amount|floatformat:2 }}</span></div>{% endif %}
+        {% if po.charge_shipping %}<div class="flex justify-between"><span class="text-slate-500">Shipping</span><span>${{ po.shipping_charge|floatformat:2 }}</span></div>{% endif %}
+        {% if po.charge_tax %}<div class="flex justify-between"><span class="text-slate-500">Tax ({{ po.tax_rate|floatformat:"-3" }}%)</span><span>${{ po.tax_amount|floatformat:2 }}</span></div>{% endif %}
+        <div class="flex justify-between border-t border-slate-200 pt-2 mt-2 text-base font-bold"><span>Total</span><span>${{ po.total|floatformat:2|intcomma }}</span></div>
+        {% with w=po.total_weight_lbs %}
+        <div class="flex justify-between border-t border-slate-200 pt-2 mt-2">
+          <span class="text-slate-500">⚖ Est. ship weight</span>
+          <span class="font-semibold">{{ w.weight }} lb{% if w.missing_weights %} <span class="text-amber-600 text-xs" title="Some products have no unit weight set">*</span>{% endif %}</span>
+        </div>
+        {% if w.missing_weights %}<p class="text-xs text-amber-600">* some items have no unit weight — set it on the product page</p>{% endif %}
+        {% endwith %}
+        {% if po.local_delivery %}<div class="mt-2"><span class="badge bg-violet-100 text-violet-700">🚐 Local delivery by our driver</span></div>{% endif %}
+      </div>
+    </div>
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-3">Ship to</h2>
+      {% if po.ship_to %}<p class="whitespace-pre-line text-slate-600">{{ po.ship_to.as_text }}</p>
+      {% else %}<p class="text-slate-400">No shipping address selected.</p>{% endif %}
+      {% for s in po.shipments.all %}{% if not s.is_deleted %}
+        <div class="mt-3 pt-3 border-t border-slate-100">
+          <p><b>{{ s.get_provider_display }}</b> {{ s.service }}</p>
+          {% if s.tracking_number %}<p class="font-mono text-xs">{{ s.tracking_number }}</p>{% endif %}
+          {% if s.cost %}<p class="text-slate-500">Label cost: ${{ s.cost }}</p>{% endif %}
+        </div>
+      {% endif %}{% endfor %}
+    </div>
+    {% if po.notes or po.internal_notes %}
+    <div class="card-pad text-sm">
+      {% if po.notes %}<p class="text-xs uppercase font-semibold text-slate-400 mb-1">Notes</p><p class="text-slate-600 mb-3">{{ po.notes|linebreaksbr }}</p>{% endif %}
+      {% if po.internal_notes %}<p class="text-xs uppercase font-semibold text-slate-400 mb-1">Internal</p><p class="text-slate-600">{{ po.internal_notes|linebreaksbr }}</p>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

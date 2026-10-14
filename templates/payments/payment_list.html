@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Payments{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Payments</h1>
+  <div class="flex gap-2">
+    <a href="{% url 'report_ar_aging' %}" class="btn-secondary">📊 AR aging</a>
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="{% url 'ar_adjustment' %}" class="btn-secondary">✍️ Manual AR</a>
+    <a href="{% url 'payment_create' %}" class="btn-primary">+ Record payment</a>
+  </div>
+</div>
+<form method="get" class="card-pad mb-4 flex gap-3 items-end field-inline">
+  <select name="customer"><option value="">All customers</option>
+    {% for c in customers %}<option value="{{ c.pk }}" {% if request.GET.customer == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.business_name }}</option>{% endfor %}</select>
+  <button class="btn-secondary">Filter</button>
+</form>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Customer</th><th>Method</th><th>Reference</th>
+      <th class="num">Amount</th><th class="num">Applied</th><th class="num">Unapplied</th></tr></thead>
+    <tbody>
+    {% for p in payments %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'payment_detail' p.pk %}">{{ p.date|date:"M j, Y" }}</a></td>
+        <td>{{ p.customer.business_name }}</td>
+        <td>{{ p.get_method_display }}</td>
+        <td class="text-xs">{{ p.reference }}</td>
+        <td class="num font-semibold text-emerald-600">${{ p.amount|floatformat:2|intcomma }}</td>
+        <td class="num">${{ p.amount_applied|floatformat:2|intcomma }}</td>
+        <td class="num {% if p.amount_unapplied > 0 %}text-amber-600 font-bold{% endif %}">${{ p.amount_unapplied|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No payments recorded.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,86 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}New invoice{% endblock %}
+{% block content %}
+<h1 class="page-title mb-2">New invoice</h1>
+<p class="text-slate-500 text-sm mb-5">Select one or more <b>finalized</b> orders from the same customer — they merge into one consolidated invoice with PO references per line group.</p>
+
+{% if not finalized %}
+<div class="card-pad text-slate-500">No finalized orders are waiting to be invoiced. Finalize an order first — or create a
+  <a href="{% url 'invoice_create_manual' %}" class="text-indigo-600 hover:underline font-medium">manual invoice with no PO</a>.</div>
+{% else %}
+<form method="post" class="space-y-4">
+  {% csrf_token %}
+  <div class="card overflow-x-auto">
+    <table class="tbl">
+      <thead><tr><th></th><th>PO #</th><th>Customer</th><th>Finalized</th>
+        <th class="num">Units</th><th class="num">Ship $</th><th class="num">Tax</th><th class="num">Total</th></tr></thead>
+      <tbody>
+      {% for po in finalized %}
+        <tr>
+          <td><input type="checkbox" name="po_ids" value="{{ po.pk }}" data-customer="{{ po.customer_id }}"
+                     class="pock rounded" {% if preselect_po == po.pk|stringformat:"s" %}checked{% endif %}></td>
+          <td class="font-medium">{{ po.number }}
+            {% if po.status == 'shipped' %}<span class="badge bg-sky-100 text-sky-700 ml-1" title="Delivered before invoicing — still needs to be billed">delivered, not billed</span>{% endif %}</td>
+          <td>{{ po.customer.business_name }}</td>
+          <td class="text-slate-500">{{ po.finalized_at|date:"M j, Y" }}</td>
+          <td class="num">{{ po.total_units }}</td>
+          <td class="num">{% if po.charge_shipping %}${{ po.shipping_charge|floatformat:2 }}{% else %}—{% endif %}</td>
+          <td class="num">{% if po.charge_tax %}{{ po.tax_rate|floatformat:"-3" }}%{% else %}—{% endif %}</td>
+          <td class="num font-semibold">${{ po.total|floatformat:2|intcomma }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {# ---- manual one-off items ---- #}
+  <div class="card-pad">
+    <h2 class="font-semibold">Manual items <span class="text-xs text-slate-400 font-normal">(one-off charges not in inventory — singles, breaks, fees…)</span></h2>
+    <datalist id="catlist">{% for c in categories %}<option value="{{ c.name }}">{% endfor %}</datalist>
+    <div id="manualRows" class="space-y-2 mt-3"></div>
+    <button type="button" onclick="addManualRow()" class="btn-secondary mt-3">+ Add manual item</button>
+  </div>
+
+  <div class="card-pad grid md:grid-cols-4 gap-4 items-end field-inline">
+    <div><label class="text-xs text-slate-500 block mb-1">Shipping charge $ <span class="text-slate-400">(blank = sum from orders)</span></label>
+      <input type="number" step="0.01" name="shipping_charge" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Tax rate % <span class="text-slate-400">(blank = from order / 0 with valid cert)</span></label>
+      <input type="number" step="0.001" name="tax_rate" class="w-full" placeholder="default {{ default_rate }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">…or override tax amount $</label>
+      <input type="number" step="0.01" name="tax_amount_override" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Notes on invoice</label>
+      <input type="text" name="notes" class="w-full"></div>
+  </div>
+  <button class="btn-primary">Create invoice</button>
+</form>
+<script>
+function addManualRow() {
+  const div = document.createElement('div');
+  div.className = 'grid md:grid-cols-6 gap-2 items-end field-inline border border-slate-200 rounded-xl p-3';
+  div.innerHTML = `
+    <div class="md:col-span-2"><label class="text-xs text-slate-500 block mb-1">Description *</label>
+      <input type="text" name="m_desc" class="w-full" placeholder="e.g. 2024 Prizm single — Brady auto"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Category <span class="text-slate-400">(type new to create)</span></label>
+      <input type="text" name="m_cat" list="catlist" class="w-full" placeholder="Singles"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
+      <input type="number" name="m_qty" min="1" value="1" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Price $ *</label>
+      <input type="number" step="0.01" name="m_price" class="w-full"></div>
+    <div class="flex gap-2 items-end">
+      {% if u_can_see_costs %}<div class="flex-1"><label class="text-xs text-slate-500 block mb-1">Cost $</label>
+      <input type="number" step="0.01" name="m_cost" class="w-full"></div>{% else %}<input type="hidden" name="m_cost" value="">{% endif %}
+      <button type="button" onclick="this.closest('.grid').remove()" class="text-red-500 text-xl px-2 pb-1.5" title="Remove">✕</button>
+    </div>`;
+  document.getElementById('manualRows').appendChild(div);
+}
+// keep selection to a single customer
+document.querySelectorAll('.pock').forEach(ck => ck.addEventListener('change', () => {
+  const checked = [...document.querySelectorAll('.pock:checked')];
+  if (!checked.length) { document.querySelectorAll('.pock').forEach(c => c.disabled = false); return; }
+  const cust = checked[0].dataset.customer;
+  document.querySelectorAll('.pock').forEach(c => c.disabled = (c.dataset.customer !== cust));
+}));
+document.querySelector('.pock:checked')?.dispatchEvent(new Event('change'));
+</script>
+{% endif %}
+{% endblock %}

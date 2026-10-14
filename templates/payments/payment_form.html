@@ -1,0 +1,70 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Record payment{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Record payment</h1>
+
+<form method="get" class="card-pad mb-4 flex gap-3 items-end field-inline">
+  <div><label class="text-xs text-slate-500 block mb-1">Customer</label>
+    <select name="customer" onchange="this.form.submit()">
+      <option value="">— choose —</option>
+      {% for c in customers %}<option value="{{ c.pk }}" {% if customer and customer.pk == c.pk %}selected{% endif %}>{{ c.business_name }}</option>{% endfor %}
+    </select></div>
+</form>
+
+{% if customer %}
+<form method="post" class="space-y-4">
+  {% csrf_token %}
+  <input type="hidden" name="customer" value="{{ customer.pk }}">
+  <div class="card-pad grid md:grid-cols-5 gap-4 items-end field-inline">
+    <div><label class="text-xs text-slate-500 block mb-1">Date</label>
+      <input type="date" name="date" value="{% now 'Y-m-d' %}" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Amount $ *</label>
+      <input type="number" step="0.01" min="0.01" name="amount" id="payAmount" required class="w-full text-lg font-bold"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Method</label>
+      <select name="method" class="w-full">{% for v, l in methods %}<option value="{{ v }}">{{ l }}</option>{% endfor %}</select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Reference (check # etc.)</label>
+      <input type="text" name="reference" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Notes</label>
+      <input type="text" name="notes" class="w-full"></div>
+  </div>
+
+  <div class="card overflow-x-auto">
+    <div class="px-4 pt-4 flex items-center justify-between">
+      <h2 class="font-semibold">Apply to open invoices</h2>
+      <button type="button" id="autoApply" class="btn-secondary">⚡ Auto-apply oldest first</button>
+    </div>
+    <table class="tbl">
+      <thead><tr><th>Invoice</th><th>Date</th><th>Due</th><th class="num">Balance</th><th class="num">Apply $</th></tr></thead>
+      <tbody>
+      {% for i in open_invoices %}
+        <tr>
+          <td class="font-medium">{{ i.number }}</td>
+          <td>{{ i.date|date:"M j, Y" }}</td>
+          <td class="{% if i.is_overdue %}text-red-600 font-semibold{% endif %}">{{ i.due_date|date:"M j, Y" }}</td>
+          <td class="num">${{ i.balance_due|floatformat:2|intcomma }}</td>
+          <td class="num"><input type="number" step="0.01" min="0" max="{{ i.balance_due }}" name="apply_{{ i.pk }}"
+                data-balance="{{ i.balance_due }}" class="applyInput w-28 rounded-lg border-slate-300 text-sm text-right"
+                {% if preselect_invoice == i.pk|stringformat:"s" %}data-preselect="1"{% endif %}></td>
+        </tr>
+      {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-6">No open invoices — payment will be saved as unapplied credit.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <button class="btn-primary">Save payment</button>
+</form>
+<script>
+document.getElementById('autoApply').onclick = () => {
+  let remaining = parseFloat(document.getElementById('payAmount').value || 0);
+  document.querySelectorAll('.applyInput').forEach(inp => {
+    const bal = parseFloat(inp.dataset.balance);
+    const amt = Math.min(bal, Math.max(remaining, 0));
+    inp.value = amt > 0 ? amt.toFixed(2) : '';
+    remaining -= amt;
+  });
+};
+// preselect: put full balance on the chosen invoice
+const pre = document.querySelector('[data-preselect]');
+if (pre) { pre.value = pre.dataset.balance; document.getElementById('payAmount').value = pre.dataset.balance; }
+</script>
+{% endif %}
+{% endblock %}

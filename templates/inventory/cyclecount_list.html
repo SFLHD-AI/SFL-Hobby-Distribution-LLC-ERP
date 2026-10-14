@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Cycle counts{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Cycle counts</h1>
+  <a href="{% url 'cyclecount_create' %}" class="btn-primary">+ New count</a>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>#</th><th>Name</th><th>Created</th><th>Status</th><th class="num">Lines</th></tr></thead>
+    <tbody>
+    {% for c in counts %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'cyclecount_detail' c.pk %}">CC-{{ c.pk }}</a></td>
+        <td>{{ c.name }}</td>
+        <td>{{ c.created_at|date:"M j, Y" }} by {{ c.created_by|default:"—" }}</td>
+        <td><span class="badge {% if c.status == 'applied' %}bg-emerald-100 text-emerald-700{% elif c.status == 'open' %}bg-amber-100 text-amber-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ c.get_status_display }}</span></td>
+        <td class="num">{{ c.lines.count }}</td>
+      </tr>
+    {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-8">No cycle counts yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

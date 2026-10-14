@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Search{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Search results for “{{ q }}”</h1>
+{% if not q %}<p class="text-slate-500">Type something in the search box above.</p>{% endif %}
+
+{% if products %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Products</h2>
+  <table class="tbl"><tbody>
+  {% for p in products %}<tr>
+    <td><a class="text-indigo-600 hover:underline font-medium" href="{% url 'product_detail' p.pk %}">{{ p.sku }}</a></td>
+    <td>{{ p.name }}</td><td class="num">{{ p.qty_on_hand }} on hand</td>
+    <td class="num">${{ p.default_price|floatformat:2 }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
+{% if customers %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Customers</h2>
+  <table class="tbl"><tbody>
+  {% for c in customers %}<tr>
+    <td><a class="text-indigo-600 hover:underline font-medium" href="{% url 'customer_detail' c.pk %}">{{ c.business_name }}</a></td>
+    <td>{{ c.email }}</td><td>{{ c.phone }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
+{% if pos %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Orders</h2>
+  <table class="tbl"><tbody>
+  {% for po in pos %}<tr>
+    <td><a class="text-indigo-600 hover:underline font-medium" href="{% url 'po_detail' po.pk %}">{{ po.number }}</a></td>
+    <td>{{ po.customer.business_name }}</td>
+    <td>{% include "orders/_status_badge.html" with status=po.status %}</td>
+    <td class="num">${{ po.total|floatformat:2|intcomma }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
+{% if invoices %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Invoices</h2>
+  <table class="tbl"><tbody>
+  {% for i in invoices %}<tr>
+    <td><a class="text-indigo-600 hover:underline font-medium" href="{% url 'invoice_detail' i.pk %}">{{ i.number }}</a></td>
+    <td>{{ i.customer.business_name }}</td><td>{{ i.get_status_display }}</td>
+    <td class="num">${{ i.total|floatformat:2|intcomma }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
+{% if shipments %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Shipments / tracking</h2>
+  <table class="tbl"><tbody>
+  {% for s in shipments %}<tr>
+    <td class="font-mono">{{ s.tracking_number }}</td>
+    <td><a class="text-indigo-600 hover:underline" href="{% url 'po_detail' s.po_id %}">{{ s.po.number }}</a></td>
+    <td>{{ s.po.customer.business_name }}</td><td>{{ s.get_provider_display }}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
+{% if q and not products and not customers and not pos and not invoices and not shipments %}
+<p class="text-slate-500">Nothing found.</p>
+{% endif %}
+{% endblock %}

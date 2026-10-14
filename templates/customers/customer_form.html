@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}{% if customer %}Edit {{ customer.business_name }}{% else %}New customer{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">{% if customer %}Edit {{ customer.business_name }}{% else %}New customer{% endif %}</h1>
+<form method="post" class="max-w-3xl space-y-6">
+  {% csrf_token %}
+  {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field md:col-span-2"><label>Business name *</label>{{ form.business_name }}</div>
+      <div class="field"><label>Phone</label>{{ form.phone }}</div>
+    </div>
+    <div class="field"><label>Billing email</label>{{ form.email }}</div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Billing address 1</label>{{ form.billing_line1 }}</div>
+      <div class="field"><label>Billing address 2</label>{{ form.billing_line2 }}</div>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>City</label>{{ form.billing_city }}</div>
+      <div class="field"><label>State</label>{{ form.billing_state }}</div>
+      <div class="field"><label>ZIP</label>{{ form.billing_zip }}</div>
+    </div>
+  </div>
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Terms & pricing</h2>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Payment terms</label>{{ form.payment_terms }}</div>
+      <div class="field"><label>Credit limit $ (blank = none)</label>{{ form.credit_limit }}</div>
+      <div class="field"><label>Price list</label>{{ form.price_list }}</div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Fallback discount % (when SKU not on price list)</label>{{ form.discount_pct }}</div>
+      <div class="field"><label>If no valid resale certificate…</label>{{ form.no_cert_policy }}</div>
+    </div>
+    <div class="field"><label>Notes</label>{{ form.notes }}</div>
+    <label class="flex items-center gap-2 text-sm">{{ form.active }} Active</label>
+  </div>
+  <div class="flex gap-2">
+    <button class="btn-primary">Save customer</button>
+    <a href="{% url 'customer_list' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

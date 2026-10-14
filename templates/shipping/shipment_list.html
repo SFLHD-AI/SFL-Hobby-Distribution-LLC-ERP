@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Shipping{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">Shipping</h1>
+  <a href="{% url 'shipping_sync_now' %}" class="btn-secondary"
+     title="{% if shipstation_ok %}Pull tracking & label costs from ShipStation{% else %}Add API keys in .env to enable{% endif %}">
+    🔄 Sync ShipStation {% if not shipstation_ok %}<span class="badge bg-slate-100 text-slate-500 ml-1">not configured</span>{% endif %}</a>
+</div>
+
+{% if shippable %}
+<div class="card-pad mb-5">
+  <h2 class="font-semibold mb-1">Ready to ship</h2>
+  <p class="text-sm text-slate-500 mb-3">Picked / finalized / invoiced orders without tracking. Select for a Pirate Ship batch CSV, or ship individually.</p>
+  <form method="post" action="{% url 'pirateship_export' %}">
+    {% csrf_token %}
+    <table class="tbl mb-3">
+      <thead><tr><th><input type="checkbox" onclick="document.querySelectorAll('.shipck').forEach(c=>c.checked=this.checked)" class="rounded"></th>
+        <th>PO #</th><th>Customer</th><th>Status</th><th>Ship to</th><th></th></tr></thead>
+      <tbody>
+      {% for po in shippable %}
+        <tr>
+          <td><input type="checkbox" name="po_ids" value="{{ po.pk }}" class="shipck rounded"></td>
+          <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'po_detail' po.pk %}">{{ po.number }}</a></td>
+          <td>{{ po.customer.business_name }}</td>
+          <td>{% include "orders/_status_badge.html" with status=po.status %}</td>
+          <td class="text-xs text-slate-500">{% if po.ship_to %}{{ po.ship_to }}{% else %}<span class="text-red-500">no address!</span>{% endif %}</td>
+          <td><a href="{% url 'shipment_create' po.pk %}" class="text-indigo-600 text-xs font-semibold hover:underline">ship →</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <button class="btn-secondary">🏴‍☠️ Export selected as Pirate Ship batch CSV</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>PO</th><th>Customer</th><th>Provider</th><th>Service</th>
+      <th>Tracking</th><th class="num">Cost</th><th>Ship date</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for s in shipments %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'shipment_detail' s.pk %}">{{ s.po.number }}</a></td>
+        <td>{{ s.po.customer.business_name }}</td>
+        <td>{{ s.get_provider_display }}</td>
+        <td class="text-xs">{{ s.service }}</td>
+        <td class="font-mono text-xs">{{ s.tracking_number|default:"—" }}</td>
+        <td class="num">{% if s.cost %}${{ s.cost|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td>{{ s.ship_date|date:"M j"|default:"—" }}</td>
+        <td><span class="badge {% if s.status == 'shipped' or s.status == 'delivered' %}bg-emerald-100 text-emerald-700{% elif s.status == 'pushed' or s.status == 'label_created' %}bg-sky-100 text-sky-700{% else %}bg-slate-100 text-slate-600{% endif %}">{{ s.get_status_display }}</span></td>
+      </tr>
+    {% empty %}<tr><td colspan="8" class="text-center text-slate-400 py-8">No shipments yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

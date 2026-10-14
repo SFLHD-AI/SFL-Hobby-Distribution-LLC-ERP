@@ -1,0 +1,50 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Orders{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Customer orders (POs)</h1>
+  <div class="flex gap-2">
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="{% url 'po_create' %}" class="btn-primary">+ New order</a>
+  </div>
+</div>
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="PO # / customer / ref" class="w-56">
+  <select name="status"><option value="">All statuses</option>
+    <option value="unbilled" {% if request.GET.status == 'unbilled' %}selected{% endif %}>⚠ Needs invoicing (shipped/finalized, not billed)</option>
+    {% for code, label in statuses %}<option value="{{ code }}" {% if request.GET.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  <select name="customer"><option value="">All customers</option>
+    {% for c in customers %}<option value="{{ c.pk }}" {% if request.GET.customer == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.business_name }}</option>{% endfor %}</select>
+  <button class="btn-secondary">Filter</button>
+</form>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>PO #</th><th>Customer</th><th>Created</th><th>Status</th><th>Pick</th>
+      <th class="num">Units</th><th class="num">Total</th><th>Priority</th></tr></thead>
+    <tbody>
+    {% for po in pos %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'po_detail' po.pk %}">{{ po.number }}</a>
+          {% if po.parent %}<span class="badge bg-orange-100 text-orange-700">B/O of {{ po.parent.number }}</span>{% endif %}</td>
+        <td>{{ po.customer.business_name }}</td>
+        <td class="text-slate-500">{{ po.created_at|date:"M j, Y" }}</td>
+        <td>{% include "orders/_status_badge.html" with status=po.status %}
+          {% if po.status == 'shipped' or po.status == 'finalized' %}
+            {% if po.billed %}<span class="badge bg-emerald-100 text-emerald-700" title="An invoice exists for this order">✓ billed</span>
+            {% else %}<a href="{% url 'invoice_create' %}?po={{ po.pk }}" class="badge bg-red-100 text-red-700 hover:bg-red-200" title="No invoice yet — click to bill it">⚠ not billed</a>{% endif %}
+          {% endif %}</td>
+        <td>{% if po.status == 'picking' %}
+          <div class="w-24 bg-slate-200 rounded-full h-2"><div class="bg-amber-500 h-2 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
+          <span class="text-xs text-slate-500">{{ po.pick_progress_pct }}%</span>
+        {% endif %}</td>
+        <td class="num">{{ po.total_units }}</td>
+        <td class="num font-semibold">${{ po.total|floatformat:2|intcomma }}</td>
+        <td>{% if po.priority == 1 %}<span class="badge bg-red-100 text-red-700">Rush</span>
+            {% elif po.priority == 2 %}<span class="badge bg-amber-100 text-amber-700">High</span>
+            {% else %}<span class="text-xs text-slate-400">{{ po.get_priority_display }}</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="8" class="text-center text-slate-400 py-8">No orders match.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

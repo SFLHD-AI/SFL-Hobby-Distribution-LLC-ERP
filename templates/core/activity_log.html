@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Activity log{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Activity log</h1>
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <div><label class="text-xs text-slate-500 block mb-1">Model</label>
+    <select name="model"><option value="">All</option>
+      {% for m in models_list %}<option value="{{ m }}" {% if request.GET.model == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select></div>
+  <div><label class="text-xs text-slate-500 block mb-1">User</label>
+    <select name="user"><option value="">All</option>
+      {% for u in users %}<option value="{{ u.pk }}" {% if request.GET.user == u.pk|stringformat:"s" %}selected{% endif %}>{{ u.username }}</option>{% endfor %}
+    </select></div>
+  <div><label class="text-xs text-slate-500 block mb-1">Search</label>
+    <input type="text" name="q" value="{{ request.GET.q }}"></div>
+  <button class="btn-secondary">Filter</button>
+</form>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>When</th><th>User</th><th>Action</th><th>Object</th><th>Details</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+      <tr>
+        <td class="whitespace-nowrap text-slate-500">{{ e.timestamp|date:"M j, Y g:i A" }}</td>
+        <td>{{ e.user|default:"system" }}</td>
+        <td><span class="badge bg-slate-100 text-slate-700">{{ e.action }}</span></td>
+        <td>{{ e.model }} {{ e.object_repr|truncatechars:60 }}</td>
+        <td class="text-xs text-slate-500">{{ e.note }}{% if e.changes %} {{ e.changes }}{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-8">No activity recorded.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

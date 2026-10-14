@@ -1,0 +1,99 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Deliveries{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">🚐 Local deliveries</h1>
+  <div class="flex flex-wrap gap-2">
+    {% if first_stop_apple %}
+    <a href="{{ first_stop_apple }}" target="_blank" class="btn-primary"> Start route — navigate to stop 1</a>
+    {% endif %}
+    {% if route_url %}
+    <a href="{{ route_url }}" target="_blank" class="btn-secondary">🗺 Full route in Google Maps ({{ open_count }} stop{{ open_count|pluralize }})</a>
+    {% endif %}
+  </div>
+</div>
+{% if open_count > 1 %}
+<p class="text-xs {% if route_optimized %}text-emerald-600{% else %}text-amber-600{% endif %} mb-4">
+  {% if route_optimized %}✓ Stops below are in the most efficient drop-off order from your warehouse. Tap  Navigate on each stop as you go — Apple Maps routes one stop at a time from wherever the driver is.
+  {% else %}⚠ Couldn't verify one or more addresses to optimize the order — stops shown in scheduled order. Check addresses are complete (street, city, state, zip).{% endif %}
+</p>
+{% endif %}
+
+<form method="get" class="card-pad mb-4 flex flex-wrap items-end gap-3 field-inline">
+  <div><label class="text-xs text-slate-500 block mb-1">Day</label>
+    <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" onchange="this.form.submit()"></div>
+  {% if day != today %}<a href="?date={{ today|date:'Y-m-d' }}" class="btn-secondary">Today</a>{% endif %}
+  <p class="text-xs text-slate-400 ml-auto">Route starts at: {{ origin|default:"⚠ set your address in Settings" }}</p>
+</form>
+
+{# ---- Today's runs ---- #}
+<div class="space-y-3 mb-6">
+  {% for d in deliveries %}
+  <div class="card p-4 {% if d.status == 'delivered' %}opacity-60{% endif %}">
+    <div class="flex flex-wrap items-center justify-between gap-2">
+      <a href="{% url 'delivery_detail' d.pk %}" class="flex items-start gap-3 min-w-0">
+        {% if d.stop_number %}
+        <span class="shrink-0 w-9 h-9 rounded-full bg-indigo-600 text-white flex items-center justify-center text-lg font-extrabold">{{ d.stop_number }}</span>
+        {% endif %}
+        <span class="block">
+          <span class="font-bold text-lg block">{{ d.po.customer.business_name }}
+            <span class="text-slate-400 font-normal text-sm">{{ d.po.number }}</span></span>
+          <span class="text-sm text-slate-600 whitespace-pre-line block">{{ d.ship_to_text|default:"⚠ no address on order" }}</span>
+        </span>
+      </a>
+      <div class="text-right">
+        {% if d.status == 'delivered' %}
+          <span class="badge bg-emerald-100 text-emerald-700">✓ Delivered {{ d.delivered_at|date:"g:i A" }}</span>
+          {% if d.proof_photo %}<p class="text-xs text-emerald-600 mt-1">📷 photo on file</p>{% endif %}
+        {% elif d.status == 'out_for_delivery' %}
+          <span class="badge bg-sky-100 text-sky-700">On the truck</span>
+        {% else %}
+          <span class="badge bg-amber-100 text-amber-700">Scheduled</span>
+        {% endif %}
+        {% with w=d.po.total_weight_lbs %}<p class="text-xs text-slate-400 mt-1">⚖ ~{{ w.weight }} lb</p>{% endwith %}
+        {% if d.apple_url and d.status != 'delivered' %}
+          <a href="{{ d.apple_url }}" target="_blank" onclick="event.stopPropagation()"
+             class="btn-primary mt-2 inline-block text-sm"> Navigate</a>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% empty %}
+  <p class="text-slate-400 text-center py-10 card">No deliveries scheduled for {{ day|date:"l, M j" }}.</p>
+  {% endfor %}
+  {% if deliveries %}
+  <form method="post">{% csrf_token %}<input type="hidden" name="action" value="out">
+    {% for d in deliveries %}{% if d.status == 'pending' %}<input type="hidden" name="shipment_id" value="{{ d.pk }}">{% endif %}{% endfor %}
+    <button class="btn-secondary">🚚 Mark all as out for delivery</button>
+  </form>
+  {% endif %}
+</div>
+
+{# ---- Needs scheduling ---- #}
+{% if needs_scheduling %}
+<div class="card-pad">
+  <h2 class="font-semibold mb-3">Ready to schedule <span class="text-xs text-slate-400 font-normal">(local-delivery orders that are picked/finalized)</span></h2>
+  <table class="tbl">
+    <thead><tr><th>PO</th><th>Customer</th><th>Address</th><th>Status</th><th>Deliver on</th></tr></thead>
+    <tbody>
+    {% for po in needs_scheduling %}
+      <tr>
+        <td class="font-medium">{{ po.number }}</td>
+        <td>{{ po.customer.business_name }}</td>
+        <td class="text-xs text-slate-500">{% if po.ship_to %}{{ po.ship_to }}{% else %}<span class="text-red-500">no address!</span>{% endif %}</td>
+        <td>{% include "orders/_status_badge.html" with status=po.status %}</td>
+        <td>
+          <form method="post" class="flex gap-2 items-center field-inline">
+            {% csrf_token %}<input type="hidden" name="action" value="schedule">
+            <input type="hidden" name="po_id" value="{{ po.pk }}">
+            <input type="date" name="date" value="{{ day|date:'Y-m-d' }}" class="text-sm">
+            <button class="btn-secondary">Schedule</button>
+          </form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

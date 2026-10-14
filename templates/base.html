@@ -1,0 +1,103 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-100">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="{{ company.company_name }}">
+  <title>{% block title %}SFL ERP System{% endblock %} · {{ company.company_name }}</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  {% if company.logo %}<link rel="apple-touch-icon" href="{{ company.logo.url }}">{% endif %}
+  {% block head %}{% endblock %}
+</head>
+<body class="h-full text-slate-800">
+<div class="min-h-full flex">
+
+  {# ---------- Desktop sidebar ---------- #}
+  {% if not u_warehouse_only %}
+  <aside class="hidden lg:flex lg:flex-col w-60 shrink-0 bg-slate-900 text-slate-200">
+    <a href="{% url u_home_url %}" class="flex items-center gap-2 px-5 h-16 border-b border-slate-800">
+      {% if company.logo %}<img src="{{ company.logo.url }}" class="h-8 max-w-[3.5rem] bg-white rounded p-0.5">{% endif %}
+      <span class="font-bold text-white tracking-wide truncate">{{ company.company_name }}</span>
+    </a>
+    <nav class="flex-1 overflow-y-auto py-4 space-y-6 text-sm">
+      {% include "_nav_links.html" %}
+    </nav>
+    <div class="px-5 py-4 border-t border-slate-800 text-xs text-slate-400">
+      {{ request.user.get_full_name|default:request.user.username }}
+      <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}
+        <button class="ml-2 underline hover:text-white">Sign out</button></form>
+      <span class="block mt-1 text-slate-600">SFL ERP System v{{ app_version }}</span>
+    </div>
+  </aside>
+
+  {# ---------- Mobile slide-over menu ---------- #}
+  <div id="mobileMenu" class="fixed inset-0 z-40 lg:hidden hidden">
+    <div class="absolute inset-0 bg-black/50" onclick="toggleMenu(false)"></div>
+    <aside class="absolute inset-y-0 left-0 w-72 max-w-[85%] bg-slate-900 text-slate-200 flex flex-col shadow-2xl">
+      <div class="flex items-center justify-between px-5 h-16 border-b border-slate-800">
+        <span class="font-bold text-white truncate">{{ company.company_name }}</span>
+        <button onclick="toggleMenu(false)" class="text-2xl px-2 text-slate-400">✕</button>
+      </div>
+      <nav class="flex-1 overflow-y-auto py-4 space-y-6 text-sm" onclick="toggleMenu(false)">
+        {% include "_nav_links.html" %}
+      </nav>
+      <div class="px-5 py-4 border-t border-slate-800 text-xs text-slate-400">
+        {{ request.user.get_full_name|default:request.user.username }}
+        <form method="post" action="{% url 'logout' %}" class="inline">{% csrf_token %}
+          <button class="ml-2 underline hover:text-white">Sign out</button></form>
+        <span class="block mt-1 text-slate-600">SFL ERP System v{{ app_version }}</span>
+      </div>
+    </aside>
+  </div>
+  {% endif %}
+
+  <div class="flex-1 flex flex-col min-w-0">
+    {# ---------- Topbar: menu (mobile) + back + home ---------- #}
+    <header class="h-16 bg-white border-b border-slate-200 flex items-center gap-2 lg:gap-3 px-3 lg:px-6 sticky top-0 z-30">
+      {% if not u_warehouse_only %}
+      <button onclick="toggleMenu(true)" title="Menu"
+              class="lg:hidden shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg text-slate-600">☰</button>
+      {% endif %}
+      <button onclick="history.back()" title="Back"
+              class="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg font-bold text-slate-600 hover:bg-slate-50">←</button>
+      <a href="{% url u_home_url %}" title="Home"
+         class="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg flex items-center justify-center hover:bg-slate-50">🏠</a>
+      {% if not u_warehouse_only %}
+      <form action="{% url 'global_search' %}" method="get" class="flex-1 max-w-xl">
+        <input name="q" value="{{ request.GET.q }}" placeholder="Search…"
+               class="w-full rounded-lg border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
+               autocomplete="off">
+      </form>
+      {% endif %}
+      <div class="ml-auto flex items-center gap-3">
+        {% block header_actions %}{% endblock %}
+      </div>
+    </header>
+
+    {# ---------- Messages ---------- #}
+    {% if messages %}
+    <div class="px-4 lg:px-6 pt-4 space-y-2">
+      {% for m in messages %}
+      <div class="rounded-lg px-4 py-3 text-sm border
+        {% if m.tags == 'error' %}bg-red-50 text-red-800 border-red-200
+        {% elif m.tags == 'warning' %}bg-amber-50 text-amber-800 border-amber-200
+        {% elif m.tags == 'success' %}bg-emerald-50 text-emerald-800 border-emerald-200
+        {% else %}bg-sky-50 text-sky-800 border-sky-200{% endif %}">{{ m }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <main class="flex-1 p-4 lg:p-6">{% block content %}{% endblock %}</main>
+  </div>
+</div>
+<script>
+function toggleMenu(open) {
+  var m = document.getElementById('mobileMenu');
+  if (m) m.classList.toggle('hidden', !open);
+}
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8"><title>Barcode labels 2×1</title>
+<style>
+  /* 2" x 1" thermal labels — one label per page so label printers
+     (Rollo / Zebra / Dymo 4XL etc.) feed exactly one label per print. */
+  @page { size: 2in 1in; margin: 0; }
+  * { box-sizing: border-box; }
+  body { font-family: Helvetica, Arial, sans-serif; margin: 0; background: #eee; }
+
+  .label {
+    width: 2in; height: 1in;
+    padding: 0.04in 0.06in;
+    display: flex; flex-direction: column; align-items: center; justify-content: space-between;
+    overflow: hidden; page-break-after: always; background: #fff;
+  }
+  .label b   { font-size: 8.5pt; line-height: 1.05; white-space: nowrap; max-width: 1.88in;
+               overflow: hidden; text-overflow: ellipsis; }
+  .label small { font-size: 5.5pt; color: #333; line-height: 1.05; white-space: nowrap;
+                 max-width: 1.88in; overflow: hidden; text-overflow: ellipsis; }
+  .label .bc { height: 0.52in; width: 1.88in; display: flex; align-items: center; justify-content: center; }
+  .label .bc img { max-height: 0.52in; max-width: 1.88in; width: auto; height: 100%; }
+
+  /* screen preview only */
+  @media screen {
+    body { padding: 16px; }
+    .toolbar { margin-bottom: 14px; font-size: 14px; }
+    .toolbar button { font-size: 15px; padding: 8px 14px; border-radius: 8px;
+                      border: 1px solid #999; background: #fff; cursor: pointer; }
+    .toolbar .primary { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    .sheet { display: flex; flex-wrap: wrap; gap: 8px; }
+    .label { border: 1px dashed #bbb; border-radius: 4px; }
+    .hint { color: #555; font-size: 12.5px; margin-top: 8px; max-width: 640px; }
+  }
+  @media print { .toolbar, .hint { display: none; } .sheet { display: block; } }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button onclick="history.back()">← Back</button>
+  <button class="primary" onclick="window.print()">🖨 Print {{ labels|length }} label{{ labels|length|pluralize }}</button>
+</div>
+<p class="hint">Each label prints as its own 2"×1" page. In the print dialog pick your label printer and make sure paper size is <b>2 x 1 in</b> (most label printers auto-detect), margins <b>None</b>, scale <b>100%</b>.</p>
+<div class="sheet">
+  {% for l in labels %}
+  <div class="label">
+    <b>{{ l.title }}</b>
+    <div class="bc"><img src="{{ l.img }}" alt=""></div>
+    <small>{{ l.sub }}</small>
+  </div>
+  {% empty %}<p>No labels selected. Choose products from the inventory list first.</p>{% endfor %}
+</div>
+</body>
+</html>

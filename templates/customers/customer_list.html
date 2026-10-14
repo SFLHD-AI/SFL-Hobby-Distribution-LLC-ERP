@@ -1,0 +1,40 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Customers{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Customers</h1>
+  <div class="flex gap-2">
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="{% url 'customer_create' %}" class="btn-primary">+ New customer</a>
+  </div>
+</div>
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Name / email / phone" class="w-64">
+  <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="active" value="1" {% if request.GET.active %}checked{% endif %} class="rounded"> Active only</label>
+  <button class="btn-secondary">Filter</button>
+</form>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Business</th><th>Contact</th><th>Terms</th><th>Price list</th>
+      <th>Resale cert</th><th class="num">Balance</th><th></th></tr></thead>
+    <tbody>
+    {% for c in customers %}
+      <tr class="{% if not c.active %}opacity-50{% endif %}">
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'customer_detail' c.pk %}">{{ c.business_name }}</a></td>
+        <td class="text-xs">{{ c.email }}<br>{{ c.phone }}</td>
+        <td>{{ c.get_payment_terms_display }}</td>
+        <td>{{ c.price_list|default:"—" }}</td>
+        <td>
+          {% if c.certificate_status == 'valid' %}<span class="badge bg-emerald-100 text-emerald-700">Valid</span>
+          {% elif c.certificate_status == 'expiring' %}<span class="badge bg-amber-100 text-amber-700">Expiring</span>
+          {% elif c.certificate_status == 'expired' %}<span class="badge bg-red-100 text-red-700">Expired</span>
+          {% else %}<span class="badge bg-slate-100 text-slate-500">None</span>{% endif %}
+        </td>
+        <td class="num font-semibold">${{ c.balance|floatformat:2|intcomma }}</td>
+        <td class="text-xs">{% if not c.active %}inactive{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No customers yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

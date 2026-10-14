@@ -1,0 +1,245 @@
+{% load static %}<!DOCTYPE html>
+<html lang="en" class="bg-slate-100">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>Pick {{ po.number }}</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <style>
+    .flash-red { animation: flashred 0.6s ease 3; }
+    @keyframes flashred { 0%,100% { background:#fff } 50% { background:#fecaca } }
+    .flash-green { animation: flashgreen 0.5s ease 1; }
+    @keyframes flashgreen { 0%,100% { background:#fff } 50% { background:#bbf7d0 } }
+  </style>
+</head>
+<body class="min-h-screen pb-40">
+<header class="bg-slate-900 text-white px-4 py-3 sticky top-0 z-20">
+  <div class="flex items-center justify-between">
+    <div class="flex items-center gap-1">
+      <a href="{% url 'pick_queue' %}" class="text-2xl px-2 -ml-2">←</a>
+      <a href="{% url u_home_url %}" class="text-xl px-1">🏠</a>
+    </div>
+    <div class="text-center">
+      <p class="text-lg font-extrabold leading-tight" id="poNumber">{{ po.number }}</p>
+      <p class="text-xs text-slate-300" id="poCustomer">{{ po.customer.business_name }}</p>
+    </div>
+    <span class="text-lg font-bold text-amber-400" id="progressPct">0%</span>
+  </div>
+  <div class="mt-2 bg-slate-700 rounded-full h-2.5"><div id="progressBar" class="bg-amber-400 h-2.5 rounded-full transition-all" style="width:0%"></div></div>
+</header>
+
+{# --- error/success banner --- #}
+<div id="banner" class="hidden fixed top-20 inset-x-3 z-30 rounded-2xl px-4 py-4 text-center text-lg font-bold shadow-lg"></div>
+
+<main class="p-3 max-w-2xl mx-auto" id="lines"></main>
+
+{# --- bottom bar: scan input + complete --- #}
+<div class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 p-3 z-20">
+  <div class="max-w-2xl mx-auto flex gap-2">
+    <input id="scan" autocomplete="off" autocapitalize="none" spellcheck="false"
+           placeholder="⌨ scan barcode…"
+           class="flex-1 rounded-xl border-2 border-indigo-400 px-4 py-3.5 text-lg font-mono focus:ring-4 focus:ring-indigo-200">
+    <button id="completeBtn" disabled
+            class="rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white font-bold px-5 py-3.5 text-lg">
+      ✓ Complete</button>
+  </div>
+</div>
+
+{# --- short-pick modal --- #}
+<div id="shortModal" class="hidden fixed inset-0 bg-black/50 z-40 flex items-end sm:items-center justify-center p-3">
+  <div class="bg-white rounded-2xl w-full max-w-md p-5">
+    <h3 class="text-xl font-bold mb-1">Mark line short</h3>
+    <p class="text-slate-500 mb-4" id="shortLineName"></p>
+    <div class="grid grid-cols-2 gap-2 mb-3">
+      <button class="shortReason rounded-xl border-2 border-slate-200 py-3.5 font-semibold text-lg" data-reason="oos">Out of stock</button>
+      <button class="shortReason rounded-xl border-2 border-slate-200 py-3.5 font-semibold text-lg" data-reason="damaged">Damaged</button>
+      <button class="shortReason rounded-xl border-2 border-slate-200 py-3.5 font-semibold text-lg" data-reason="not_found">Not found</button>
+      <button class="shortReason rounded-xl border-2 border-slate-200 py-3.5 font-semibold text-lg" data-reason="other">Other</button>
+    </div>
+    <input id="shortNote" placeholder="Note (optional)" class="w-full rounded-xl border-slate-300 px-3 py-3 mb-3">
+    <button id="shortCancel" class="w-full rounded-xl bg-slate-100 py-3 font-semibold">Cancel</button>
+  </div>
+</div>
+
+<script>
+const PO_ID = {{ po.pk }};
+const CSRF = '{{ csrf_token }}';
+let LINES = [];
+let shortLineId = null;
+
+const beepOK = new Audio('data:audio/wav;base64,UklGRl4EAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YToEAAAAAAgQFxsgJCgsMDQ3Ozo+QUVISkxOUFFSU1RUVFRTUlFPTUpIRUJAPDk1MS0pJSAcFxMOCQUA+/bx7ejk39rW0s7KxsPAvbq4trWzs7KysrO0tri6vL/CxcjMz9PX2+Dk6O3x9vr/AwgMERUZHiInKy8zNzs+QkVIS01PUVNUVVVVVVRTUU9NSkdEQT46NjIuKSUgHBcSDgkEAPv28ezn4t3Z1NDMyMS/vLm2tLKwr66urq+wsrS2ubzAw8fLztLW2t/j6Ozx9fr+AwcMEBUZHiInKy8zNzs+QkVISy1PUVNUVVVVVVRTUU9NSkdEQT46NjIuKSUgHBcSDgkEAPv28ezn4t3Z1NDMyMS/vLm2tLKwr66urq+wsrS2ubzAw8fLztLW2t/j6Ozx9fr+AwcMEBUZHiInKy8zNzs+QkVIS01PUVNUVVVVVVRTUU9NSkdEQT46NjIuKSUgHBcSDgkEAPv28ezn4t3Z1NDMyMS/vLm2tLKwr66urq+wsrS2ubzAw8fLztLW2t/j6Ozx9fr+AA==');
+const beepErr = new Audio('data:audio/wav;base64,UklGRl4EAABXQVZFZm10IBAAAAABAAEAIhYAAEQsAAACABAAZGF0YToEAAAAAA0aJzM/SlVfaHB3fYKGiYuLioiEf3lxaWBWS0A0KBwPAvXo3M/DuKyioJmTj4yLi42QlJqhqbK8x9Pf7Pn/DBkmMj5JVF5nb3Z8gYWIioqJh4N+eHBoX1VKPzMnGw4B9OfbzsK3q6GfmJKOi4qKjI+TmaCosbvG0t7r+P4LGCUxPUhTXWZudXuAhIeJiYiGgn13b2deVEk+MiYaDQDz5trNwbaqoJ6XkY2KiYmLjpKYn6ewusXR3er3/QoXJDA8R1JcZW10eoCDhoiIh4WBfHZuZl1TSD0xJRkMAPLl2czAtamfnZaQjImIiIqNkZeep6+5xNDc6fb8CRYjLztGUVtkbHN5f4KFh4eGhIB7dW1lXFJHPDAkGAsA8eTYy7+0qJ6clY+LiIeHiYyQlp2mrrjD z9vo9fsIFSIuOkVQWmNrcnh+gYSGhoWDf3p0bGRbUUY7LyMXCgDw49fKvrOnnZuUjoqHhoaIi4+VnKWtt8LO2uf0+gcUIS05RE9ZYmpxd31/g4WFhIJ+eXNrY1pQRTouIhYJAO/i1sm9sqacmpONiYaFhYeKjpSbpKy2wc3Z5vP5BhMgLDhDTlhhaXB2fH6ChISDgX14cmpiWU9EOS0hFQgA7uHVyLyxpZuZko2IhYSEhomNk5qjq7XAzNjl8vgFEh8rN0JNV2BocHV7fYGDg4KAfHdxaWFYTkM4LCAUBwDt4NTHu7CkmpiRjIeEg4OFiIySmaKqtL/L1+Tx9wQRHio2QUxWX2dvdHp8gIKCgX97dnBoYFdNQjcrHxMGAOzf08a6r6OZl5CLhoOCgoSHi5GYoamzvsrW4/D2AxAdKTVAS1VeZm5zeXt/gYGAfnp1b2dfVkxBNiodEgUA69/SxbmuopiWj4qFgoGBg4aKkJegqLK9ydXi7/UCDxwoNDlKVF1lbXJ4en6AgH99eXRuZl5VS0A1KRwRBADq3tHEuK2hl5WOiYSBgICChYmPlp+nsbzI1OHu9AEOGyczPklTXGRscXd5fX9/fnx4c21lXVRKPzQoGxAD');
+
+function csrfHeaders() {
+  return {'Content-Type': 'application/json', 'X-CSRFToken': CSRF};
+}
+
+function showBanner(msg, type) {
+  const b = document.getElementById('banner');
+  b.textContent = msg;
+  b.className = 'fixed top-20 inset-x-3 z-30 rounded-2xl px-4 py-4 text-center text-lg font-bold shadow-lg ' +
+    (type === 'error' ? 'bg-red-600 text-white' : 'bg-emerald-600 text-white');
+  clearTimeout(b._t);
+  b._t = setTimeout(() => b.classList.add('hidden'), type === 'error' ? 2600 : 1200);
+}
+
+function render() {
+  const wrap = document.getElementById('lines');
+  wrap.innerHTML = LINES.map(l => {
+    const done = l.complete;
+    const short = l.short_reason && l.qty_picked < l.qty_needed;
+    return `
+    <div id="line-${l.id}" class="rounded-2xl border-2 ${done ? (short ? 'border-orange-300 bg-orange-50' : 'border-emerald-300 bg-emerald-50') : 'border-slate-200 bg-white'} p-4 mb-3 shadow-sm">
+      <div class="flex gap-3">
+        ${l.image ? `<img src="${l.image}" class="w-16 h-16 rounded-xl object-cover border">` :
+          '<div class="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center text-2xl">📦</div>'}
+        <div class="flex-1 min-w-0">
+          <div class="flex justify-between items-start gap-2">
+            <p class="font-extrabold text-lg leading-tight">${l.sku}</p>
+            <span class="rounded-lg bg-slate-900 text-white font-mono font-bold px-2.5 py-1 text-sm whitespace-nowrap">${l.bin || '—'}</span>
+          </div>
+          <p class="text-slate-600 text-sm truncate">${l.name}</p>
+          ${short ? `<p class="text-orange-700 text-sm font-bold mt-0.5">SHORT — ${l.short_reason}</p>` : ''}
+        </div>
+      </div>
+      <div class="mt-3 flex items-center justify-between gap-2 flex-wrap">
+        <div class="flex items-center gap-2">
+          <button onclick="adjust(${l.id}, -1)" class="w-14 h-14 rounded-2xl bg-slate-100 text-3xl font-bold active:bg-slate-300">−</button>
+          <button onclick="adjust(${l.id}, 1)" class="w-14 h-14 rounded-2xl bg-slate-100 text-3xl font-bold active:bg-slate-300">+</button>
+          <input id="qin-${l.id}" type="number" inputmode="numeric" min="0" max="${l.qty_needed}"
+                 placeholder="qty"
+                 onkeydown="if(event.key==='Enter'){event.preventDefault();setQty(${l.id});}"
+                 class="w-20 h-14 rounded-2xl border-2 border-slate-200 text-center text-xl font-bold">
+          <button onclick="setQty(${l.id})" title="Set picked quantity"
+                  class="w-14 h-14 rounded-2xl bg-emerald-100 text-emerald-700 text-2xl font-bold active:bg-emerald-300">✓</button>
+          ${!done ? `<button onclick="openShort(${l.id})" class="h-14 px-4 rounded-2xl bg-orange-100 text-orange-700 font-bold active:bg-orange-200">Short</button>` : ''}
+        </div>
+        <p class="text-3xl font-extrabold tabular-nums ${done && !short ? 'text-emerald-600' : ''}">
+          ${l.qty_picked}<span class="text-slate-400 text-xl font-bold"> / ${l.qty_needed}</span></p>
+      </div>
+    </div>`;
+  }).join('');
+  const all = LINES.length > 0 && LINES.every(l => l.complete);
+  document.getElementById('completeBtn').disabled = !all;
+  const total = LINES.reduce((s, l) => s + l.qty_needed, 0);
+  const picked = LINES.reduce((s, l) => s + Math.min(l.qty_picked, l.qty_needed), 0);
+  const pct = total ? Math.round(picked / total * 100) : 0;
+  document.getElementById('progressPct').textContent = pct + '%';
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+
+function updateLine(newLine, effect) {
+  const i = LINES.findIndex(l => l.id === newLine.id);
+  if (i >= 0) LINES[i] = newLine;
+  render();
+  const el = document.getElementById('line-' + newLine.id);
+  if (el) {
+    el.classList.add(effect);
+    el.scrollIntoView({block: 'center', behavior: 'smooth'});
+    setTimeout(() => el.classList.remove(effect), 1800);
+  }
+}
+
+async function load() {
+  const r = await fetch(`/api/pick/po/${PO_ID}/`);
+  if (!r.ok) { showBanner('Order is not available for picking', 'error'); return; }
+  const data = await r.json();
+  LINES = data.lines;
+  render();
+}
+
+async function scan(code) {
+  if (!code) return;
+  const r = await fetch(`/api/pick/po/${PO_ID}/scan/`, {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({barcode: code})});
+  const data = await r.json();
+  if (data.ok) {
+    beepOK.play().catch(()=>{});
+    updateLine(data.line, 'flash-green');
+  } else {
+    beepErr.play().catch(()=>{});
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+    showBanner(data.error || 'Scan error', 'error');
+    if (data.line_id) {
+      const el = document.getElementById('line-' + data.line_id);
+      if (el) { el.classList.add('flash-red'); setTimeout(() => el.classList.remove('flash-red'), 2000); }
+    }
+  }
+}
+
+async function setQty(lineId) {
+  var inp = document.getElementById('qin-' + lineId);
+  var v = parseInt(inp.value, 10);
+  if (isNaN(v)) { showBanner('Type a quantity first', 'error'); focusScan(); return; }
+  const r = await fetch(`/api/pick/line/${lineId}/set/`, {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({qty: v})});
+  const data = await r.json();
+  if (data.ok) {
+    beepOK.play().catch(()=>{});
+    updateLine(data.line, 'flash-green');
+  } else {
+    beepErr.play().catch(()=>{});
+    if (navigator.vibrate) navigator.vibrate([200, 80, 200]);
+    showBanner(data.error || 'Error', 'error');
+  }
+  focusScan();
+}
+
+async function adjust(lineId, delta) {
+  const r = await fetch(`/api/pick/line/${lineId}/adjust/`, {
+    method: 'POST', headers: csrfHeaders(), body: JSON.stringify({delta})});
+  const data = await r.json();
+  if (data.ok) updateLine(data.line, delta > 0 ? 'flash-green' : 'flash-red');
+  else { beepErr.play().catch(()=>{}); showBanner(data.error, 'error'); }
+  focusScan();
+}
+
+function openShort(lineId) {
+  shortLineId = lineId;
+  const l = LINES.find(x => x.id === lineId);
+  document.getElementById('shortLineName').textContent = `${l.sku} — picked ${l.qty_picked} of ${l.qty_needed}`;
+  document.getElementById('shortModal').classList.remove('hidden');
+}
+
+document.querySelectorAll('.shortReason').forEach(btn => btn.onclick = async () => {
+  const r = await fetch(`/api/pick/line/${shortLineId}/short/`, {
+    method: 'POST', headers: csrfHeaders(),
+    body: JSON.stringify({reason: btn.dataset.reason, note: document.getElementById('shortNote').value})});
+  const data = await r.json();
+  document.getElementById('shortModal').classList.add('hidden');
+  document.getElementById('shortNote').value = '';
+  if (data.ok) updateLine(data.line, 'flash-red');
+  focusScan();
+});
+document.getElementById('shortCancel').onclick = () => {
+  document.getElementById('shortModal').classList.add('hidden'); focusScan();
+};
+
+document.getElementById('completeBtn').onclick = async () => {
+  if (!confirm('Complete this pick?')) return;
+  const r = await fetch(`/api/pick/po/${PO_ID}/complete/`, {method: 'POST', headers: csrfHeaders(), body: '{}'});
+  const data = await r.json();
+  if (data.ok) {
+    showBanner('✓ Pick complete!', 'ok');
+    setTimeout(() => location.href = '/pick/', 900);
+  } else showBanner(data.error, 'error');
+};
+
+// Scanner acts as a keyboard: characters + Enter into the always-focused input
+const scanInput = document.getElementById('scan');
+scanInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const code = scanInput.value.trim();
+    scanInput.value = '';
+    scan(code);
+  }
+});
+function focusScan() { setTimeout(() => scanInput.focus(), 50); }
+document.addEventListener('click', e => {
+  if (!['INPUT', 'BUTTON', 'A', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) focusScan();
+});
+load().then(focusScan);
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Company settings</h1>
+<form method="post" enctype="multipart/form-data" class="max-w-3xl space-y-6">
+  {% csrf_token %}
+  {{ form.non_field_errors }}
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Company identity</h2>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Company name</label>{{ form.company_name }}</div>
+      <div class="field"><label>Logo (PNG)</label>
+        {% if company.logo %}<img src="{{ company.logo.url }}" class="h-12 mb-2 border rounded p-1 bg-white">{% endif %}
+        {{ form.logo }}</div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Address line 1</label>{{ form.address_line1 }}</div>
+      <div class="field"><label>Address line 2</label>{{ form.address_line2 }}</div>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>City</label>{{ form.city }}</div>
+      <div class="field"><label>State</label>{{ form.state }}</div>
+      <div class="field"><label>ZIP</label>{{ form.zip_code }}</div>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Phone</label>{{ form.phone }}</div>
+      <div class="field"><label>Email</label>{{ form.email }}</div>
+      <div class="field"><label>Website</label>{{ form.website }}</div>
+    </div>
+    <div class="field"><label>Points of contact</label>{{ form.points_of_contact }}
+      <p class="text-xs text-slate-400 mt-1">One per line: Name — role — phone/email</p></div>
+  </div>
+
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Invoicing & tax</h2>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Default sales tax rate %</label>{{ form.default_tax_rate }}</div>
+      <div class="field"><label>Invoice layout</label>{{ form.invoice_template }}</div>
+      <div class="field"><label>Default payment terms</label>{{ form.default_payment_terms }}</div>
+    </div>
+    <div class="field"><label>Invoice footer</label>{{ form.invoice_footer }}</div>
+    <h3 class="font-semibold text-sm pt-2">Document numbering</h3>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% for label, sf in seq_forms %}
+      <div class="rounded-lg border border-slate-200 p-3">
+        <p class="text-xs font-bold uppercase tracking-wide text-slate-500 mb-2">{{ label }}</p>
+        <div class="field mb-2"><label>Prefix</label>{{ sf.prefix }}</div>
+        <div class="grid grid-cols-2 gap-2">
+          <div class="field"><label>Next #</label>{{ sf.next_number }}</div>
+          <div class="field"><label>Padding</label>{{ sf.padding }}</div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Alerts</h2>
+    <div class="grid md:grid-cols-2 gap-4 items-end">
+      <label class="flex items-center gap-2 text-sm">{{ form.low_stock_email_digest }} Send daily low-stock email digest</label>
+      <div class="field"><label>Alert email</label>{{ form.alert_email }}</div>
+    </div>
+  </div>
+
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Integrations — API keys
+      {% if shipstation_configured %}<span class="badge bg-emerald-100 text-emerald-700 ml-2">ShipStation connected</span>{% endif %}
+      {% if shippo_configured %}<span class="badge bg-emerald-100 text-emerald-700 ml-1">Shippo connected</span>{% endif %}
+      {% if uship_configured %}<span class="badge bg-emerald-100 text-emerald-700 ml-1">uShip connected</span>{% endif %}
+    </h2>
+    <p class="text-sm text-slate-500">Paste keys here and save — takes effect immediately, no restart needed. ShipStation keys are under Account Settings → Account → API Settings on ship.shipstation.com. uShip keys come from their partner/developer program (manual entry works fine without them).</p>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>ShipStation API key</label>{{ form.shipstation_api_key }}</div>
+      <div class="field"><label>ShipStation API secret</label>{{ form.shipstation_api_secret }}</div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Shippo API token <span class="normal-case text-slate-400">(buy USPS/UPS/FedEx labels in-app)</span></label>{{ form.shippo_api_token }}</div>
+      <div class="field"><label>uShip API key</label>{{ form.uship_api_key }}</div>
+    </div>
+  </div>
+
+  <button class="btn-primary">Save settings</button>
+</form>
+{% endblock %}

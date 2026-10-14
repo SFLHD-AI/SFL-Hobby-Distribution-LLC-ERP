@@ -1,0 +1,10 @@
+{% if status == 'draft' %}<span class="badge bg-slate-100 text-slate-600">Draft</span>
+{% elif status == 'confirmed' %}<span class="badge bg-sky-100 text-sky-700">Confirmed</span>
+{% elif status == 'picking' %}<span class="badge bg-amber-100 text-amber-700">Picking</span>
+{% elif status == 'picked' %}<span class="badge bg-violet-100 text-violet-700">Picked</span>
+{% elif status == 'finalized' %}<span class="badge bg-indigo-100 text-indigo-700">Finalized</span>
+{% elif status == 'invoiced' %}<span class="badge bg-emerald-100 text-emerald-700">Invoiced</span>
+{% elif status == 'shipped' %}<span class="badge bg-teal-100 text-teal-700">Shipped</span>
+{% elif status == 'delivered' %}<span class="badge bg-green-100 text-green-700">Delivered</span>
+{% elif status == 'cancelled' %}<span class="badge bg-red-100 text-red-700">Cancelled</span>
+{% else %}<span class="badge bg-slate-100 text-slate-600">{{ status }}</span>{% endif %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}New price list{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">New price list</h1>
+<form method="post" class="max-w-lg card-pad space-y-4">
+  {% csrf_token %}
+  <div class="field"><label>Name</label>{{ form.name }}</div>
+  <div class="field"><label>Description</label>{{ form.description }}</div>
+  <label class="flex items-center gap-2 text-sm">{{ form.active }} Active</label>
+  <button class="btn-primary">Create</button>
+</form>
+{% endblock %}

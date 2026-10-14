@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">Reports</h1>
+<div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% if u_can_see_costs %}
+  <a href="{% url 'report_inventory_valuation' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📦</p><h2 class="font-semibold">Month-end inventory valuation</h2>
+    <p class="text-sm text-slate-500 mt-1">Per-SKU on-hand, unit cost and total value as of any date — computed from the movement ledger.</p></a>
+  <a href="{% url 'report_pnl' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">💰</p><h2 class="font-semibold">Monthly P&L</h2>
+    <p class="text-sm text-slate-500 mt-1">Revenue, COGS, gross profit, expenses, net profit for a period.</p></a>
+  <a href="{% url 'report_revenue_customer' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🏪</p><h2 class="font-semibold">Revenue & profit by customer</h2>
+    <p class="text-sm text-slate-500 mt-1">Who makes you money.</p></a>
+  <a href="{% url 'report_revenue_dow' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📅</p><h2 class="font-semibold">Revenue by day of week</h2>
+    <p class="text-sm text-slate-500 mt-1">Which days you sell the most and least.</p></a>
+  <a href="{% url 'report_sales_product' %}?group=category" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🗂️</p><h2 class="font-semibold">Profit by category</h2>
+    <p class="text-sm text-slate-500 mt-1">Units, dollars and profit per product category for any period — includes manual invoice items and their categories.</p></a>
+  {% endif %}
+  <a href="{% url 'report_sales_product' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🃏</p><h2 class="font-semibold">Sales by SKU / category / brand</h2>
+    <p class="text-sm text-slate-500 mt-1">Units and dollars — best and worst sellers.</p></a>
+  <a href="{% url 'report_movements' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🔄</p><h2 class="font-semibold">Inventory movements</h2>
+    <p class="text-sm text-slate-500 mt-1">Every in/out per SKU for a period.</p></a>
+  <a href="{% url 'report_sales_tax' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🏛️</p><h2 class="font-semibold">Sales tax report</h2>
+    <p class="text-sm text-slate-500 mt-1">Gross, taxable and tax-exempt sales plus tax collected for any period — defaults to the current quarter for filing.</p></a>
+  <a href="{% url 'report_shipping' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🚚</p><h2 class="font-semibold">Shipping & delivery charges</h2>
+    <p class="text-sm text-slate-500 mt-1">Shipping billed to customers (and whether it's been paid) vs. what you paid carriers, for any period.</p></a>
+  <a href="{% url 'report_ar_aging' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">⏳</p><h2 class="font-semibold">AR aging</h2>
+    <p class="text-sm text-slate-500 mt-1">Current / 1–30 / 31–60 / 61–90 / 90+ by customer.</p></a>
+  {% if u_can_see_costs %}
+  <div class="card-pad">
+    <p class="text-2xl mb-2">🧾</p><h2 class="font-semibold">QuickBooks export</h2>
+    <p class="text-sm text-slate-500 mt-1 mb-3">CSV bundles for your accountant (current month by default; add ?start=&end= for other ranges).</p>
+    <div class="flex flex-wrap gap-2">
+      <a href="{% url 'report_quickbooks' %}?kind=invoices" class="btn-secondary">Invoices</a>
+      <a href="{% url 'report_quickbooks' %}?kind=payments" class="btn-secondary">Payments</a>
+      <a href="{% url 'report_quickbooks' %}?kind=expenses" class="btn-secondary">Expenses</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

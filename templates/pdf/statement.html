@@ -1,0 +1,62 @@
+{% load humanize %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 18mm 16mm; }
+  body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; margin: 0; }
+  h1 { font-size: 20pt; font-weight: 300; letter-spacing: 3px; color: #4f46e5; margin: 0; }
+  .top { display: flex; justify-content: space-between; }
+  .muted { color: #64748b; font-size: 8.5pt; white-space: pre-line; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1px; color: #64748b;
+       text-align: left; padding: 6px 8px; border-bottom: 2px solid #4f46e5; }
+  td { padding: 6px 8px; border-bottom: 0.5pt solid #e2e8f0; }
+  .r { text-align: right; }
+  .total-row td { border-top: 2px solid #4f46e5; font-weight: 700; font-size: 12pt; }
+  .overdue { color: #dc2626; font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <div style="font-size:14pt;font-weight:700">{{ company.company_name }}</div>
+    <div class="muted">{{ company.full_address }}
+{{ company.phone }} · {{ company.email }}</div>
+  </div>
+  <div style="text-align:right">
+    <h1>STATEMENT</h1>
+    <div class="muted">As of {{ today|date:"M j, Y" }}</div>
+  </div>
+</div>
+
+<div style="margin-top:20px">
+  <div style="font-size:7.5pt;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;border-bottom:1.5px solid #e2e8f0;padding-bottom:3px;margin-bottom:5px;width:60mm">Customer</div>
+  <b>{{ customer.business_name }}</b>
+  <div class="muted">{{ customer.billing_line1 }}
+{% if customer.billing_line2 %}{{ customer.billing_line2 }}
+{% endif %}{{ customer.billing_city }}, {{ customer.billing_state }} {{ customer.billing_zip }}</div>
+</div>
+
+<table>
+  <thead><tr><th>Invoice</th><th>Date</th><th>Due date</th><th>Status</th>
+    <th class="r">Total</th><th class="r">Paid/credited</th><th class="r">Balance</th></tr></thead>
+  <tbody>
+  {% for i in invoices %}
+    <tr>
+      <td><b>{{ i.number }}</b></td>
+      <td>{{ i.date|date:"m/d/Y" }}</td>
+      <td class="{% if i.is_overdue %}overdue{% endif %}">{{ i.due_date|date:"m/d/Y" }}{% if i.is_overdue %} ({{ i.days_past_due }}d){% endif %}</td>
+      <td>{{ i.get_status_display }}</td>
+      <td class="r">${{ i.total|floatformat:2|intcomma }}</td>
+      <td class="r">${{ i.amount_paid|add:i.amount_credited|floatformat:2|intcomma }}</td>
+      <td class="r"><b>${{ i.balance_due|floatformat:2|intcomma }}</b></td>
+    </tr>
+  {% empty %}<tr><td colspan="7">No open invoices — account is current. Thank you!</td></tr>{% endfor %}
+    <tr class="total-row"><td colspan="6">Total due</td><td class="r">${{ total_due|floatformat:2|intcomma }}</td></tr>
+  </tbody>
+</table>
+
+<p class="muted" style="margin-top:24px">{{ company.invoice_footer }}</p>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<div class="px-3 space-y-0.5">
+  {% if 'dashboard' in u_modules %}<a href="{% url 'dashboard' %}" class="nav-link">📊 Dashboard</a>{% endif %}
+  {% if 'orders' in u_modules %}<a href="{% url 'po_list' %}" class="nav-link">🧾 Orders (POs)</a>{% endif %}
+  {% if 'invoices' in u_modules %}<a href="{% url 'invoice_list' %}" class="nav-link">📄 Invoices</a>{% endif %}
+  {% if 'payments' in u_modules %}<a href="{% url 'payment_list' %}" class="nav-link">💵 Payments / AR</a>{% endif %}
+  {% if 'customers' in u_modules %}<a href="{% url 'customer_list' %}" class="nav-link">🏪 Customers</a>{% endif %}
+</div>
+{% if 'inventory' in u_modules or 'receiving' in u_modules or 'picking' in u_modules or 'shipping' in u_modules or 'deliveries' in u_modules %}
+<div class="px-3 space-y-0.5">
+  <p class="px-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500">Warehouse</p>
+  {% if 'inventory' in u_modules %}<a href="{% url 'product_list' %}" class="nav-link">📦 Inventory</a>{% endif %}
+  {% if 'receiving' in u_modules %}<a href="{% url 'receipt_list' %}" class="nav-link">🚚 Receiving</a>{% endif %}
+  {% if 'receiving' in u_modules %}<a href="{% url 'cyclecount_list' %}" class="nav-link">🔢 Cycle counts</a>{% endif %}
+  {% if 'picking' in u_modules %}<a href="{% url 'pick_queue' %}" class="nav-link">🛒 Pick queue</a>{% endif %}
+  {% if 'shipping' in u_modules %}<a href="{% url 'shipment_list' %}" class="nav-link">✈️ Shipping</a>{% endif %}
+  {% if 'deliveries' in u_modules %}<a href="{% url 'delivery_list' %}" class="nav-link">🚐 Deliveries</a>{% endif %}
+</div>
+{% endif %}
+<div class="px-3 space-y-0.5">
+  <p class="px-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500">Back office</p>
+  {% if 'reports' in u_modules %}<a href="{% url 'report_index' %}" class="nav-link">📈 Reports</a>{% endif %}
+  {% if 'expenses' in u_modules %}<a href="{% url 'expense_list' %}" class="nav-link">🧮 Expenses</a>{% endif %}
+  {% if u_is_admin %}<a href="{% url 'user_list' %}" class="nav-link">👥 Users & roles</a>{% endif %}
+  {% if u_is_admin %}<a href="{% url 'settings_edit' %}" class="nav-link">⚙️ Settings</a>{% endif %}
+  {% if u_is_admin %}<a href="{% url 'activity_log' %}" class="nav-link">🕘 Activity log</a>{% endif %}
+</div>

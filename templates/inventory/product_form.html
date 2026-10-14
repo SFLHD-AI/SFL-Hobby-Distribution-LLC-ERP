@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{% if product %}Edit {{ product.sku }}{% else %}New product{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">{% if product %}Edit {{ product.sku }}{% else %}New product{% endif %}</h1>
+<form method="post" enctype="multipart/form-data" class="max-w-3xl space-y-6">
+  {% csrf_token %}
+  {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>SKU *</label>{{ form.sku }}</div>
+      <div class="field md:col-span-2"><label>Name *</label>{{ form.name }}</div>
+    </div>
+    <div class="field"><label>Description</label>{{ form.description }}</div>
+    <div class="grid md:grid-cols-4 gap-4">
+      <div class="field"><label>Category</label>{{ form.category }}</div>
+      <div class="field"><label>{{ form.new_category.label }}</label>{{ form.new_category }}</div>
+      <div class="field"><label>Brand</label>{{ form.brand }}</div>
+      <div class="field"><label>{{ form.new_brand.label }}</label>{{ form.new_brand }}</div>
+    </div>
+    <div class="grid md:grid-cols-4 gap-4">
+      <div class="field"><label>UPC / barcode</label>{{ form.upc }}</div>
+      <div class="field"><label>Case pack qty</label>{{ form.case_pack_qty }}</div>
+      <div class="field"><label>Unit of measure</label>{{ form.unit_of_measure }}</div>
+      <div class="field"><label>Bin location</label>{{ form.bin_location }}</div>
+    </div>
+    <div class="grid md:grid-cols-4 gap-4">
+      <div class="field"><label>Unit weight (lb)</label>{{ form.weight_lbs }}
+        <p class="text-xs text-slate-400 mt-1">Used for shipping weight estimates</p></div>
+    </div>
+    <div class="grid md:grid-cols-4 gap-4">
+      <div class="field"><label>Wholesale price $</label>{{ form.default_price }}</div>
+      <div class="field"><label>MSRP $</label>{{ form.msrp }}</div>
+      <div class="field"><label>Reorder point</label>{{ form.reorder_point }}</div>
+      <div class="field"><label>Image</label>{{ form.image }}</div>
+    </div>
+    <label class="flex items-center gap-2 text-sm">{{ form.active }} Active</label>
+  </div>
+  {% if not product %}
+  <div class="card-pad space-y-4 border-2 border-dashed border-indigo-200">
+    <h2 class="font-semibold">Opening stock <span class="text-xs font-normal text-slate-400">(optional — for products you already have)</span></h2>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Quantity on hand right now</label>{{ form.initial_qty }}</div>
+      <div class="field"><label>Your cost per unit $</label>{{ form.initial_unit_cost }}</div>
+    </div>
+    <p class="text-xs text-slate-400">This creates an opening-balance entry in the ledger and sets the weighted average cost to your cost. You can also do this later from the product page (adjustment with a cost), or in bulk with the CSV import columns <code>opening_qty</code> and <code>opening_unit_cost</code>.</p>
+  </div>
+  {% endif %}
+  <div class="flex gap-2">
+    <button class="btn-primary">Save product</button>
+    <a href="{% url 'product_list' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

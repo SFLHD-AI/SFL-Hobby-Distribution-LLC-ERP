@@ -1,0 +1,73 @@
+{% load humanize %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 18mm 16mm; }
+  body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; font-size: 10pt; margin: 0; }
+  h1 { font-size: 20pt; font-weight: 300; letter-spacing: 3px; color: #4f46e5; margin: 0; text-align: right; }
+  .top { display: flex; justify-content: space-between; }
+  .muted { color: #64748b; font-size: 8.5pt; white-space: pre-line; line-height: 1.5; }
+  .logo img { max-height: 50px; max-width: 200px; }
+  table.items { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1px; color: #64748b;
+       text-align: left; padding: 6px 8px; border-bottom: 2px solid #4f46e5; }
+  td { padding: 6px 8px; border-bottom: 0.5pt solid #e2e8f0; }
+  .r { text-align: right; }
+  .totals { width: 60mm; margin-left: auto; margin-top: 10px; border-collapse: collapse; }
+  .totals td { padding: 3px 8px; border: none; }
+  .grand td { border-top: 2px solid #4f46e5; font-weight: 700; font-size: 12pt; padding-top: 6px; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    {% if logo_url %}<div class="logo"><img src="{{ logo_url }}"></div>{% endif %}
+    <div style="font-size:13pt;font-weight:700">{{ company.company_name }}</div>
+    <div class="muted">{{ company.full_address }}
+{{ company.phone }} · {{ company.email }}</div>
+  </div>
+  <div>
+    <h1>ORDER CONFIRMATION</h1>
+    <div class="muted" style="text-align:right;margin-top:6px">
+      <b style="color:#1e293b">{{ po.number }}</b>
+      {{ po.created_at|date:"M j, Y" }}
+      {% if po.customer_po_ref %}Your ref: {{ po.customer_po_ref }}{% endif %}</div>
+  </div>
+</div>
+
+<div style="display:flex;gap:24px;margin-top:20px">
+  <div style="flex:1">
+    <div style="font-size:7.5pt;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;border-bottom:1.5px solid #e2e8f0;padding-bottom:3px;margin-bottom:5px">Customer</div>
+    <b>{{ po.customer.business_name }}</b>
+    <div class="muted">{{ po.customer.billing_line1 }}
+{{ po.customer.billing_city }}, {{ po.customer.billing_state }} {{ po.customer.billing_zip }}</div>
+  </div>
+  <div style="flex:1">
+    <div style="font-size:7.5pt;text-transform:uppercase;letter-spacing:1.5px;color:#94a3b8;border-bottom:1.5px solid #e2e8f0;padding-bottom:3px;margin-bottom:5px">Ship to</div>
+    <div class="muted">{% if po.ship_to %}{{ po.ship_to.as_text }}{% else %}—{% endif %}</div>
+  </div>
+</div>
+
+<table class="items">
+  <thead><tr><th>SKU</th><th>Item</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Disc.</th><th class="r">Amount</th></tr></thead>
+  <tbody>
+  {% for l in lines %}
+    <tr><td>{{ l.product.sku }}</td><td>{{ l.description|default:l.product.name }}</td>
+      <td class="r">{{ l.qty_ordered }}</td><td class="r">${{ l.unit_price|floatformat:2 }}</td>
+      <td class="r">{% if l.discount_pct %}{{ l.discount_pct|floatformat:"-2" }}%{% else %}—{% endif %}</td>
+      <td class="r">${{ l.line_total|floatformat:2|intcomma }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr><td class="muted">Subtotal</td><td class="r">${{ po.subtotal|floatformat:2|intcomma }}</td></tr>
+  {% if po.charge_shipping %}<tr><td class="muted">Shipping</td><td class="r">${{ po.shipping_charge|floatformat:2 }}</td></tr>{% endif %}
+  {% if po.charge_tax %}<tr><td class="muted">Tax ({{ po.tax_rate|floatformat:"-3" }}%)</td><td class="r">${{ po.tax_amount|floatformat:2 }}</td></tr>{% endif %}
+  <tr class="grand"><td>Total</td><td class="r">${{ po.total|floatformat:2|intcomma }}</td></tr>
+</table>
+
+{% if po.notes %}<p class="muted" style="margin-top:16px"><b>Notes:</b> {{ po.notes }}</p>{% endif %}
+</body>
+</html>

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}New cycle count{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">New cycle count</h1>
+<form method="post" class="max-w-xl card-pad space-y-4">
+  {% csrf_token %}
+  <div class="field"><label>Name</label>{{ form.name }}</div>
+  <div class="field"><label>Scope</label>{{ form.scope }}</div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Category (if scope = category)</label>{{ form.category }}</div>
+    <div class="field"><label>Bin prefix (if scope = bin)</label>{{ form.bin_prefix }}</div>
+  </div>
+  <p class="text-sm text-slate-500">A snapshot of current on-hand quantities is taken now. Enter your physical counts, then apply — the system writes the adjustment deltas to the ledger.</p>
+  <button class="btn-primary">Create count sheet</button>
+</form>
+{% endblock %}

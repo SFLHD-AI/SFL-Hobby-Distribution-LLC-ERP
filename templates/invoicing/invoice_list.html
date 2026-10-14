@@ -1,0 +1,49 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Invoices{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Invoices</h1>
+  <div class="flex gap-2">
+    <a href="{% url 'creditmemo_list' %}" class="btn-secondary">Credit memos</a>
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="{% url 'invoice_create_manual' %}" class="btn-secondary">＋ Manual invoice (no PO)</a>
+    <a href="{% url 'invoice_create' %}" class="btn-primary">+ New invoice</a>
+  </div>
+</div>
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Invoice # / customer" class="w-56">
+  <select name="status"><option value="">All</option>
+    <option value="unpaid" {% if request.GET.status == 'unpaid' %}selected{% endif %}>Unpaid (open + partial)</option>
+    <option value="open" {% if request.GET.status == 'open' %}selected{% endif %}>Open</option>
+    <option value="partial" {% if request.GET.status == 'partial' %}selected{% endif %}>Partially paid</option>
+    <option value="paid" {% if request.GET.status == 'paid' %}selected{% endif %}>Paid</option>
+    <option value="void" {% if request.GET.status == 'void' %}selected{% endif %}>Void</option>
+  </select>
+  <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="overdue" value="1" {% if request.GET.overdue %}checked{% endif %} class="rounded"> Overdue only</label>
+  <button class="btn-secondary">Filter</button>
+</form>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Invoice #</th><th>Customer</th><th>Date</th><th>Due</th><th>POs</th>
+      <th>Status</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
+    <tbody>
+    {% for i in invoices %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'invoice_detail' i.pk %}">{{ i.number }}</a></td>
+        <td>{{ i.customer.business_name }}</td>
+        <td class="text-slate-500">{{ i.date|date:"M j, Y" }}</td>
+        <td class="{% if i.is_overdue %}text-red-600 font-semibold{% else %}text-slate-500{% endif %}">{{ i.due_date|date:"M j, Y" }}</td>
+        <td class="text-xs text-slate-500">{{ i.po_numbers|join:", " }}</td>
+        <td>{% if i.status == 'paid' %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>
+          {% elif i.status == 'partial' %}<span class="badge bg-amber-100 text-amber-700">Partial</span>
+          {% elif i.status == 'void' %}<span class="badge bg-slate-100 text-slate-500">Void</span>
+          {% elif i.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue</span>
+          {% else %}<span class="badge bg-sky-100 text-sky-700">Open</span>{% endif %}</td>
+        <td class="num">${{ i.total|floatformat:2|intcomma }}</td>
+        <td class="num font-semibold">${{ i.balance_due|floatformat:2|intcomma }}</td>
+      </tr>
+    {% empty %}<tr><td colspan="8" class="text-center text-slate-400 py-8">No invoices.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

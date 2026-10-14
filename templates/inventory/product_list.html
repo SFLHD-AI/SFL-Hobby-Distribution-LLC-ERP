@@ -1,0 +1,68 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Inventory{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">Inventory</h1>
+  <div class="flex flex-wrap gap-2">
+    <a href="{% url 'pricelist_list' %}" class="btn-secondary">Price lists</a>
+    <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <label class="btn-secondary cursor-pointer">⬆ Import CSV
+      <form id="importForm" method="post" enctype="multipart/form-data" action="{% url 'product_import' %}">
+        {% csrf_token %}
+        <input type="file" name="file" accept=".csv" class="hidden" onchange="this.form.submit()">
+      </form>
+    </label>
+    <a href="{% url 'product_create' %}" class="btn-primary">+ New product</a>
+  </div>
+</div>
+
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="SKU / name / UPC / bin — scan here"
+         class="w-64" autofocus>
+  <select name="category"><option value="">All categories</option>
+    {% for c in categories %}<option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
+  <select name="brand"><option value="">All brands</option>
+    {% for b in brands %}<option value="{{ b.pk }}" {% if request.GET.brand == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select>
+  <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="low" value="1" {% if request.GET.low %}checked{% endif %} class="rounded"> Low stock only</label>
+  <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="active" value="1" {% if request.GET.active %}checked{% endif %} class="rounded"> Active only</label>
+  <button class="btn-secondary">Filter</button>
+</form>
+
+<form method="get" action="{% url 'product_labels' %}" target="_blank">
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr>
+      <th><input type="checkbox" onclick="document.querySelectorAll('.rowck').forEach(c=>c.checked=this.checked)" class="rounded"></th>
+      <th>SKU</th><th>Name</th><th>Brand</th><th>Category</th><th>Bin</th>
+      <th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th>
+      {% if u_can_see_costs %}<th class="num">Avg cost</th>{% endif %}
+      <th class="num">Price</th><th></th>
+    </tr></thead>
+    <tbody>
+    {% for p in products %}
+      <tr class="{% if not p.active %}opacity-50{% endif %}">
+        <td><input type="checkbox" name="id" value="{{ p.pk }}" class="rowck rounded"></td>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'product_detail' p.pk %}">{{ p.sku }}</a></td>
+        <td class="max-w-xs truncate">{{ p.name }}</td>
+        <td>{{ p.brand|default:"—" }}</td>
+        <td>{{ p.category|default:"—" }}</td>
+        <td class="font-mono text-xs">{{ p.bin_location|default:"—" }}</td>
+        <td class="num">{{ p.qty_on_hand }}</td>
+        <td class="num text-slate-500">{{ p.qty_committed }}</td>
+        <td class="num font-semibold {% if p.is_low_stock and p.active %}text-red-600{% endif %}">{{ p.qty_available }}</td>
+        {% if u_can_see_costs %}<td class="num">${{ p.avg_cost|floatformat:2 }}</td>{% endif %}
+        <td class="num">${{ p.default_price|floatformat:2 }}</td>
+        <td>{% if p.is_low_stock and p.active %}<span class="badge bg-red-100 text-red-700">LOW</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="12" class="text-center text-slate-400 py-8">No products. Add one or import a CSV.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+<div class="mt-3 flex gap-2 items-center text-sm">
+  <span class="text-slate-500">{{ products|length }} products · With selected:</span>
+  <input type="number" name="copies" value="1" min="1" class="w-16 rounded-lg border-slate-300 text-sm">
+  <button name="mode" value="sku" class="btn-secondary">🏷 SKU labels</button>
+  <button name="mode" value="bin" class="btn-secondary">🏷 Bin labels</button>
+</div>
+</form>
+{% endblock %}

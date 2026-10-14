@@ -1,0 +1,92 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}RCV-{{ receipt.pk }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">Supplier order RCV-{{ receipt.pk }}
+    {% if receipt.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received</span>
+    {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</h1>
+  {% if not receipt.posted and lines %}
+  <form method="post" onsubmit="return confirm('Mark received? Stock and weighted average costs will update — this cannot be undone.')">
+    {% csrf_token %}<input type="hidden" name="action" value="post">
+    <button class="btn-success">✓ Mark received</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Header</h2>
+    {% if receipt.posted %}
+      <dl class="text-sm space-y-1.5">
+        <div class="flex justify-between"><dt class="text-slate-500">Supplier</dt><dd>{{ receipt.supplier|default:"—" }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Ordered</dt><dd>{{ receipt.date }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Received</dt><dd>{{ receipt.posted_at|date:"M j, Y g:i A" }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Reference</dt><dd>{{ receipt.reference|default:"—" }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Freight / duties</dt><dd>${{ receipt.freight_cost }} / ${{ receipt.duties_cost }}</dd></div>
+      </dl>
+    {% else %}
+    <form method="post" class="space-y-3">
+      {% csrf_token %}<input type="hidden" name="action" value="save_header">
+      <div class="field"><label>Supplier</label>{{ header_form.supplier }}</div>
+      <div class="field"><label>{{ header_form.new_supplier.label }}</label>{{ header_form.new_supplier }}</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="field"><label>Order date</label>{{ header_form.date }}</div>
+        <div class="field"><label>Expected</label>{{ header_form.expected_date }}</div>
+      </div>
+      <div class="field"><label>Reference</label>{{ header_form.reference }}</div>
+      <div class="grid grid-cols-2 gap-3">
+        <div class="field"><label>Freight $</label>{{ header_form.freight_cost }}</div>
+        <div class="field"><label>Duties $</label>{{ header_form.duties_cost }}</div>
+      </div>
+      <div class="field"><label>Notes</label>{{ header_form.notes }}</div>
+      <button class="btn-secondary w-full justify-center">Save header</button>
+    </form>
+    {% endif %}
+    <div class="mt-4 pt-4 border-t border-slate-100 text-sm space-y-1">
+      <div class="flex justify-between"><span class="text-slate-500">Merchandise</span><b>${{ receipt.merchandise_total|floatformat:2|intcomma }}</b></div>
+      <div class="flex justify-between"><span class="text-slate-500">Freight + duties</span><b>${{ receipt.freight_cost|add:receipt.duties_cost|floatformat:2 }}</b></div>
+      <div class="flex justify-between text-base"><span class="text-slate-500">Landed total</span><b>${{ receipt.landed_total|floatformat:2|intcomma }}</b></div>
+    </div>
+  </div>
+
+  <div class="lg:col-span-2 card-pad">
+    <h2 class="font-semibold mb-3">Items</h2>
+    <table class="tbl mb-4">
+      <thead><tr><th>SKU</th><th>Product</th><th class="num">Qty</th><th class="num">Unit cost</th>
+        <th class="num">Landed unit</th><th class="num">Line total</th><th></th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr>
+          <td class="font-medium">{{ l.product.sku }}</td>
+          <td class="max-w-xs truncate">{{ l.product.name }}</td>
+          <td class="num">{{ l.qty }}</td>
+          <td class="num">${{ l.unit_cost|floatformat:4 }}</td>
+          <td class="num">{% if l.landed_unit_cost %}${{ l.landed_unit_cost|floatformat:4 }}{% else %}<span class="text-slate-400">on receive</span>{% endif %}</td>
+          <td class="num">${{ l.line_total|floatformat:2|intcomma }}</td>
+          <td>{% if not receipt.posted %}
+            <form method="post">{% csrf_token %}
+              <input type="hidden" name="action" value="del_line"><input type="hidden" name="line_id" value="{{ l.pk }}">
+              <button class="text-red-500 hover:text-red-700 text-lg leading-none">×</button></form>{% endif %}</td>
+        </tr>
+      {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-6">No items yet — add below{% if receipt.posted %}.{% endif %}</td></tr>{% endfor %}
+      </tbody>
+    </table>
+
+    {% if not receipt.posted %}
+    <form method="post" class="flex flex-wrap gap-3 items-end field-inline bg-slate-50 rounded-lg p-3">
+      {% csrf_token %}<input type="hidden" name="action" value="add_line">
+      <div><label class="text-xs text-slate-500 block mb-1">Product (type SKU)</label>
+        <select name="product" required class="w-72">
+          <option value="">— pick product —</option>
+          {% for p in products %}<option value="{{ p.pk }}">{{ p.sku }} — {{ p.name|truncatechars:40 }}</option>{% endfor %}
+        </select></div>
+      <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
+        <input type="number" name="qty" min="1" required class="w-24"></div>
+      <div><label class="text-xs text-slate-500 block mb-1">Unit cost $</label>
+        <input type="number" name="unit_cost" step="0.0001" min="0" required class="w-32"></div>
+      <button class="btn-primary">Add item</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Receiving{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Receiving — supplier orders</h1>
+  <a href="{% url 'receipt_create' %}" class="btn-primary">+ New supplier order</a>
+</div>
+<div class="mb-4 flex gap-2 text-sm">
+  <a href="?" class="btn-secondary {% if not request.GET.status %}!bg-slate-200{% endif %}">All</a>
+  <a href="?status=open" class="btn-secondary {% if request.GET.status == 'open' %}!bg-slate-200{% endif %}">Open</a>
+  <a href="?status=posted" class="btn-secondary {% if request.GET.status == 'posted' %}!bg-slate-200{% endif %}">Received</a>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>#</th><th>Supplier</th><th>Ordered</th><th>Expected</th><th>Ref</th>
+      <th class="num">Merch $</th><th class="num">Freight+duty</th><th>Status</th></tr></thead>
+    <tbody>
+    {% for r in receipts %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'receipt_detail' r.pk %}">RCV-{{ r.pk }}</a></td>
+        <td>{{ r.supplier|default:"—" }}</td>
+        <td>{{ r.date|date:"M j, Y" }}</td>
+        <td>{{ r.expected_date|date:"M j, Y"|default:"—" }}</td>
+        <td class="text-xs">{{ r.reference }}</td>
+        <td class="num">${{ r.merchandise_total|floatformat:2|intcomma }}</td>
+        <td class="num">${{ r.freight_cost|add:r.duties_cost|floatformat:2 }}</td>
+        <td>{% if r.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received {{ r.posted_at|date:"M j" }}</span>
+            {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="8" class="text-center text-slate-400 py-8">No supplier orders yet.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

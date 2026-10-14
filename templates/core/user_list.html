@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Users{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Users</h1>
+  <div class="flex gap-2">
+    <a href="{% url 'role_list' %}" class="btn-secondary">🔑 Roles</a>
+    <a href="{% url 'user_create' %}" class="btn-primary">+ New user</a>
+  </div>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Username</th><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th></tr></thead>
+    <tbody>
+    {% for u in users %}
+      <tr class="{% if not u.is_active %}opacity-50{% endif %}">
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'user_edit' u.pk %}">{{ u.username }}</a>
+          {% if u.is_superuser %}<span class="badge bg-indigo-100 text-indigo-700">superuser</span>{% endif %}</td>
+        <td>{{ u.get_full_name }}</td>
+        <td class="text-xs">{{ u.email }}</td>
+        <td>{% if u.profile.role %}<span class="badge bg-slate-100 text-slate-700">{{ u.profile.role.name }}</span>{% else %}<span class="text-slate-400 text-xs">—</span>{% endif %}</td>
+        <td>{% if u.is_active %}<span class="badge bg-emerald-100 text-emerald-700">Active</span>{% else %}<span class="badge bg-slate-100 text-slate-500">Disabled</span>{% endif %}</td>
+        <td class="text-xs text-slate-500">{{ u.last_login|date:"M j, Y g:i A"|default:"never" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

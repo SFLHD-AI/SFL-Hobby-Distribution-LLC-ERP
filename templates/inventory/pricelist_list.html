@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Price lists{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Price lists</h1>
+  <a href="{% url 'pricelist_create' %}" class="btn-primary">+ New price list</a>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Name</th><th>Description</th><th class="num">SKUs priced</th><th class="num">Customers</th><th></th></tr></thead>
+    <tbody>
+    {% for pl in lists %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'pricelist_detail' pl.pk %}">{{ pl.name }}</a></td>
+        <td>{{ pl.description }}</td>
+        <td class="num">{{ pl.items.count }}</td>
+        <td class="num">{{ pl.customers.count }}</td>
+        <td>{% if not pl.active %}<span class="badge bg-slate-100 text-slate-500">inactive</span>{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-8">No price lists. Customers without one pay default wholesale price (minus their discount %).</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

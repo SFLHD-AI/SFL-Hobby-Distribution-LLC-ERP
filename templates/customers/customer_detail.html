@@ -1,0 +1,180 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ customer.business_name }}{% endblock %}
+{% block content %}
+
+{% if customer.certificate_status == 'expired' or customer.certificate_status == 'none' %}
+<div class="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-800 px-4 py-3 text-sm font-medium">
+  ⚠ {% if customer.certificate_status == 'expired' %}Resale certificate EXPIRED{% else %}No resale certificate on file{% endif %}
+  — orders will {% if customer.no_cert_policy == 'block' %}be blocked at finalization{% else %}be charged sales tax{% endif %}.
+</div>
+{% elif customer.certificate_status == 'expiring' %}
+<div class="mb-4 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 text-sm font-medium">
+  ⚠ Resale certificate expires {{ customer.current_certificate.expiration_date|date:"M j, Y" }} — request a renewal.
+</div>
+{% endif %}
+
+<div class="flex flex-wrap items-start justify-between gap-3 mb-5">
+  <div>
+    <h1 class="page-title">{{ customer.business_name }}
+      {% if not customer.active %}<span class="badge bg-slate-200 text-slate-600">inactive</span>{% endif %}</h1>
+    <p class="text-slate-500 text-sm">{{ customer.email }} · {{ customer.phone }} · {{ customer.get_payment_terms_display }}</p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+    <a href="{% url 'customer_statement_pdf' customer.pk %}" target="_blank" class="btn-secondary">📄 Statement</a>
+    <a href="{% url 'customer_statement_email' customer.pk %}" class="btn-secondary"
+       onclick="return confirm('Email statement to {{ customer.email }}?')">✉ Email statement</a>
+    <a href="{% url 'po_create' %}?customer={{ customer.pk }}" class="btn-primary">+ New order</a>
+    <a href="{% url 'customer_edit' customer.pk %}" class="btn-secondary">Edit</a>
+  </div>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="stat"><p class="lbl">Balance owed</p><p class="val {% if customer.balance > 0 %}text-red-600{% endif %}">${{ customer.balance|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Lifetime revenue</p><p class="val">${{ lifetime_revenue|floatformat:2|intcomma }}</p></div>
+  {% if show_costs %}<div class="stat"><p class="lbl">Lifetime profit</p><p class="val text-emerald-600">${{ lifetime_profit|floatformat:2|intcomma }}</p></div>{% endif %}
+  <div class="stat"><p class="lbl">Credit limit</p><p class="val">{% if customer.credit_limit %}${{ customer.credit_limit|floatformat:0|intcomma }}{% else %}—{% endif %}</p></div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4 mb-6">
+  {# Addresses #}
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Shipping addresses</h2>
+    {% for a in customer.shipping_addresses.all %}{% if not a.is_deleted %}
+    <div class="rounded-lg border {% if a.is_default %}border-indigo-300 bg-indigo-50/50{% else %}border-slate-200{% endif %} p-3 mb-2 text-sm">
+      <div class="flex justify-between">
+        <b>{{ a.label }}</b>
+        <span class="flex gap-2">
+          {% if a.is_default %}<span class="badge bg-indigo-100 text-indigo-700">default</span>
+          {% else %}
+          <form method="post">{% csrf_token %}<input type="hidden" name="action" value="default_address">
+            <input type="hidden" name="id" value="{{ a.pk }}"><button class="text-xs text-indigo-600 hover:underline">make default</button></form>
+          {% endif %}
+          <form method="post" onsubmit="return confirm('Remove address?')">{% csrf_token %}
+            <input type="hidden" name="action" value="del_address"><input type="hidden" name="id" value="{{ a.pk }}">
+            <button class="text-red-500">×</button></form>
+        </span>
+      </div>
+      <p class="text-slate-600 whitespace-pre-line">{{ a.as_text }}</p>
+    </div>
+    {% endif %}{% endfor %}
+    <details class="mt-2"><summary class="text-sm text-indigo-600 cursor-pointer">+ Add address</summary>
+      <form method="post" class="mt-3 space-y-2 field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="add_address">
+        <input type="text" name="label" placeholder="Label (Store #2…)" class="w-full">
+        <input type="text" name="attention" placeholder="Attention" class="w-full">
+        <input type="text" name="line1" placeholder="Address line 1 *" required class="w-full">
+        <input type="text" name="line2" placeholder="Address line 2" class="w-full">
+        <div class="grid grid-cols-3 gap-2">
+          <input type="text" name="city" placeholder="City *" required>
+          <input type="text" name="state" placeholder="State *" required>
+          <input type="text" name="zip_code" placeholder="ZIP *" required>
+        </div>
+        <input type="text" name="phone" placeholder="Phone" class="w-full">
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_default" class="rounded"> Default</label>
+        <button class="btn-secondary w-full justify-center">Add</button>
+      </form>
+    </details>
+  </div>
+
+  {# Certificates #}
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Resale certificates</h2>
+    {% for cert in customer.certificates.all %}{% if not cert.is_deleted %}
+    <div class="rounded-lg border p-3 mb-2 text-sm {% if cert.is_expired %}border-red-200 bg-red-50/50{% elif cert.expires_soon %}border-amber-200 bg-amber-50/50{% else %}border-slate-200{% endif %}">
+      <div class="flex justify-between">
+        <b>{{ cert.certificate_number }}</b>
+        <form method="post" onsubmit="return confirm('Remove certificate?')">{% csrf_token %}
+          <input type="hidden" name="action" value="del_cert"><input type="hidden" name="id" value="{{ cert.pk }}">
+          <button class="text-red-500">×</button></form>
+      </div>
+      <p class="text-slate-600">{{ cert.issuing_state }} · expires
+        <b class="{% if cert.is_expired %}text-red-600{% elif cert.expires_soon %}text-amber-600{% endif %}">{{ cert.expiration_date|date:"M j, Y" }}</b></p>
+      {% if cert.file %}<a href="{{ cert.file.url }}" target="_blank" class="text-indigo-600 text-xs hover:underline">view file →</a>{% endif %}
+    </div>
+    {% endif %}{% endfor %}
+    <details class="mt-2"><summary class="text-sm text-indigo-600 cursor-pointer">+ Upload certificate</summary>
+      <form method="post" enctype="multipart/form-data" class="mt-3 space-y-2 field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="add_cert">
+        <input type="file" name="file" accept=".pdf,image/*" class="w-full text-sm">
+        <input type="text" name="certificate_number" placeholder="Certificate # *" required class="w-full">
+        <input type="text" name="issuing_state" placeholder="Issuing state *" required class="w-full">
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="text-xs text-slate-500">Issued</label><input type="date" name="issue_date" class="w-full"></div>
+          <div><label class="text-xs text-slate-500">Expires *</label><input type="date" name="expiration_date" required class="w-full"></div>
+        </div>
+        <button class="btn-secondary w-full justify-center">Upload</button>
+      </form>
+    </details>
+  </div>
+
+  {# Contacts #}
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Contacts</h2>
+    {% for ct in customer.contacts.all %}{% if not ct.is_deleted %}
+    <div class="flex justify-between items-start rounded-lg border border-slate-200 p-3 mb-2 text-sm">
+      <div><b>{{ ct.name }}</b> {% if ct.is_primary %}<span class="badge bg-indigo-100 text-indigo-700">primary</span>{% endif %}
+        <p class="text-slate-500">{{ ct.role }}</p>
+        <p class="text-slate-600 text-xs">{{ ct.email }} {{ ct.phone }}</p></div>
+      <form method="post" onsubmit="return confirm('Remove contact?')">{% csrf_token %}
+        <input type="hidden" name="action" value="del_contact"><input type="hidden" name="id" value="{{ ct.pk }}">
+        <button class="text-red-500">×</button></form>
+    </div>
+    {% endif %}{% endfor %}
+    <details class="mt-2"><summary class="text-sm text-indigo-600 cursor-pointer">+ Add contact</summary>
+      <form method="post" class="mt-3 space-y-2 field-inline">
+        {% csrf_token %}<input type="hidden" name="action" value="add_contact">
+        <input type="text" name="name" placeholder="Name *" required class="w-full">
+        <input type="text" name="role" placeholder="Role" class="w-full">
+        <input type="email" name="email" placeholder="Email" class="w-full">
+        <input type="text" name="phone" placeholder="Phone" class="w-full">
+        <label class="flex items-center gap-2 text-sm"><input type="checkbox" name="is_primary" class="rounded"> Primary</label>
+        <button class="btn-secondary w-full justify-center">Add</button>
+      </form>
+    </details>
+    {% if customer.notes %}<div class="mt-4 pt-3 border-t border-slate-100 text-sm text-slate-600"><b class="text-slate-500 text-xs uppercase">Notes</b><br>{{ customer.notes|linebreaksbr }}</div>{% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <div class="card-pad overflow-x-auto">
+    <h2 class="font-semibold mb-3">Orders</h2>
+    <table class="tbl">
+      <thead><tr><th>PO #</th><th>Date</th><th>Status</th><th class="num">Total</th></tr></thead>
+      <tbody>
+      {% for po in pos %}
+        <tr><td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'po_detail' po.pk %}">{{ po.number }}</a></td>
+        <td>{{ po.created_at|date:"M j, Y" }}</td>
+        <td>{% include "orders/_status_badge.html" with status=po.status %}</td>
+        <td class="num">${{ po.total|floatformat:2|intcomma }}</td></tr>
+      {% empty %}<tr><td colspan="4" class="text-center text-slate-400 py-6">No orders.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="card-pad overflow-x-auto">
+    <h2 class="font-semibold mb-3">Invoices & payments</h2>
+    <table class="tbl">
+      <thead><tr><th>Invoice</th><th>Date</th><th>Status</th><th class="num">Total</th><th class="num">Balance</th></tr></thead>
+      <tbody>
+      {% for i in invoices %}
+        <tr><td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'invoice_detail' i.pk %}">{{ i.number }}</a></td>
+        <td>{{ i.date|date:"M j, Y" }}{% if i.is_overdue %} <span class="badge bg-red-100 text-red-700">overdue</span>{% endif %}</td>
+        <td>{{ i.get_status_display }}</td>
+        <td class="num">${{ i.total|floatformat:2|intcomma }}</td>
+        <td class="num font-semibold">${{ i.balance_due|floatformat:2|intcomma }}</td></tr>
+      {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-6">No invoices.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    {% if payments %}
+    <h3 class="font-semibold text-sm mt-4 mb-2">Recent payments</h3>
+    <table class="tbl">
+      <tbody>
+      {% for p in payments|slice:":10" %}
+        <tr><td>{{ p.date|date:"M j, Y" }}</td><td>{{ p.get_method_display }} {{ p.reference }}</td>
+        <td class="num font-semibold text-emerald-600">${{ p.amount|floatformat:2|intcomma }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

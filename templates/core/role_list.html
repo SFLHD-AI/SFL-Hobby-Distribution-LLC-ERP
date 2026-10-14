@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Roles{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Roles</h1>
+  <a href="{% url 'role_create' %}" class="btn-primary">+ New role</a>
+</div>
+<p class="text-sm text-slate-500 mb-4">A role controls which modules its users can open, and whether they can see cost/profit numbers. Built-in roles can be edited but not deleted.</p>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Role</th><th>Access</th><th>Costs?</th><th class="num">Users</th><th></th></tr></thead>
+    <tbody>
+    {% for r in roles %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'role_edit' r.pk %}">{{ r.name }}</a>
+          {% if r.is_system %}<span class="badge bg-slate-100 text-slate-500">built-in</span>{% endif %}
+          {% if r.is_admin_role %}<span class="badge bg-indigo-100 text-indigo-700">full admin</span>{% endif %}</td>
+        <td class="text-xs text-slate-600">{% if r.is_admin_role %}Everything{% else %}{{ r.module_labels|join:", " }}{% endif %}</td>
+        <td>{% if r.can_see_costs or r.is_admin_role %}<span class="badge bg-emerald-100 text-emerald-700">Yes</span>{% else %}<span class="text-slate-400 text-xs">No</span>{% endif %}</td>
+        <td class="num">{{ r.users.count }}</td>
+        <td>{% if not r.is_system %}
+          <form method="post" action="{% url 'role_delete' r.pk %}" onsubmit="return confirm('Delete role {{ r.name }}?')">
+            {% csrf_token %}<button class="text-red-500 text-xs hover:underline">delete</button></form>
+        {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

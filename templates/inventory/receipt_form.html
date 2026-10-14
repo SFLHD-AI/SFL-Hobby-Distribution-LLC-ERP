@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}New supplier order{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">New supplier order</h1>
+<form method="post" class="max-w-2xl card-pad space-y-4">
+  {% csrf_token %}
+  {% if form.errors %}<div class="text-red-600 text-sm">{{ form.errors }}</div>{% endif %}
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Supplier</label>{{ form.supplier }}</div>
+    <div class="field"><label>{{ form.new_supplier.label }}</label>{{ form.new_supplier }}</div>
+  </div>
+  <div class="grid md:grid-cols-3 gap-4">
+    <div class="field"><label>Order date</label>{{ form.date }}</div>
+    <div class="field"><label>Expected arrival</label>{{ form.expected_date }}</div>
+    <div class="field"><label>Reference</label>{{ form.reference }}</div>
+  </div>
+  <div class="grid md:grid-cols-2 gap-4">
+    <div class="field"><label>Freight $</label>{{ form.freight_cost }}</div>
+    <div class="field"><label>Duties $</label>{{ form.duties_cost }}</div>
+  </div>
+  <div class="field"><label>Notes</label>{{ form.notes }}</div>
+  <button class="btn-primary">Create & add items</button>
+</form>
+{% endblock %}

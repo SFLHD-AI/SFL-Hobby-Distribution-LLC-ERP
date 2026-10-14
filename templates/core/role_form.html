@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{% if role %}Edit role{% else %}New role{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-5">{% if role %}Edit role: {{ role.name }}{% else %}New role{% endif %}</h1>
+<form method="post" class="max-w-xl card-pad space-y-5">
+  {% csrf_token %}
+  {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
+  <div class="field"><label>Role name *</label>{{ form.name }}</div>
+
+  <div>
+    <p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-2">Modules this role can open</p>
+    <div class="grid md:grid-cols-2 gap-1.5">
+      {% for key, label, url in modules %}
+      <label class="flex items-center gap-2 text-sm rounded-lg border border-slate-200 px-3 py-2 hover:bg-slate-50">
+        <input type="checkbox" name="mod_{{ key }}" class="rounded" {% if key in checked %}checked{% endif %}>
+        {{ label }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="space-y-2">
+    <label class="flex items-center gap-2 text-sm font-medium">{{ form.can_see_costs }}
+      Can see costs, margins and profit numbers</label>
+    <label class="flex items-center gap-2 text-sm font-medium">{{ form.is_admin_role }}
+      Full admin (everything, incl. Settings, Users, Activity log — overrides the checkboxes)</label>
+  </div>
+
+  <div class="flex gap-2">
+    <button class="btn-primary">Save role</button>
+    <a href="{% url 'role_list' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

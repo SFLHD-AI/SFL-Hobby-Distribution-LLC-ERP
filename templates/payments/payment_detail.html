@@ -1,0 +1,51 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Payment{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <div>
+    <h1 class="page-title">Payment — ${{ payment.amount|floatformat:2|intcomma }}</h1>
+    <p class="text-slate-500 text-sm">{{ payment.customer.business_name }} · {{ payment.date|date:"M j, Y" }}
+      · {{ payment.get_method_display }} {{ payment.reference }}</p>
+  </div>
+  <form method="post" onsubmit="return confirm('Delete payment?')">{% csrf_token %}
+    <input type="hidden" name="action" value="delete"><button class="btn-danger">Delete</button></form>
+</div>
+
+<div class="grid md:grid-cols-3 gap-4 mb-6">
+  <div class="stat"><p class="lbl">Amount</p><p class="val">${{ payment.amount|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Applied</p><p class="val text-emerald-600">${{ payment.amount_applied|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Unapplied</p><p class="val {% if payment.amount_unapplied > 0 %}text-amber-600{% endif %}">${{ payment.amount_unapplied|floatformat:2|intcomma }}</p></div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Applied to</h2>
+    <table class="tbl">
+      <tbody>
+      {% for a in applications %}
+        <tr>
+          <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'invoice_detail' a.invoice.pk %}">{{ a.invoice.number }}</a></td>
+          <td class="num font-semibold">${{ a.amount|floatformat:2|intcomma }}</td>
+          <td><form method="post">{% csrf_token %}
+            <input type="hidden" name="action" value="unapply"><input type="hidden" name="app_id" value="{{ a.pk }}">
+            <button class="text-red-500 text-xs hover:underline">unapply</button></form></td>
+        </tr>
+      {% empty %}<tr><td class="text-slate-400 py-4">Not applied to any invoice yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if payment.amount_unapplied > 0 and open_invoices %}
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Apply remaining ${{ payment.amount_unapplied|floatformat:2 }}</h2>
+    {% for i in open_invoices %}
+    <form method="post" class="flex items-center gap-2 mb-2 field-inline">
+      {% csrf_token %}<input type="hidden" name="action" value="apply"><input type="hidden" name="invoice_id" value="{{ i.pk }}">
+      <span class="flex-1 text-sm">{{ i.number }} <span class="text-slate-400">bal ${{ i.balance_due|floatformat:2 }}</span></span>
+      <input type="number" step="0.01" name="amount" value="{{ i.balance_due }}" class="w-28 text-right">
+      <button class="btn-secondary">Apply</button>
+    </form>
+    {% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

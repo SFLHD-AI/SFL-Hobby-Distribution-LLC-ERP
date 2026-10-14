@@ -1,0 +1,104 @@
+{% extends "base.html" %}{% load humanize sfl_tags %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-5">
+  <h1 class="page-title">Dashboard</h1>
+  <a href="{% url 'po_create' %}" class="btn-primary">+ New order</a>
+</div>
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+  <div class="stat"><p class="lbl">Today's revenue</p><p class="val">${{ today_revenue|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Month-to-date</p><p class="val">${{ mtd_revenue|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">AR outstanding</p><p class="val">${{ ar_total|floatformat:2|intcomma }}</p>
+    {% if overdue %}<p class="text-xs text-red-600 font-semibold mt-1">${{ overdue|floatformat:2|intcomma }} overdue</p>{% endif %}</div>
+  <div class="stat"><p class="lbl">Pick queue</p><p class="val">{{ pick_queue }}</p>
+    <a href="{% url 'pick_queue' %}" class="text-xs text-indigo-600 hover:underline">open picking →</a></div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4 mb-6">
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Open orders by status</h2>
+    <div class="space-y-1.5 text-sm">
+      {% for code, label in statuses %}{% if code == 'draft' or code == 'confirmed' or code == 'picking' or code == 'picked' or code == 'finalized' %}
+      <a href="{% url 'po_list' %}?status={{ code }}" class="flex justify-between rounded px-2 py-1 hover:bg-slate-50">
+        <span>{{ label }}</span><span class="font-bold tabular-nums">{{ status_counts|dict_get:code }}</span>
+      </a>{% endif %}{% endfor %}
+    </div>
+  </div>
+
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Low stock <span class="text-xs text-slate-400">(available ≤ reorder point)</span></h2>
+    {% if low_stock %}
+    <div class="space-y-1 text-sm max-h-64 overflow-y-auto">
+      {% for p in low_stock %}
+      <div class="flex items-center gap-2 rounded px-2 py-1 hover:bg-slate-50">
+        <a href="{% url 'product_detail' p.pk %}" class="flex-1 min-w-0">
+          <span class="font-medium">{{ p.sku }}</span>
+          <span class="block text-xs text-slate-500 truncate">{{ p.name|truncatechars:34 }}{% if p.brand %} · {{ p.brand }}{% endif %}</span>
+        </a>
+        <span class="font-semibold {% if p.qty_available <= 0 %}text-red-600{% else %}text-amber-600{% endif %} tabular-nums whitespace-nowrap">
+          {{ p.qty_available }} avail</span>
+        <form method="post" action="{% url 'toggle_low_stock_mute' p.pk %}">
+          {% csrf_token %}
+          <button title="Mute this alert (product page to unmute)"
+                  class="text-slate-300 hover:text-slate-600 text-base leading-none">🔕</button>
+        </form>
+      </div>{% endfor %}
+    </div>
+    {% else %}<p class="text-sm text-slate-400">Everything is above its reorder point (or muted). 🎉</p>{% endif %}
+  </div>
+
+  <div class="card-pad">
+    <h2 class="font-semibold mb-3">Resale certificates expiring</h2>
+    {% if expiring_certs %}
+    <div class="space-y-1 text-sm">
+      {% for c in expiring_certs %}
+      <a href="{% url 'customer_detail' c.customer_id %}" class="flex justify-between rounded px-2 py-1 hover:bg-slate-50">
+        <span class="truncate mr-2">{{ c.customer.business_name }}</span>
+        <span class="{% if c.is_expired %}text-red-600{% else %}text-amber-600{% endif %} font-semibold whitespace-nowrap">
+          {% if c.is_expired %}expired{% else %}{{ c.expiration_date|date:"M j" }}{% endif %}</span>
+      </a>{% endfor %}
+    </div>
+    {% else %}<p class="text-sm text-slate-400">No certificates expiring in the next 30 days.</p>{% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="card-pad lg:col-span-2">
+    <h2 class="font-semibold mb-3">Recent orders</h2>
+    <table class="tbl">
+      <thead><tr><th>PO #</th><th>Customer</th><th>Status</th><th class="num">Total</th><th></th></tr></thead>
+      <tbody>
+      {% for po in recent_pos %}
+        <tr>
+          <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'po_detail' po.pk %}">{{ po.number }}</a></td>
+          <td>{{ po.customer.business_name }}</td>
+          <td>{% include "orders/_status_badge.html" with status=po.status %}</td>
+          <td class="num">${{ po.total|floatformat:2|intcomma }}</td>
+          <td class="text-xs text-slate-400">{{ po.created_at|date:"M j" }}</td>
+        </tr>
+      {% empty %}<tr><td colspan="5" class="text-slate-400 py-6 text-center">No orders yet.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="space-y-4">
+    <div class="card-pad">
+      <h2 class="font-semibold mb-3">Top balances owed</h2>
+      {% for cust, bal in top_debtors %}
+      <a href="{% url 'customer_detail' cust.pk %}" class="flex justify-between text-sm rounded px-2 py-1 hover:bg-slate-50">
+        <span class="truncate mr-2">{{ cust.business_name }}</span>
+        <span class="font-bold tabular-nums">${{ bal|floatformat:2|intcomma }}</span></a>
+      {% empty %}<p class="text-sm text-slate-400">Nothing outstanding.</p>{% endfor %}
+    </div>
+    <div class="card-pad">
+      <h2 class="font-semibold mb-3">Inbound supplier orders</h2>
+      {% for r in inbound %}
+      <a href="{% url 'receipt_detail' r.pk %}" class="flex justify-between text-sm rounded px-2 py-1 hover:bg-slate-50">
+        <span>RCV-{{ r.pk }} {{ r.supplier|default:"—" }}</span>
+        <span class="text-slate-400">{{ r.expected_date|date:"M j"|default:"no ETA" }}</span></a>
+      {% empty %}<p class="text-sm text-slate-400">No open supplier orders.</p>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}
