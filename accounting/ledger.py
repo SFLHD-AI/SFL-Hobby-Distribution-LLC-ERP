@@ -138,14 +138,26 @@ class Journal:
         self.checkpoints = sorted(set(checkpoints or []))
         self.entries = []
         self._acct_cache = {}
+        self._bank_acct_cache = {}
+        self._category_acct_cache = {}
         self._accounts_by_id = None
         self._build()
 
     # --- account helpers -----------------------------------------------------
     def sys(self, key):
-        if key not in self._acct_cache:
-            self._acct_cache[key] = Account.system(key)
-        return self._acct_cache[key]
+        """System account by key; served from the one-shot account load when
+        it already exists, created on first use otherwise."""
+        acct = self._acct_cache.get(key)
+        if acct is None:
+            for a in self.accounts().values():
+                if a.system_key == key:
+                    acct = a
+                    break
+            if acct is None:
+                acct = Account.system(key)
+                self.accounts()[acct.pk] = acct
+            self._acct_cache[key] = acct
+        return acct
 
     def accounts(self):
         if self._accounts_by_id is None:
@@ -159,7 +171,16 @@ class Journal:
         return accts[pk]
 
     def _bank_acct(self, bank_account):
-        return bank_account.ensure_ledger_account()
+        """Ledger account for a bank account, resolved once per journal build."""
+        acct = self._bank_acct_cache.get(bank_account.pk)
+        if acct is None:
+            if bank_account.ledger_account_id and bank_account.ledger_account_id in self.accounts():
+                acct = self.accounts()[bank_account.ledger_account_id]
+            else:
+                acct = bank_account.ensure_ledger_account()
+                self.accounts()[acct.pk] = acct
+            self._bank_acct_cache[bank_account.pk] = acct
+        return acct
 
     def _source_account(self, paid_from):
         """Where cash came from for a hand-recorded payment: the chosen bank
@@ -169,9 +190,29 @@ class Journal:
         return self.sys("owner_contribution")
 
     def _expense_account(self, expense):
-        if expense.category_id:
-            return expense.category.ensure_account()
-        return self.sys("uncat_expense")
+        if not expense.category_id:
+            return self.sys("uncat_expense")
+        if not self._category_acct_cache:
+            self._load_category_accounts()
+        acct = self._category_acct_cache.get(expense.category_id)
+        if acct is None:          # category created after the preload (rare)
+            from expenses.models import ExpenseCategory
+            category = ExpenseCategory.all_objects.filter(pk=expense.category_id).first()
+            acct = category.ensure_account() if category else self.sys("uncat_expense")
+            self.accounts().setdefault(acct.pk, acct)
+            self._category_acct_cache[expense.category_id] = acct
+        return acct
+
+    def _load_category_accounts(self):
+        """One query: every expense category -> its ledger account."""
+        from expenses.models import ExpenseCategory
+        accounts = self.accounts()
+        for cat in ExpenseCategory.all_objects.all():
+            acct = accounts.get(cat.account_id) if cat.account_id else None
+            if acct is None:
+                acct = cat.ensure_account()
+                accounts[acct.pk] = acct
+            self._category_acct_cache[cat.pk] = acct
 
     def _add(self, entry):
         if entry.lines:
@@ -218,7 +259,7 @@ class Journal:
         qs = (BankTransaction.objects
               .filter(is_deleted=False, pending=False, account__is_deleted=False)
               .exclude(status=BankTransaction.IGNORED)
-              .select_related("account", "category_account", "expense", "expense__category",
+              .select_related("account", "category_account", "expense",
                               "transfer_peer", "transfer_peer__account")
               .prefetch_related("payments", "receipts"))
         for t in qs:
@@ -473,7 +514,7 @@ class Journal:
     def _expenses(self):
         from expenses.models import Expense
         qs = (Expense.objects.filter(is_deleted=False)
-              .select_related("category", "category__account", "paid_from", "bank_txn"))
+              .select_related("paid_from", "bank_txn"))
         for x in qs:
             acct = self._expense_account(x)
             txn = getattr(x, "bank_txn", None)
