@@ -23,6 +23,8 @@ MODULE_PREFIXES = {
     "receiving": ("/inventory/receiving", "/inventory/cycle-counts"),
     "reports": ("/reports",),
     "expenses": ("/expenses",),
+    "banking": ("/banking",),
+    "accounting": ("/accounting",),
 }
 
 

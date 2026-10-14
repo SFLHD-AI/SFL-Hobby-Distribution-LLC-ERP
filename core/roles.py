@@ -20,6 +20,9 @@ OFFICE_MODULES = ["dashboard", "orders", "invoices", "payments", "customers",
                   "inventory", "receiving", "shipping", "deliveries", "reports"]
 WAREHOUSE_MODULES = ["picking"]
 FULFILLMENT_MODULES = ["deliveries", "shipping"]
+BOOKKEEPER = "Bookkeeper"
+BOOKKEEPER_MODULES = ["dashboard", "invoices", "payments", "customers", "reports",
+                      "expenses", "banking", "accounting"]
 
 
 def _in_group(user, name):
@@ -80,7 +83,7 @@ def home_url_name(user):
         return "dashboard"
     for key in ["deliveries", "orders", "shipping", "inventory",
                 "invoices", "customers", "payments", "receiving", "reports",
-                "expenses", "picking"]:
+                "expenses", "banking", "accounting", "picking"]:
         if key in mods:
             return MODULE_LANDING[key]
     return "dashboard"

@@ -15,4 +15,11 @@ def company(request):
             "u_modules": user_modules(request.user),
             "u_home_url": home_url_name(request.user),
         })
+        if "banking" in ctx["u_modules"]:
+            try:
+                from banking.models import BankTransaction
+                ctx["nav_unreviewed"] = BankTransaction.objects.filter(
+                    is_deleted=False, status=BankTransaction.UNREVIEWED).count()
+            except Exception:   # pragma: no cover - never break page render
+                ctx["nav_unreviewed"] = 0
     return ctx

@@ -289,6 +289,18 @@ class Receipt(SoftDeleteModel):
     notes = models.TextField(blank=True)
     posted = models.BooleanField(default=False)
     posted_at = models.DateTimeField(null=True, blank=True)
+    # Supplier bill tracking (feeds accounts payable on the accrual statements
+    # and cost of goods on the cash statements once paid)
+    supplier_invoice_number = models.CharField(max_length=100, blank=True,
+                                               help_text="Supplier's invoice / bill #")
+    due_date = models.DateField(null=True, blank=True, help_text="When the supplier bill is due")
+    paid_date = models.DateField(null=True, blank=True, db_index=True,
+                                 help_text="Set automatically when matched to a bank transaction")
+    paid_from = models.ForeignKey("banking.BankAccount", null=True, blank=True,
+                                  on_delete=models.SET_NULL, related_name="supplier_bills",
+                                  help_text="Account the supplier was paid from")
+    payment_reference = models.CharField(max_length=100, blank=True,
+                                         help_text="Check # / wire confirmation")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="receipts_created")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -306,6 +318,33 @@ class Receipt(SoftDeleteModel):
     @property
     def landed_total(self):
         return self.merchandise_total + self.freight_cost + self.duties_cost
+
+    # --- supplier bill state -------------------------------------------------
+    @property
+    def amount_paid(self):
+        """Paid via matched bank transactions, else the whole bill if a paid
+        date was entered by hand."""
+        from banking.models import BankTransaction
+        linked = self.supplier_payments.filter(is_deleted=False).exclude(
+            status=BankTransaction.IGNORED)
+        if linked.exists():
+            return sum((abs(t.amount) for t in linked), Decimal("0.00"))
+        if self.paid_date is not None:
+            return self.landed_total
+        return Decimal("0.00")
+
+    @property
+    def balance_due(self):
+        return self.landed_total - self.amount_paid
+
+    @property
+    def is_paid(self):
+        return self.posted and self.balance_due <= 0
+
+    @property
+    def is_overdue(self):
+        return (self.posted and not self.is_paid and self.due_date is not None
+                and self.due_date < timezone.localdate())
 
     def post(self, user=None):
         """

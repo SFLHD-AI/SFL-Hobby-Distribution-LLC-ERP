@@ -17,9 +17,14 @@
 </div>
 {% endif %}
 <div class="px-3 space-y-0.5">
-  <p class="px-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500">Back office</p>
-  {% if 'reports' in u_modules %}<a href="{% url 'report_index' %}" class="nav-link">📈 Reports</a>{% endif %}
+  <p class="px-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500">Money</p>
+  {% if 'banking' in u_modules %}<a href="{% url 'bank_inbox' %}" class="nav-link flex items-center justify-between"><span>🏦 Banking</span>{% if nav_unreviewed %}<span class="badge bg-amber-500 text-white">{{ nav_unreviewed }}</span>{% endif %}</a>{% endif %}
   {% if 'expenses' in u_modules %}<a href="{% url 'expense_list' %}" class="nav-link">🧮 Expenses</a>{% endif %}
+  {% if 'accounting' in u_modules %}<a href="{% url 'accounting_index' %}" class="nav-link">📒 Accounting</a>{% endif %}
+  {% if 'reports' in u_modules %}<a href="{% url 'report_index' %}" class="nav-link">📈 Reports</a>{% endif %}
+</div>
+<div class="px-3 space-y-0.5">
+  <p class="px-2 pb-1 text-[10px] uppercase tracking-widest text-slate-500">Admin</p>
   {% if u_is_admin %}<a href="{% url 'user_list' %}" class="nav-link">👥 Users & roles</a>{% endif %}
   {% if u_is_admin %}<a href="{% url 'settings_edit' %}" class="nav-link">⚙️ Settings</a>{% endif %}
   {% if u_is_admin %}<a href="{% url 'activity_log' %}" class="nav-link">🕘 Activity log</a>{% endif %}

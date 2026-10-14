@@ -20,6 +20,8 @@ urlpatterns = [
     path("shipping/", include("shipping.urls")),
     path("deliveries/", include("shipping.delivery_urls")),
     path("reports/", include("reports.urls")),
+    path("banking/", include("banking.urls")),
+    path("accounting/", include("accounting.urls")),
 ]
 
 if settings.DEBUG:

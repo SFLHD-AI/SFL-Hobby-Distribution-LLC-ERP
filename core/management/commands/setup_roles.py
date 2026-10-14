@@ -2,8 +2,8 @@ from django.contrib.auth.models import Group, User
 from django.core.management.base import BaseCommand
 
 from core.models import MODULE_KEYS, Role, UserProfile
-from core.roles import (ALL_GROUPS, FULFILLMENT, FULFILLMENT_MODULES,
-                        OFFICE_MODULES, WAREHOUSE_MODULES)
+from core.roles import (ALL_GROUPS, BOOKKEEPER, BOOKKEEPER_MODULES, FULFILLMENT,
+                        FULFILLMENT_MODULES, OFFICE_MODULES, WAREHOUSE_MODULES)
 
 SYSTEM_ROLES = [
     # (name, modules, can_see_costs, is_admin_role)
@@ -11,6 +11,7 @@ SYSTEM_ROLES = [
     ("Office", OFFICE_MODULES, False, False),
     ("Warehouse", WAREHOUSE_MODULES, False, False),
     (FULFILLMENT, FULFILLMENT_MODULES, False, False),
+    (BOOKKEEPER, BOOKKEEPER_MODULES, True, False),
 ]
 
 

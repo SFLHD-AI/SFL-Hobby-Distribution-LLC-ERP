@@ -46,6 +46,8 @@ INSTALLED_APPS = [
     "expenses",
     "shipping",
     "reports",
+    "accounting",
+    "banking",
 ]
 
 MIDDLEWARE = [
@@ -180,6 +182,15 @@ SHIPPO_API_TOKEN = env("SHIPPO_API_TOKEN", "")
 SHIPPO_BASE_URL = env("SHIPPO_BASE_URL", "https://api.goshippo.com")
 USHIP_API_KEY = env("USHIP_API_KEY", "")
 USHIP_BASE_URL = env("USHIP_BASE_URL", "https://api.uship.com")
+
+# --- Bank feed (Plaid) — optional; CSV import works without it ------------
+PLAID_CLIENT_ID = env("PLAID_CLIENT_ID", "")
+PLAID_SECRET = env("PLAID_SECRET", "")
+PLAID_ENV = env("PLAID_ENV", "sandbox")          # sandbox | production
+PLAID_PRODUCTS = ["transactions"]
+PLAID_COUNTRY_CODES = ["US"]
+# Public URL of this app, used for the Plaid Link redirect/webhook (optional)
+PUBLIC_BASE_URL = env("PUBLIC_BASE_URL", "")
 
 # Security hardening applied automatically when DEBUG off
 if not DEBUG:

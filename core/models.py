@@ -1,6 +1,8 @@
 """
 Core models: company settings, document numbering, activity log, soft delete.
 """
+from decimal import Decimal
+
 from django.conf import settings
 from django.db import models, transaction
 from django.utils import timezone
@@ -109,6 +111,34 @@ class CompanySettings(models.Model):
     shipstation_api_secret = models.CharField(max_length=200, blank=True)
     uship_api_key = models.CharField(max_length=300, blank=True)
 
+    # Accounting
+    BASIS_CHOICES = [("cash", "Cash basis (what the tax return uses)"),
+                     ("accrual", "Accrual basis (true economic picture)")]
+    fiscal_year_start_month = models.PositiveSmallIntegerField(
+        default=1, help_text="1 = January. Retained earnings roll over at this month.")
+    accounting_basis_default = models.CharField(
+        max_length=10, choices=BASIS_CHOICES, default="cash",
+        help_text="Basis shown first on the dashboard and financial statements")
+    books_start_date = models.DateField(
+        null=True, blank=True,
+        help_text="First day this system is the book of record. Opening balances are dated here.")
+    mileage_rate = models.DecimalField(
+        max_digits=5, decimal_places=3, default=Decimal("0.700"),
+        help_text="IRS standard mileage rate, $/mile (2025: 0.70)")
+    sales_tax_filing_frequency = models.CharField(
+        max_length=10, default="quarterly",
+        choices=[("monthly", "Monthly"), ("quarterly", "Quarterly"), ("annual", "Annual")])
+
+    # Bank feed (Plaid) — values here override the .env file
+    plaid_client_id = models.CharField(max_length=100, blank=True)
+    plaid_secret = models.CharField(max_length=100, blank=True)
+    PLAID_ENVS = [("sandbox", "Sandbox (test data)"), ("production", "Production (real banks)")]
+    plaid_env = models.CharField(max_length=12, choices=PLAID_ENVS, default="sandbox")
+    bank_sync_enabled = models.BooleanField(
+        default=True, help_text="Pull new transactions from connected banks automatically")
+    expense_review_digest = models.BooleanField(
+        default=False, help_text="Weekly email: transactions awaiting review, bills due, missing receipts")
+
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
@@ -153,6 +183,8 @@ MODULES = [
     ("deliveries", "Local deliveries", "delivery_list"),
     ("reports", "Reports", "report_index"),
     ("expenses", "Expenses", "expense_list"),
+    ("banking", "Banking & transactions", "bank_inbox"),
+    ("accounting", "Accounting & financial statements", "accounting_index"),
 ]
 MODULE_KEYS = [m[0] for m in MODULES]
 MODULE_LANDING = {m[0]: m[2] for m in MODULES}
