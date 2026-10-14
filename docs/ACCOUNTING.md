@@ -212,7 +212,7 @@ equity trend export to **CSV only** (the trend has a chart on screen).
 | **Trial balance** | Every account's debit or credit balance as of a date | Raw cumulative balances | CSV, PDF |
 | **General ledger** | Every entry touching one account in a period, running balance, link to the source document | Entries filtered by account | CSV |
 | **Journal** | Every line in a period (audit / export for your accountant) | All entries, flat | CSV |
-| **Month close** | One month's closing checklist: live counts for the automatic steps (transactions to review, expenses to confirm, bills without a due date, missing receipts), tick boxes for the manual ones, *Close the month* | `/accounting/month-close/?month=YYYY-MM`; `accounting.closing.dashboard_tile()` feeds the dashboard ("September: 4 of 6 done") | — |
+| **Month close** | One month's closing checklist: live counts for the automatic steps (transactions to review, expenses to confirm, bills without a due date, missing receipts), tick boxes for the manual ones, *Close the month* | `/accounting/month-close/?month=YYYY-MM`; `accounting.closing.dashboard_tile()` feeds the dashboard ("September 2026: 4 of 6 done") | — |
 | **Year-end package** | One ZIP for the fiscal year (or any month): P&L, balance sheet and cash-vs-accrual as CSV **and PDF**, trial balance on both bases, general ledger on both bases, general journal on both bases, README | Runs the above for the period | ZIP |
 | **Dashboard → Money** | Cash position, net profit MTD/YTD on both bases, equity and its change vs. last month-end, "needs attention", last month's close progress | One journal build per basis (`dashboard_snapshot`) | — |
 

@@ -38,7 +38,7 @@ The top of the dashboard is the **Money** section:
   bill date), expenses this month without a receipt (a receipt attached to
   the bank transaction counts), auto-created expenses to confirm, bank
   connections that need a re-login, and last month's **Month close**
-  progress ("September: 4 of 6 done"). Each line links to the page that
+  progress ("September 2026: 4 of 6 done"). Each line links to the page that
   clears it. The goal is to keep this card green.
 
 Below it are the operational widgets (today's and month-to-date revenue,
@@ -261,7 +261,8 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   existing product use an adjustment with the optional **unit cost** field
   (adding at a cost rolls the weighted average, removals never change it); or
   bulk-load via CSV import columns `opening_qty` and `opening_unit_cost`.
-  Opening stock lands in *Opening balance equity* on the accrual books.
+  Opening stock lands in *Starting balances (opening balance equity)* on
+  the accrual books.
 - **Receiving**: enter a supplier order (SKUs, qty, unit cost, freight/duties,
   supplier invoice # and due date). *Mark received* puts stock in, rolls the
   **weighted average landed cost**, and opens the supplier bill.
@@ -357,8 +358,11 @@ page; hand over both.
   percentage applied), every expense that touches the year with its cash and
   accrual columns, the 1099 vendor list at that year's threshold, the mileage
   deduction, the missing-receipts list, the bills still open on Dec 31, a
-  README, and a **`receipts/`** folder holding every receipt file attached to
-  an expense (or to the bank transaction it came from) dated in the year.
+  README, and a **`receipts/`** folder holding the receipt file of every
+  expense that touches the year — attached to the expense itself or to the
+  bank/card transaction it came from — named `date_vendor_amount` (capped at
+  200 MB so the ZIP stays practical to email; anything left out is listed in
+  the README).
 - **Reports → QuickBooks export** if your preparer wants invoices, payments
   and expenses as plain CSVs: pick From/To dates and the file.
 - Close the books through December 31 (Accounting → **Close the books**)
