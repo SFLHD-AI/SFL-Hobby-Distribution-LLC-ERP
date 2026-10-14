@@ -10,6 +10,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.core.paginator import Paginator
+from django.db import transaction
 from django.db.models import Count, Q, Sum
 from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -17,7 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from accounting.models import ACCRUAL, CASH
-from banking.models import BankAccount
+from banking.models import BankAccount, BankTransaction, BankTransactionSplit, CategoryRule
 from core.csvutils import csv_response
 from core.models import CompanySettings, log_activity
 from core.pdf import pdf_response
@@ -47,10 +48,13 @@ def _int(value, default=None):
         return default
 
 
+def _clamp_year(value, default):
+    """Years outside 2000–2100 are typos (and Postgres rejects 99999)."""
+    return min(max(_int(value, default), 2000), 2100)
+
+
 def _year(request, param="year"):
-    today = timezone.localdate()
-    year = _int(request.GET.get(param), today.year)
-    return min(max(year, 2000), 2100)
+    return _clamp_year(request.GET.get(param), timezone.localdate().year)
 
 
 def _date(value, default=None):
@@ -91,11 +95,15 @@ def _vendor_names():
     return list(Vendor.objects.filter(active=True).values_list("name", flat=True))
 
 
-def _years(today=None):
+def _years(today=None, include_next=False):
+    """Years to offer in pickers, newest first, ending at this year. Only the
+    budget planner asks for next year (``include_next``) — there is no
+    year-end package or report for a year that hasn't started."""
     today = today or timezone.localdate()
     first = Expense.objects.order_by("date").values_list("date", flat=True).first()
     start = min(first.year if first else today.year, today.year - 1)
-    return list(range(today.year + 1, start - 1, -1))
+    last = today.year + 1 if include_next else today.year
+    return list(range(last, start - 1, -1))
 
 
 def _bank_accounts():
@@ -128,7 +136,9 @@ def _list_filters(request, today):
         "preset": preset, "start": start, "end": end,
         "category": g.get("category", ""), "vendor": (g.get("vendor") or "").strip(),
         "status": g.get("status", ""), "source": g.get("source", ""),
-        "receipt": g.get("receipt", ""), "review": g.get("review", ""),
+        "receipt": g.get("receipt", ""),
+        # the dashboard links with ?review=1, the register's own checkbox sends yes
+        "review": "yes" if g.get("review", "") in ("yes", "1", "true", "on") else "",
         "sort": g.get("sort", ""),
     }
 
@@ -523,6 +533,61 @@ def expense_vendor_detail(request, pk):
 # ---------------------------------------------------------------------------
 # 5. Categories
 # ---------------------------------------------------------------------------
+def _merge_categories(source, target, user):
+    """Move everything that points at ``source`` (expenses, budgets, recurring
+    templates, vendor defaults, bank rules/transactions/splits) to ``target``,
+    then retire ``source`` and its ledger account. Returns a short summary."""
+    target_account = target.ensure_account()
+    source_account = source.account
+    counts = {}
+    with transaction.atomic():
+        counts["expenses"] = Expense.all_objects.filter(category=source).update(category=target)
+        # budgets: same period on the target -> add up, otherwise just re-point
+        existing = {(b.year, b.month): b for b in Budget.objects.filter(category=target)}
+        n_budgets = 0
+        for b in list(Budget.objects.filter(category=source)):
+            hit = existing.get((b.year, b.month))
+            if hit is None:
+                b.category = target
+                b.save(update_fields=["category"])
+                existing[(b.year, b.month)] = b
+            else:
+                hit.amount = hit.amount + b.amount
+                hit.save(update_fields=["amount"])
+                b.delete()
+            n_budgets += 1
+        counts["budgets"] = n_budgets
+        counts["recurring"] = RecurringExpense.all_objects.filter(category=source).update(category=target)
+        counts["vendors"] = Vendor.all_objects.filter(default_category=source).update(default_category=target)
+        if source_account is not None:
+            counts["rules"] = CategoryRule.all_objects.filter(
+                category_account=source_account).update(category_account=target_account)
+            counts["bank"] = BankTransaction.all_objects.filter(
+                category_account=source_account).update(category_account=target_account)
+            BankTransaction.all_objects.filter(
+                suggested_account=source_account).update(suggested_account=target_account)
+            counts["splits"] = BankTransactionSplit.objects.filter(
+                account=source_account).update(account=target_account)
+        source.delete(user=user)
+        if source_account is not None:
+            source_account.active = False
+            source_account.save(update_fields=["active"])
+    parts = [f"{counts['expenses']} expense{'s' if counts['expenses'] != 1 else ''}"]
+    if counts["budgets"]:
+        parts.append(f"{counts['budgets']} budget row{'s' if counts['budgets'] != 1 else ''}")
+    if counts["recurring"]:
+        parts.append(f"{counts['recurring']} recurring template{'s' if counts['recurring'] != 1 else ''}")
+    if counts["vendors"]:
+        parts.append(f"{counts['vendors']} vendor default{'s' if counts['vendors'] != 1 else ''}")
+    if counts.get("rules"):
+        parts.append(f"{counts['rules']} bank rule{'s' if counts['rules'] != 1 else ''}")
+    if counts.get("bank"):
+        parts.append(f"{counts['bank']} bank transaction{'s' if counts['bank'] != 1 else ''}")
+    if counts.get("splits"):
+        parts.append(f"{counts['splits']} split line{'s' if counts['splits'] != 1 else ''}")
+    return ", ".join(parts) + " moved"
+
+
 @module_required("expenses")
 def expense_categories(request):
     today = timezone.localdate()
@@ -548,6 +613,20 @@ def expense_categories(request):
                 for field, errs in form.errors.items():
                     for err in errs:
                         messages.error(request, f"{cat.name}: {field} — {err}")
+            return redirect("expense_categories")
+        elif action == "merge":
+            source = get_object_or_404(ExpenseCategory, pk=_int(request.POST.get("id"), 0))
+            target = ExpenseCategory.objects.filter(pk=_int(request.POST.get("target"), 0)).first()
+            if target is None:
+                messages.error(request, "Pick the category to merge into.")
+            elif target.pk == source.pk:
+                messages.error(request, "Pick a different category to merge into.")
+            else:
+                moved = _merge_categories(source, target, request.user)
+                log_activity(request.user, "category_merge", target,
+                             note=f"{source.name} -> {target.name}: {moved}")
+                messages.success(request, f"{source.name} merged into {target.name}: {moved}. "
+                                          f"The {source.name} category and its ledger account are retired.")
             return redirect("expense_categories")
         elif action == "delete":
             cat = get_object_or_404(ExpenseCategory, pk=_int(request.POST.get("id"), 0))
@@ -580,7 +659,8 @@ def expense_categories(request):
     for c in cats:
         rows.append({"cat": c, "form": ExpenseCategoryForm(instance=c, prefix=f"c{c.pk}"),
                      "ytd": ytd.get(c.pk, {}).get("t") or ZERO, "count": counts.get(c.pk, 0),
-                     "in_use": counts.get(c.pk, 0) > 0 or c.pk in recurring_use})
+                     "in_use": counts.get(c.pk, 0) > 0 or c.pk in recurring_use,
+                     "merge_targets": [t for t in cats if t.pk != c.pk]})
     return render(request, "expenses/categories.html", {
         "rows": rows, "add_form": add_form, "year": today.year,
         "ytd_total": sum((r["ytd"] for r in rows), ZERO),
@@ -614,14 +694,14 @@ def expense_recurring(request):
         return redirect("expense_recurring")
     templates = list(RecurringExpense.objects.select_related("vendor_link", "category", "paid_from")
                      .annotate(generated_count=Count("generated", filter=Q(generated__is_deleted=False))))
-    due_now = sum(1 for t in templates if t.active and t.next_date <= today)
+    due_now = sum(1 for t in templates if t.is_due)       # excludes paused + finished
+    active = [t for t in templates if t.active and not t.is_finished]
     monthly = ZERO
     per_year = {"weekly": 52, "biweekly": 26, "monthly": 12, "quarterly": 4, "yearly": 1}
-    for t in templates:
-        if t.active:
-            monthly += (t.amount * per_year[t.frequency] / 12)
+    for t in active:
+        monthly += (t.amount * per_year[t.frequency] / 12)
     return render(request, "expenses/recurring_list.html", {
-        "templates": templates, "due_now": due_now, "today": today,
+        "templates": templates, "due_now": due_now, "today": today, "active_count": len(active),
         "monthly_estimate": monthly.quantize(Decimal("0.01")),
     })
 
@@ -663,7 +743,7 @@ def expense_recurring_edit(request, pk):
 def expense_budgets(request):
     year = _year(request)
     if request.method == "POST":
-        year = _int(request.POST.get("year"), year)
+        year = _clamp_year(request.POST.get("year"), year)
         action = request.POST.get("action", "save")
         if action == "fill_defaults":
             created = 0
@@ -688,8 +768,19 @@ def expense_budgets(request):
             messages.success(request, f"Budgets for {year} saved ({saved} changed, {cleared} cleared).")
         return redirect(f"{reverse('expense_budgets')}?year={year}")
     grid = reports.budget_grid(year)
+    if request.GET.get("export") == "csv":
+        header = (["Category"] + [f"{m} budget $" for m in grid["months"]]
+                  + ["Annual budget $", "Annual actual $", "Variance $"])
+        rows = [[r["category"].name]
+                + [_money_str(c["budget"]) if c["budget"] is not None else "" for c in r["cells"]]
+                + [_money_str(r["budget_total"]), _money_str(r["actual_total"]), _money_str(r["variance"])]
+                for r in grid["rows"]]
+        rows.append(["TOTAL"] + [_money_str(x) for x in grid["month_budget_totals"]]
+                    + [_money_str(grid["budget_total"]), _money_str(grid["actual_total"]),
+                       _money_str(grid["variance_total"])])
+        return csv_response(f"budgets_{year}.csv", header, rows)
     return render(request, "expenses/budgets.html", {
-        "grid": grid, "year": year, "years": _years(),
+        "grid": grid, "year": year, "years": _years(include_next=True),
         "has_defaults": ExpenseCategory.objects.exclude(monthly_budget__isnull=True).exists(),
     })
 
@@ -752,7 +843,10 @@ def _fmt(cell, export):
 
 
 def _report_out(request, *, title, columns, rows, totals=None, links=None, period="",
-                filename=None, extra=None):
+                filename=None, extra=None, actions=None):
+    """Render a report as HTML / CSV / PDF. ``actions`` (optional) is a list
+    parallel to ``rows`` of small dicts the HTML template turns into an
+    extra right-hand column (inline mark-paid form, link, ...)."""
     export = request.GET.get("export")
     if export == "csv":
         slug = (filename or title).lower().replace(" ", "_").replace("/", "-")
@@ -767,9 +861,12 @@ def _report_out(request, *, title, columns, rows, totals=None, links=None, perio
             "company": CompanySettings.get(), "generated": timezone.localtime(), "period": period,
         }, f"{title}.pdf")
     links = links or [None] * len(rows)
-    table = [{"cells": [_fmt(c, "html") for c in r], "link": link} for r, link in zip(rows, links)]
+    actions = actions or [None] * len(rows)
+    table = [{"cells": [_fmt(c, "html") for c in r], "link": link, "action": act}
+             for r, link, act in zip(rows, links, actions)]
     ctx = {"title": title, "columns": columns, "table": table, "row_count": len(rows),
-           "totals": [_fmt(c, "html") for c in totals] if totals else None, "period": period}
+           "totals": [_fmt(c, "html") for c in totals] if totals else None, "period": period,
+           "has_actions": any(a is not None for a in actions)}
     base_qs = request.GET.copy()
     base_qs.pop("export", None)
     ctx["export_qs"] = base_qs.urlencode()
@@ -844,27 +941,52 @@ def expense_report_missing_receipts(request):
 
 @module_required("expenses")
 def expense_report_unpaid_bills(request):
-    as_of = _date(request.GET.get("as_of"), timezone.localdate())
+    today = timezone.localdate()
+    if request.method == "POST":
+        # inline "Mark paid" on an expense row; supplier bills are paid from Receiving
+        if request.POST.get("action") == "mark_paid":
+            exp = get_object_or_404(Expense, pk=_int(request.POST.get("id"), 0))
+            form = MarkPaidForm(request.POST)
+            if exp.bank_transaction is not None:
+                messages.info(request, "Already paid — this expense is linked to a bank transaction.")
+            elif form.is_valid():
+                exp.mark_paid(form.cleaned_data["paid_date"], form.cleaned_data.get("paid_from"),
+                              form.cleaned_data.get("payment_method") or "")
+                log_activity(request.user, "expense_paid", exp)
+                messages.success(request, f"Marked paid: {exp.vendor or 'expense'} ${exp.amount:,.2f} "
+                                          f"on {exp.paid_date:%b %-d, %Y}.")
+            else:
+                messages.error(request, "Enter a valid paid date.")
+        else:
+            messages.error(request, "Unknown action.")
+        return redirect(request.get_full_path())
+    as_of = _date(request.GET.get("as_of"), today)
     data = reports.unpaid_bills(as_of)
-    rows, links = [], []
+    rows, links, actions = [], [], []
     for r in data["rows"]:
         rows.append(["Expense" if r["kind"] == "expense" else "Supplier bill", r["label"], r["who"],
                      r["what"], r["date"], r["due"] if r["due"] else "(none)",
                      max(r["days"], 0) if r["days"] > 0 else "", r["bucket_label"], r["amount"]])
-        links.append(reverse("expense_edit", args=[r["pk"]]) if r["kind"] == "expense"
-                     else reverse("receipt_detail", args=[r["pk"]]))
+        if r["kind"] == "expense":
+            links.append(reverse("expense_edit", args=[r["pk"]]))
+            actions.append({"kind": "expense", "pk": r["pk"]})
+        else:
+            links.append(reverse("receipt_detail", args=[r["pk"]]))
+            actions.append({"kind": "bill", "url": reverse("receipt_detail", args=[r["pk"]])})
     totals = ["TOTAL", f"{len(rows)} open", "", "", "", "", "", "", data["total"]]
     tiles = [{"label": b["label"], "value": b["total"], "count": b["count"],
               "tone": {"current": "slate", "1_30": "amber", "31_60": "orange", "60_plus": "red"}[b["key"]]}
              for b in data["buckets"]]
-    return _report_out(request, title="Unpaid bills (AP aging)", filename=f"unpaid_bills_{as_of}",
+    return _report_out(request, title="Unpaid bills", filename=f"unpaid_bills_{as_of}",
                        columns=["Type", "Ref", "Vendor / supplier", "What", "Bill date", "Due",
-                                "Days late", "Bucket", "Amount due $"],
-                       rows=rows, totals=totals, links=links, period=f"as of {as_of:%b %-d, %Y}",
-                       extra={"show_as_of": True, "as_of": as_of, "tiles": tiles,
-                              "intro": "Everything the business owes: open expenses plus posted supplier "
-                                       "receipts not yet paid. Bills without a due date are aged from "
-                                       "their bill date. This is your accounts payable.",
+                                "Days late", "How late", "Amount due $"],
+                       rows=rows, totals=totals, links=links, actions=actions,
+                       period=f"as of {as_of:%b %-d, %Y}",
+                       extra={"show_as_of": True, "as_of": as_of, "tiles": tiles, "today": today,
+                              "bank_accounts": _bank_accounts(),
+                              "intro": "Bills you still owe — expenses you entered as unpaid and supplier "
+                                       "receipts not yet paid. Bills without a due date are counted from "
+                                       "their bill date.",
                               "summary_pairs": [("Open expenses", data["expense_total"]),
                                                 ("Supplier bills", data["bill_total"]),
                                                 ("Total owed", data["total"])]})
@@ -873,9 +995,10 @@ def expense_report_unpaid_bills(request):
 @module_required("expenses")
 def expense_report_1099(request):
     year = _year(request)
-    threshold = _decimal(request.GET.get("threshold"), Decimal("600"))
+    default_threshold = reports.default_threshold(year)
+    threshold = _decimal(request.GET.get("threshold"), default_threshold)
     if threshold is None or threshold < 0:
-        threshold = Decimal("600")
+        threshold = default_threshold
     data = reports.vendors_1099(year, threshold)
     rows, links = [], []
     for r in data["all"]:
@@ -895,10 +1018,15 @@ def expense_report_1099(request):
                        rows=rows, totals=totals, links=links, period=f"Jan 1 – Dec 31, {year}",
                        extra={"show_year": True, "year": year, "years": _years(),
                               "show_threshold": True, "threshold": threshold,
+                              "threshold_help": f"Federal threshold for {year}: ${default_threshold:,.0f} "
+                                                "— confirm with your preparer.",
                               "intro": f"Contractors flagged as 1099 vendors who were paid at least "
                                        f"${threshold:,.2f} in {year} need a 1099-NEC by Jan 31. Totals "
-                                       "use the date money actually left (cash basis). All vendors are "
-                                       "listed below for reference — flag any contractor you missed.",
+                                       "use the date money actually left (cash basis). The federal "
+                                       f"threshold for {year} is ${default_threshold:,.0f} (it was $600 "
+                                       "through 2025 and is $2,000 from 2026) — confirm with your preparer. "
+                                       "All vendors are listed below for reference — flag any contractor "
+                                       "you missed.",
                               "pre_table": {"title": f"Need a 1099-NEC for {year}",
                                             "columns": ["Vendor", "Tax ID last 4", "Email", "Paid $"],
                                             "rows": qualifying_table,
@@ -913,21 +1041,30 @@ def expense_report_1099(request):
 def expense_year_end(request):
     today = timezone.localdate()
     if request.GET.get("year"):
-        year = _year(request)
-        data = reports.year_end_package(year)
+        year = min(_year(request), today.year)         # no package for a year that hasn't started
+        data = reports.year_end_package(year, today=today)
         log_activity(request.user, "year_end_package", None, model="Expense", note=str(year))
         resp = HttpResponse(data, content_type="application/zip")
         resp["Content-Disposition"] = f'attachment; filename="expenses_year_end_{year}.zip"'
         return resp
+    years = _years(today)                      # never offers next year
     default_year = today.year - 1 if today.month <= 4 else today.year
-    year_start = date(default_year, 1, 1)
-    year_end = date(default_year, 12, 31)
-    mr = reports.missing_receipts(year_start, year_end)
-    ub = reports.unpaid_bills(year_end)
-    unreviewed = Expense.objects.filter(is_reviewed=False, date__year=default_year).count()
-    uncategorized = Expense.objects.filter(category__isnull=True, date__year=default_year).count()
+    # ?for=YYYY switches the checklist to another year without downloading
+    check_year = _clamp_year(request.GET.get("for"), default_year)
+    if check_year not in years:
+        check_year = default_year
+    year_start = date(check_year, 1, 1)
+    year_end = date(check_year, 12, 31)
+    in_progress = year_end > today
+    bills_as_of = today if in_progress else year_end
+    mr = reports.missing_receipts(year_start, min(year_end, today))
+    ub = reports.unpaid_bills(bills_as_of)
+    unreviewed = Expense.objects.filter(is_reviewed=False, date__year=check_year).count()
+    uncategorized = Expense.objects.filter(category__isnull=True, date__year=check_year).count()
     return render(request, "expenses/year_end.html", {
-        "default_year": default_year, "years": _years(), "files": reports.YEAR_END_FILES,
+        "default_year": default_year, "check_year": check_year, "years": years,
+        "files": reports.YEAR_END_FILES, "folders": reports.YEAR_END_FOLDERS,
+        "in_progress": in_progress, "bills_as_of": bills_as_of, "today": today,
         "checks": {"missing_receipts": mr["count"], "missing_total": mr["total"],
                    "unpaid": len(ub["rows"]), "unpaid_total": ub["total"],
                    "unreviewed": unreviewed, "uncategorized": uncategorized},

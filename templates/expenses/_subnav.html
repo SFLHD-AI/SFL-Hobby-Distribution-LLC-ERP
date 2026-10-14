@@ -12,7 +12,7 @@
   <span class="px-2 py-1 uppercase tracking-widest text-[10px] text-slate-500">Reports</span>
   <a href="{% url 'expense_report_by_month' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_report_by_month' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">By month</a>
   <a href="{% url 'expense_report_missing_receipts' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_report_missing_receipts' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">Missing receipts</a>
-  <a href="{% url 'expense_report_unpaid_bills' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_report_unpaid_bills' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">Unpaid bills (AP aging)</a>
+  <a href="{% url 'expense_report_unpaid_bills' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_report_unpaid_bills' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">Unpaid bills</a>
   <a href="{% url 'expense_report_1099' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_report_1099' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">1099 vendors</a>
   <a href="{% url 'expense_year_end' %}" class="px-2.5 py-1 rounded-md {% if url_name == 'expense_year_end' %}bg-indigo-600 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">Year-end package</a>
 </nav>

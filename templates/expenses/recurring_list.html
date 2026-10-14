@@ -12,7 +12,7 @@
   Auto-pay items are created as paid; the rest show up as open bills. Generated rows are flagged "Needs review" until you glance at them.</p>
 
 <div class="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
-  <div class="stat"><div class="lbl">Active templates</div><div class="val">{{ templates|length }}</div></div>
+  <div class="stat"><div class="lbl">Active templates</div><div class="val">{{ active_count }}</div></div>
   <div class="stat"><div class="lbl">Due now</div><div class="val {% if due_now %}text-amber-600{% endif %}">{{ due_now }}</div></div>
   <div class="stat col-span-2 lg:col-span-1"><div class="lbl">Fixed costs per month (approx.)</div><div class="val">${{ monthly_estimate|floatformat:2|intcomma }}</div></div>
 </div>
@@ -22,15 +22,16 @@
     <thead><tr><th>Template</th><th>Category</th><th class="num">Amount</th><th>Every</th><th>Next</th><th>Payment</th><th class="num">Created</th><th></th></tr></thead>
     <tbody>
     {% for t in templates %}
-      <tr class="{% if not t.active %}opacity-60{% endif %}">
+      <tr class="{% if not t.active or t.is_finished %}opacity-60{% endif %}">
         <td><a href="{% url 'expense_recurring_edit' t.pk %}" class="font-medium text-slate-900 hover:underline">{{ t.name }}</a>
           {% if t.vendor_link %}<div class="text-xs text-slate-500">{{ t.vendor_link.name }}</div>{% endif %}
-          {% if not t.active %}<span class="badge bg-slate-200 text-slate-600">Paused</span>{% endif %}</td>
+          {% if t.is_finished %}<span class="badge bg-slate-200 text-slate-600" title="Past its stop date — nothing more will be created">Finished</span>
+          {% elif not t.active %}<span class="badge bg-slate-200 text-slate-600">Paused</span>{% endif %}</td>
         <td>{{ t.category|default:"—" }}</td>
         <td class="num">${{ t.amount|floatformat:2|intcomma }}</td>
         <td>{{ t.get_frequency_display }}</td>
         <td class="whitespace-nowrap">{{ t.next_date|date:"M j, Y" }}
-          {% if t.active and t.next_date <= today %}<span class="badge bg-amber-100 text-amber-700 ml-1">due</span>{% endif %}
+          {% if t.is_due %}<span class="badge bg-amber-100 text-amber-700 ml-1">due</span>{% endif %}
           {% if t.end_date %}<div class="text-xs text-slate-400">until {{ t.end_date|date:"M j, Y" }}</div>{% endif %}</td>
         <td class="text-xs">{% if t.auto_mark_paid %}<span class="badge bg-emerald-100 text-emerald-700">Auto-pay</span> {{ t.paid_from.name|default:"" }}{% else %}<span class="badge bg-amber-50 text-amber-700">Open bill</span>{% endif %}</td>
         <td class="num text-slate-500">{{ t.generated_count }}{% if t.last_generated %}<div class="text-[11px] text-slate-400">last {{ t.last_generated|date:"M j" }}</div>{% endif %}</td>

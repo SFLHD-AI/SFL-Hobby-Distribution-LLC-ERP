@@ -23,7 +23,7 @@
     <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.vendor.id_for_label }}">Vendor</label>{{ quick_form.vendor }}</div>
     <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.amount.id_for_label }}">Amount $ *</label>{{ quick_form.amount }}</div>
     <label class="flex items-center gap-2 text-sm pb-2">{{ quick_form.paid }} Paid</label>
-    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.paid_from.id_for_label }}">Paid from</label>{{ quick_form.paid_from }}</div>
+    <div title="{{ quick_form.paid_from.help_text }}"><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.paid_from.id_for_label }}">Paid from</label>{{ quick_form.paid_from }}</div>
     <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.note.id_for_label }}">Note</label>{{ quick_form.note }}</div>
     <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.receipt_file.id_for_label }}">Receipt</label>{{ quick_form.receipt_file }}</div>
     <button class="btn-primary">Add expense</button>

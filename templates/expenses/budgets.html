@@ -18,8 +18,9 @@
 {% include "expenses/_subnav.html" %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
   <h1 class="page-title">Budgets {{ year }}</h1>
-  <div class="flex flex-wrap gap-1 text-sm">
+  <div class="flex flex-wrap items-center gap-1 text-sm">
     {% for y in years %}<a href="?year={{ y }}" class="px-3 py-1.5 rounded-lg {% if y == year %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">{{ y }}</a>{% endfor %}
+    <a href="?year={{ year }}&export=csv" class="btn-secondary ml-2">⬇ CSV</a>
   </div>
 </div>
 <p class="text-sm text-slate-500 mb-4">Type a planned amount per month and press Save all. The small number under each box is what you actually spent (by bill date);

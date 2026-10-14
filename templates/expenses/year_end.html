@@ -4,7 +4,8 @@
 {% include "expenses/_subnav.html" %}
 <h1 class="page-title mb-2">Year-end expense package</h1>
 <p class="text-sm text-slate-500 mb-5 max-w-3xl">One ZIP with everything your tax preparer asks for about expenses: totals by category with the Schedule C line, every expense,
-  1099 vendors, mileage, missing receipts, and the bills still open on Dec 31. Nothing is changed by downloading it — build it as often as you like.</p>
+  1099 vendors, mileage, missing receipts, the bills still open at year end, and a <code class="bg-slate-100 px-1 rounded">receipts/</code> folder with every receipt photo and PDF
+  (named date_vendor_amount, up to 200 MB). Nothing is changed by downloading it — build it as often as you like.</p>
 
 <div class="grid lg:grid-cols-2 gap-4 mb-6">
   <div class="card-pad">
@@ -14,17 +15,21 @@
       <a href="{% url 'expense_year_end' %}?year={{ y }}" class="{% if y == default_year %}btn-primary{% else %}btn-secondary{% endif %}">⬇ {{ y }} package (.zip)</a>
       {% endfor %}
     </div>
-    <p class="text-xs text-slate-400 mt-3">Files inside: {% for f in files %}<code class="bg-slate-100 px-1 rounded">{{ f }}</code>{% if not forloop.last %} · {% endif %}{% endfor %}</p>
+    <p class="text-xs text-slate-400 mt-3">Files inside: {% for f in files %}<code class="bg-slate-100 px-1 rounded">{{ f }}</code> · {% endfor %}{% for f in folders %}<code class="bg-slate-100 px-1 rounded">{{ f }}</code>{% if not forloop.last %} · {% endif %}{% endfor %}</p>
+    <p class="text-xs text-slate-400 mt-1">Receipts that are missing from the server or don't fit under the 200 MB cap are listed in README.txt so nothing is silently dropped.</p>
   </div>
 
   <div class="card-pad">
-    <h2 class="font-semibold mb-1">Before you send {{ default_year }}</h2>
-    <p class="text-xs text-slate-500 mb-3">Clean these up first and the package is final — no backtracking in April.</p>
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+      <h2 class="font-semibold">Before you send {{ check_year }}</h2>
+      {% if years|length > 1 %}<div class="flex gap-1 text-xs">{% for y in years %}<a href="?for={{ y }}" class="px-2 py-1 rounded {% if y == check_year %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-600 hover:bg-slate-50{% endif %}">{{ y }}</a>{% endfor %}</div>{% endif %}
+    </div>
+    <p class="text-xs text-slate-500 mb-3">{% if in_progress %}{{ check_year }} is still in progress — these numbers are as of today.{% else %}Clean these up first and the package is final — no backtracking in April.{% endif %}</p>
     <ul class="space-y-2 text-sm">
       <li class="flex items-center justify-between gap-3">
         <span>{% if checks.missing_receipts %}<span class="text-amber-600 font-semibold">{{ checks.missing_receipts }}</span>{% else %}<span class="text-emerald-600">✓ 0</span>{% endif %} expenses without a receipt
           {% if checks.missing_receipts %}<span class="text-slate-400">(${{ checks.missing_total|floatformat:2|intcomma }})</span>{% endif %}</span>
-        <a href="{% url 'expense_report_missing_receipts' %}?start={{ year_start|date:'Y-m-d' }}&end={{ year_end|date:'Y-m-d' }}" class="text-indigo-600 hover:underline whitespace-nowrap">Fix →</a></li>
+        <a href="{% url 'expense_report_missing_receipts' %}?start={{ year_start|date:'Y-m-d' }}&end={{ bills_as_of|date:'Y-m-d' }}" class="text-indigo-600 hover:underline whitespace-nowrap">Fix →</a></li>
       <li class="flex items-center justify-between gap-3">
         <span>{% if checks.uncategorized %}<span class="text-amber-600 font-semibold">{{ checks.uncategorized }}</span>{% else %}<span class="text-emerald-600">✓ 0</span>{% endif %} uncategorized expenses</span>
         <a href="{% url 'expense_list' %}?preset=custom&start={{ year_start|date:'Y-m-d' }}&end={{ year_end|date:'Y-m-d' }}&category=none" class="text-indigo-600 hover:underline whitespace-nowrap">Fix →</a></li>
@@ -32,11 +37,11 @@
         <span>{% if checks.unreviewed %}<span class="text-amber-600 font-semibold">{{ checks.unreviewed }}</span>{% else %}<span class="text-emerald-600">✓ 0</span>{% endif %} auto-created expenses not reviewed</span>
         <a href="{% url 'expense_list' %}?preset=custom&start={{ year_start|date:'Y-m-d' }}&end={{ year_end|date:'Y-m-d' }}&review=yes" class="text-indigo-600 hover:underline whitespace-nowrap">Review →</a></li>
       <li class="flex items-center justify-between gap-3">
-        <span>{{ checks.unpaid }} bill{{ checks.unpaid|pluralize }} still open on Dec 31, {{ default_year }} <span class="text-slate-400">(${{ checks.unpaid_total|floatformat:2|intcomma }})</span></span>
-        <a href="{% url 'expense_report_unpaid_bills' %}?as_of={{ year_end|date:'Y-m-d' }}" class="text-indigo-600 hover:underline whitespace-nowrap">See →</a></li>
+        <span>{{ checks.unpaid }} bill{{ checks.unpaid|pluralize }} {% if in_progress %}open today{% else %}still open on Dec 31, {{ check_year }}{% endif %} <span class="text-slate-400">(${{ checks.unpaid_total|floatformat:2|intcomma }})</span></span>
+        <a href="{% url 'expense_report_unpaid_bills' %}?as_of={{ bills_as_of|date:'Y-m-d' }}" class="text-indigo-600 hover:underline whitespace-nowrap">See →</a></li>
       <li class="flex items-center justify-between gap-3">
         <span>1099 vendors — check tax IDs are on file</span>
-        <a href="{% url 'expense_report_1099' %}?year={{ default_year }}" class="text-indigo-600 hover:underline whitespace-nowrap">Check →</a></li>
+        <a href="{% url 'expense_report_1099' %}?year={{ check_year }}" class="text-indigo-600 hover:underline whitespace-nowrap">Check →</a></li>
     </ul>
   </div>
 </div>
@@ -44,7 +49,7 @@
 <div class="card-pad text-sm text-slate-600 max-w-3xl space-y-2">
   <h2 class="font-semibold text-slate-800">Cash vs accrual, in plain words</h2>
   <p><strong>Cash basis</strong> (what your tax return uses): an expense counts in the year the money left — the paid date, or the date of the bank/card transaction it came from.</p>
-  <p><strong>Accrual basis</strong> (what the business really cost): an expense counts in the year of its bill date, paid or not. Bills open on Dec 31 are the difference between the two.</p>
+  <p><strong>Accrual basis</strong> (what the business really cost): an expense counts in the year of its bill date, paid or not. Bills still open at year end are the difference between the two.</p>
   <p>The package has both columns side by side, and the README inside explains each file.</p>
 </div>
 {% endblock %}

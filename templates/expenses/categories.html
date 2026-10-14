@@ -4,7 +4,8 @@
 {% include "expenses/_subnav.html" %}
 <h1 class="page-title mb-2">Expense categories</h1>
 <p class="text-sm text-slate-500 mb-4">Each category is one line on your profit &amp; loss and one ledger account. Renaming a category renames its account.
-  The Schedule C line and deductible % only matter for the year-end package.</p>
+  The Schedule C line and deductible % only matter for the year-end package. Two categories that mean the same thing? Use <em>Merge into…</em> to fold one into the other —
+  every expense, budget, recurring template, vendor default and bank rule moves over, and the old category is retired.</p>
 
 <form method="post" class="card-pad mb-4">
   {% csrf_token %}<input type="hidden" name="action" value="add">
@@ -37,10 +38,24 @@
       <a href="{% url 'expense_list' %}?preset=this_year&category={{ r.cat.pk }}" class="hover:underline">${{ r.ytd|floatformat:2|intcomma }}</a>
       <div class="text-[11px] text-slate-400">{{ r.count }} all time</div></div>
     <div class="text-xs text-slate-500"><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Ledger</span>{% if r.cat.account %}{{ r.cat.account.code }}{% else %}—{% endif %}</div>
-    <div class="col-span-2 lg:col-span-2 flex justify-end gap-2">
-      <button class="btn-secondary !py-1 !px-3">Save</button>
-      <button type="submit" form="del-{{ r.cat.pk }}" class="btn-danger !py-1 !px-3 disabled:opacity-40 disabled:cursor-not-allowed"
-              {% if r.in_use %}disabled title="In use by {{ r.count }} expense{{ r.count|pluralize }} or a recurring template — move them first"{% endif %}>Delete</button>
+    <div class="col-span-2 lg:col-span-2 flex flex-col items-end gap-1">
+      <div class="flex justify-end gap-2">
+        <button class="btn-secondary !py-1 !px-3">Save</button>
+        <button type="submit" form="del-{{ r.cat.pk }}" class="btn-danger !py-1 !px-3 disabled:opacity-40 disabled:cursor-not-allowed"
+                {% if r.in_use %}disabled title="In use by {{ r.count }} expense{{ r.count|pluralize }} or a recurring template — merge it into another category instead"{% endif %}>Delete</button>
+      </div>
+      {% if r.merge_targets %}
+      <details class="text-xs text-right">
+        <summary class="cursor-pointer text-indigo-600 hover:underline select-none">Merge into…</summary>
+        <div class="flex flex-wrap justify-end gap-1 mt-1">
+          <select name="target" form="merge-{{ r.cat.pk }}" required class="!py-1 !text-xs" aria-label="Merge {{ r.cat.name }} into">
+            <option value="">— pick a category —</option>
+            {% for t in r.merge_targets %}<option value="{{ t.pk }}">{{ t.name }}</option>{% endfor %}
+          </select>
+          <button type="submit" form="merge-{{ r.cat.pk }}" class="btn-secondary !py-1 !px-2 !text-xs">Merge</button>
+        </div>
+      </details>
+      {% endif %}
     </div>
   </form>
   {% empty %}
@@ -57,5 +72,19 @@
 {% for r in rows %}
 <form id="del-{{ r.cat.pk }}" method="post" class="hidden" onsubmit="return confirm('Delete category {{ r.cat.name|escapejs }}?')">
   {% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.cat.pk }}"></form>
+<form id="merge-{{ r.cat.pk }}" method="post" class="hidden" onsubmit="return confirmMerge(this, '{{ r.cat.name|escapejs }}', {{ r.count }})">
+  {% csrf_token %}<input type="hidden" name="action" value="merge"><input type="hidden" name="id" value="{{ r.cat.pk }}"></form>
 {% endfor %}
+{% endblock %}
+{% block scripts %}
+<script>
+function confirmMerge(form, sourceName, count) {
+  var sel = document.querySelector('select[form="' + form.id + '"]');
+  if (!sel || !sel.value) { alert('Pick the category to merge into.'); return false; }
+  var target = sel.options[sel.selectedIndex].text;
+  return confirm('Merge "' + sourceName + '" into "' + target + '"?\n\n' + count + ' expense' + (count === 1 ? '' : 's') +
+    ', plus any budgets, recurring templates, vendor defaults and bank rules move to "' + target + '". "' + sourceName +
+    '" is then retired (its ledger account is made inactive). This cannot be undone from this screen.');
+}
+</script>
 {% endblock %}

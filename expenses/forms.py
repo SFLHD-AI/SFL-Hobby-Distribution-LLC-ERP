@@ -18,6 +18,8 @@ from expenses.models import (Expense, ExpenseCategory, MileageEntry, RecurringEx
 DATE = forms.DateInput(attrs={"type": "date"})
 VENDOR_INPUT = forms.TextInput(attrs={"list": "vendor-list", "autocomplete": "off",
                                       "placeholder": "Who you paid"})
+PAID_PERSONALLY_LABEL = "Paid personally (my own card or cash)"
+PAID_PERSONALLY_HELP = "Paid personally counts as money you put into the business."
 
 
 # ---------------------------------------------------------------------------
@@ -95,8 +97,9 @@ class ExpenseForm(forms.ModelForm):
         }
         help_texts = {
             "date": "", "amount": "Enter a negative amount for a refund or credit.",
-            "paid_date": "Leave blank if this is still an open bill.",
-            "paid_from": "",
+            "paid_date": "Leave blank if this is still an open bill. If you pick a paid-from account "
+                         "or a payment method and leave this blank, the bill date is used.",
+            "paid_from": "Leave blank for an open bill, or for something you paid personally.",
             "vendor": "Type any name. Pick a saved vendor to reuse its default category.",
         }
 
@@ -114,8 +117,8 @@ class ExpenseForm(forms.ModelForm):
         self.fields["paid_from"].queryset = BankAccount.all_objects.filter(
             Q(is_deleted=False, active=True) | Q(pk=inst.paid_from_id)).order_by("-is_default", "name")
         self.fields["paid_from"].empty_label = "— not from a bank account —"
-        if self.instance.pk is None and "paid_from" not in self.initial:
-            self.initial["paid_from"] = default_bank_account()
+        # New rows are open bills until the owner says otherwise: nothing is
+        # pre-selected as "paid from" (the help text promises blank = unpaid).
         if linked:
             for name in ("amount", "date", "paid_date", "paid_from"):
                 self.fields[name].disabled = True
@@ -134,12 +137,23 @@ class ExpenseForm(forms.ModelForm):
         if not data.get("category") and not data.get("new_category"):
             self.add_error("category", "Pick a category (or type a new one) so the year-end "
                                        "report stays complete.")
-        if not self.linked and data.get("paid_from") and not data.get("paid_date"):
-            # A bank account was chosen, so money has left: default the paid date.
+        if not self.linked and not data.get("paid_date") and self._explicitly_paid(data):
+            # The owner actively said money left (picked an account or a payment
+            # method): default the paid date to the bill date.
             data["paid_date"] = data.get("date") or timezone.localdate()
         if data.get("vendor_link") and not (data.get("vendor") or "").strip():
             data["vendor"] = data["vendor_link"].name
         return data
+
+    def _explicitly_paid(self, data):
+        """True only when the user chose a paid-from account or a payment
+        method on this submit — never from a pre-filled default."""
+        changed = self.changed_data
+        if data.get("paid_from") and "paid_from" in changed:
+            return True
+        if data.get("payment_method") and "payment_method" in changed:
+            return True
+        return False
 
     def save(self, commit=True, user=None, source=None):
         exp = super().save(commit=False)
@@ -176,23 +190,23 @@ class QuickExpenseForm(forms.Form):
                                    widget=forms.TextInput(attrs={"placeholder": "…or type a new one"}))
     vendor = forms.CharField(required=False, max_length=200, widget=VENDOR_INPUT)
     paid = forms.BooleanField(required=False, initial=True, label="Already paid")
-    paid_from = forms.ModelChoiceField(queryset=BankAccount.objects.none(), required=False,
-                                       empty_label="— not from a bank account —", label="Paid from")
+    paid_from = forms.ModelChoiceField(
+        queryset=BankAccount.objects.none(), required=False, label="Paid from",
+        empty_label=PAID_PERSONALLY_LABEL, help_text=PAID_PERSONALLY_HELP)
     note = forms.CharField(required=False, max_length=500,
                            widget=forms.TextInput(attrs={"placeholder": "What was it for?"}))
+    # No ``capture`` attribute: mobile browsers still offer the camera, and a
+    # PDF forwarded from email can be attached too.
     receipt_file = forms.FileField(required=False, label="Receipt",
                                    widget=forms.ClearableFileInput(
-                                       attrs={"accept": "image/*", "capture": "environment"}))
+                                       attrs={"accept": "image/*,application/pdf"}))
 
     def __init__(self, *args, camera=True, **kwargs):
+        # ``camera`` is kept for callers; the widget is the same either way.
         super().__init__(*args, **kwargs)
         self.fields["category"].queryset = ExpenseCategory.objects.all()
         self.fields["paid_from"].queryset = BankAccount.objects.filter(active=True)
         self.initial.setdefault("paid_from", default_bank_account())
-        if not camera:
-            # desktop register: allow picking a saved photo/PDF instead of forcing the camera
-            self.fields["receipt_file"].widget.attrs.pop("capture", None)
-            self.fields["receipt_file"].widget.attrs["accept"] = "image/*,application/pdf"
 
     def clean(self):
         data = super().clean()
@@ -215,7 +229,8 @@ class QuickExpenseForm(forms.Form):
             method = ""
         exp = Expense.objects.create(
             date=data["date"], category=category,
-            vendor=vendor.name if vendor and not vendor_text else vendor_text,
+            # a typed alias ("AMZN Mktp US*2K3") is stored as the vendor's real name
+            vendor=vendor.name if vendor is not None else vendor_text,
             vendor_link=vendor, amount=data["amount"], note=data.get("note") or "",
             paid_date=data["date"] if paid else None, paid_from=paid_from,
             payment_method=method, receipt_file=data.get("receipt_file"),
@@ -227,7 +242,7 @@ class QuickExpenseForm(forms.Form):
 class MarkPaidForm(forms.Form):
     paid_date = forms.DateField(initial=timezone.localdate, widget=DATE)
     paid_from = forms.ModelChoiceField(queryset=BankAccount.objects.none(), required=False,
-                                       empty_label="— paid personally / other —")
+                                       empty_label=PAID_PERSONALLY_LABEL)
     payment_method = forms.ChoiceField(choices=[("", "— method —")] + Expense.METHODS, required=False)
 
     def __init__(self, *args, **kwargs):
@@ -252,6 +267,9 @@ class VendorForm(forms.ModelForm):
         help_texts = {
             "aliases": "How this vendor shows up on bank and card statements, one per line. "
                        "The bank feed uses these to recognise the vendor.",
+            "is_1099": "Independent contractor (not a store). Yearly payments at or over the "
+                       "threshold need a 1099-NEC: $600 through tax year 2025, $2,000 from 2026. "
+                       "Confirm with your preparer.",
         }
 
     def __init__(self, *args, **kwargs):

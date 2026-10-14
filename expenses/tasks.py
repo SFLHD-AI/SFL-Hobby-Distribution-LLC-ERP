@@ -11,9 +11,10 @@ from expenses.models import RecurringExpense
 def generate_recurring_expenses(user=None, today=None):
     """Create every expense that is due from active recurring templates.
 
-    Each template advances its ``next_date`` past ``today`` (month-end aware:
-    Jan 31 -> Feb 28 -> Mar 28). Returns a one-line summary suitable for the
-    task log and the UI."""
+    Each template advances its ``next_date`` past ``today`` (anchored to its
+    day of month: Jan 31 -> Feb 28 -> Mar 31, no drift). Templates that ran
+    past their end date retire themselves. Returns a one-line summary
+    suitable for the task log and the UI."""
     today = today or timezone.localdate()
     templates = (RecurringExpense.objects.filter(active=True, next_date__lte=today)
                  .select_related("vendor_link", "category", "paid_from"))

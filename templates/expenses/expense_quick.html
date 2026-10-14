@@ -42,10 +42,10 @@
       <span class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Receipt</span>
       <label for="{{ form.receipt_file.id_for_label }}"
              class="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 py-5 text-slate-600 cursor-pointer hover:bg-slate-50 active:bg-slate-100">
-        <span class="text-3xl">📷</span><span id="receipt-label" class="text-sm">Take a photo of the receipt</span>
+        <span class="text-3xl">📷</span><span id="receipt-label" class="text-sm">Take a photo or attach a PDF</span>
       </label>
-      <input type="file" name="receipt_file" id="{{ form.receipt_file.id_for_label }}" accept="image/*" capture="environment" class="sr-only"
-             onchange="document.getElementById('receipt-label').textContent = this.files.length ? ('✓ ' + this.files[0].name) : 'Take a photo of the receipt'">
+      <input type="file" name="receipt_file" id="{{ form.receipt_file.id_for_label }}" accept="image/*,application/pdf" class="sr-only"
+             onchange="document.getElementById('receipt-label').textContent = this.files.length ? ('✓ ' + this.files[0].name) : 'Take a photo or attach a PDF'">
       {% for e in form.receipt_file.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
     </div>
 
@@ -54,7 +54,7 @@
       {% if chips %}
       <div class="flex flex-wrap gap-2 mb-2">
         {% for c in chips %}<button type="button" onclick="pickCat('{{ c.pk }}')" data-cat="{{ c.pk }}"
-            class="chip px-3 py-2 rounded-full border text-sm bg-white border-slate-300 text-slate-700">{{ c.name }}</button>{% endfor %}
+            class="chip px-4 py-3 min-h-[44px] rounded-full border text-sm bg-white border-slate-300 text-slate-700">{{ c.name }}</button>{% endfor %}
       </div>
       {% endif %}
       {{ form.category }}
@@ -73,6 +73,7 @@
       <label class="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-3 text-sm h-[46px]">{{ form.paid }} Already paid</label>
       <div class="field"><label for="{{ form.paid_from.id_for_label }}">Paid from</label>{{ form.paid_from }}</div>
     </div>
+    <p class="text-xs text-slate-500 -mt-3">{{ form.paid_from.help_text }}</p>
     {% for e in form.paid_from.errors %}<p class="text-xs text-red-600">{{ e }}</p>{% endfor %}
 
     <details class="text-sm" {% if form.note.value or form.errors %}open{% endif %}>

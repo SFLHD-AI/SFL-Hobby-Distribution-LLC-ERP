@@ -11,6 +11,9 @@ transaction) and on the **accrual** basis when it was incurred (``date``).
 import calendar
 import csv
 import io
+import os
+import re
+import shutil
 import zipfile
 from collections import defaultdict
 from datetime import date
@@ -33,6 +36,20 @@ SCHEDULE_C = dict(SCHEDULE_C_LINES)
 AGING_BUCKETS = [("current", "Not yet due"), ("1_30", "1–30 days late"),
                  ("31_60", "31–60 days late"), ("60_plus", "Over 60 days late")]
 AGING_LABELS = dict(AGING_BUCKETS)
+
+# Federal 1099-NEC / 1099-MISC reporting threshold. $600 for payments made
+# through Dec 31 2025; $2,000 for payments made after that (tax years 2026+).
+THRESHOLD_THROUGH_2025 = Decimal("600")
+THRESHOLD_FROM_2026 = Decimal("2000")
+
+# The receipts/ folder in the year-end ZIP is capped so the download stays
+# practical to email or upload to a preparer's portal.
+RECEIPT_CAP_BYTES = 200 * 1024 * 1024
+
+
+def default_threshold(year):
+    """Default 1099 threshold for a tax year (the owner can override it)."""
+    return THRESHOLD_FROM_2026 if int(year) >= 2026 else THRESHOLD_THROUGH_2025
 
 
 def money(value):
@@ -361,10 +378,11 @@ def vendor_payments(year):
     return {k: (money(v[0]), v[1]) for k, v in totals.items()}
 
 
-def vendors_1099(year, threshold=Decimal("600")):
+def vendors_1099(year, threshold=None):
     """Vendors flagged as 1099 contractors paid at least ``threshold`` in
-    ``year``, plus every vendor's total for reference."""
-    threshold = money(threshold)
+    ``year`` (default: the federal threshold for that year), plus every
+    vendor's total for reference."""
+    threshold = money(default_threshold(year) if threshold is None else threshold)
     paid = vendor_payments(year)
     vendors = {v.pk: v for v in Vendor.all_objects.filter(pk__in=list(paid))}
     all_rows = []
@@ -438,12 +456,77 @@ def expenses_by_category_rows(year):
     return rows
 
 
-def year_end_package(year):
-    """Build the ZIP (bytes) the owner hands to the tax preparer."""
+def safe_filename(text, limit=60):
+    """Keep letters, digits, dot, dash, underscore; spaces become underscores."""
+    text = re.sub(r"[^A-Za-z0-9._ -]+", "", str(text or "")).strip()
+    text = re.sub(r"[\s_]+", "_", text)
+    return (text[:limit].strip("._ ") or "receipt")
+
+
+def receipt_files(year, cap_bytes=RECEIPT_CAP_BYTES):
+    """Receipts to bundle with the year-end package.
+
+    One entry per expense touching ``year`` that has a receipt on the expense
+    itself or on its linked bank/card transaction, named
+    ``YYYY-MM-DD_<vendor>_<amount>.<ext>`` (deduped with a counter). Files no
+    longer on disk and files that would push the folder past ``cap_bytes``
+    are listed in ``skipped`` instead.
+
+    Returns ``{"included": [...], "skipped": [...], "total_bytes": int}``
+    where each included row is ``{"arcname", "file", "expense", "size"}`` and
+    each skipped row is ``{"arcname", "expense", "reason"}``."""
+    included, skipped = [], []
+    used = set()
+    total = 0
+    for e in expenses_touching_year(year).order_by("date", "id"):
+        f = e.receipt_file if e.receipt_file else None
+        if not f:
+            txn = e.bank_transaction
+            if txn is not None and txn.receipt_file:
+                f = txn.receipt_file
+        if not f:
+            continue
+        ext = os.path.splitext(f.name)[1].lower()[:10]
+        who = e.vendor or (e.vendor_link.name if e.vendor_link_id else "") or "no_vendor"
+        base = f"{e.date:%Y-%m-%d}_{safe_filename(who)}_{abs(e.amount):.2f}"
+        name, n = base + ext, 2
+        while name in used:
+            name = f"{base}_{n}{ext}"
+            n += 1
+        try:
+            exists = f.storage.exists(f.name)
+            size = f.storage.size(f.name) if exists else 0
+        except Exception:                      # unreadable storage entry
+            exists, size = False, 0
+        if not exists:
+            skipped.append({"arcname": name, "expense": e,
+                            "reason": "the file is missing from the server"})
+            continue
+        if total + size > cap_bytes:
+            skipped.append({"arcname": name, "expense": e,
+                            "reason": f"left out to keep the folder under "
+                                      f"{cap_bytes // (1024 * 1024)} MB"})
+            continue
+        used.add(name)
+        total += size
+        included.append({"arcname": f"receipts/{name}", "file": f, "expense": e, "size": size})
+    return {"included": included, "skipped": skipped, "total_bytes": total}
+
+
+def year_end_package(year, today=None, receipt_cap=RECEIPT_CAP_BYTES):
+    """Build the ZIP (bytes) the owner hands to the tax preparer.
+
+    For a year still in progress the "unpaid bills" file is as of ``today``
+    (there is no Dec 31 yet)."""
     settings = CompanySettings.get()
+    today = today or timezone.localdate()
     year_end = date(year, 12, 31)
     year_start = date(year, 1, 1)
+    bills_as_of = min(year_end, today)
+    in_progress = bills_as_of < year_end
     files = {}
+    receipts = receipt_files(year, receipt_cap)
+    receipt_name = {r["expense"].pk: r["arcname"] for r in receipts["included"]}
 
     # 1. Schedule C worksheet by category
     by_cat = expenses_by_category_rows(year)
@@ -472,13 +555,13 @@ def year_end_package(year):
             e.get_payment_method_display() if e.payment_method else "",
             e.get_source_display(), _yes(not receipt_missing(e)), _yes(e.is_reviewed),
             _yes(paid_on is not None and paid_on.year == year), _yes(e.date.year == year),
-            txn.pk if txn is not None else "",
+            txn.pk if txn is not None else "", receipt_name.get(e.pk, ""),
         ])
     files["all_expenses.csv"] = _csv_bytes(
         ["ID", "Date incurred", "Paid date", "Paid", "Category", "Schedule C line", "Vendor",
          "Amount $", "Reference", "Note", "Due date", "Paid from", "Payment method", "Source",
          "Receipt on file", "Reviewed", "Counts in cash-basis year", "Counts in accrual-basis year",
-         "Bank transaction ID"], rows)
+         "Bank transaction ID", "Receipt file in this package"], rows)
 
     # 3. 1099 vendors
     data = vendors_1099(year)
@@ -508,28 +591,42 @@ def year_end_package(year):
     files["missing_receipts.csv"] = _csv_bytes(
         ["ID", "Date", "Vendor", "Category", "Amount $", "Source", "Paid from"], rows)
 
-    # 6. Unpaid bills at year end (accounts payable on Dec 31)
-    ub = unpaid_bills(year_end)
+    # 6. Unpaid bills at year end (or today, for a year still in progress)
+    ub = unpaid_bills(bills_as_of)
     rows = [[r["kind"], r["label"], r["who"], r["what"], r["date"].isoformat(),
              r["due"].isoformat() if r["due"] else "", f"{r['amount']:.2f}",
              max(r["days"], 0), r["bucket_label"]] for r in ub["rows"]]
     rows.append(["TOTAL", "", "", "", "", "", f"{ub['total']:.2f}", "", ""])
     files["unpaid_bills_at_year_end.csv"] = _csv_bytes(
         ["Type", "ID", "Vendor / supplier", "What", "Bill date", "Due date", "Amount due $",
-         "Days past due", "Aging bucket"], rows)
+         "Days past due", "How late"], rows)
 
     # 7. README
+    bills_line = (f"Bills still open on {bills_as_of:%b %-d, %Y} (the year is still in progress)."
+                  if in_progress else f"Bills still open on Dec 31, {year}.")
+    n_receipts = len(receipts["included"])
+    mb = receipts["total_bytes"] / (1024 * 1024)
+    receipts_block = (f"  receipts/                      {n_receipts} receipt photo{'s' if n_receipts != 1 else ''}"
+                      f"/PDF{'s' if n_receipts != 1 else ''} ({mb:.1f} MB), named "
+                      "date_vendor_amount.\n")
+    skipped_block = ""
+    if receipts["skipped"]:
+        lines = [f"  {r['arcname']}  (expense #{r['expense'].pk}): {r['reason']}"
+                 for r in receipts["skipped"]]
+        skipped_block = ("\nRECEIPTS NOT INCLUDED\n" + "\n".join(lines) + "\n")
     readme = f"""{settings.company_name} — expense package for tax year {year}
 Generated {timezone.localtime():%Y-%m-%d %H:%M}
 
 WHAT'S INSIDE
   expenses_by_category.csv       Totals per category with the Schedule C line and deductible %.
-  all_expenses.csv               Every expense that touches {year}, one row each.
-  vendors_1099.csv               Who you paid, with the 1099 contractors that crossed the threshold.
+  all_expenses.csv               Every expense that touches {year}, one row each, with the name of
+                                 its receipt file in this package (if any).
+  vendors_1099.csv               Who you paid, with the 1099 contractors that crossed the threshold
+                                 (default for {year}: ${data['threshold']:,.0f} — confirm with your preparer).
   mileage.csv                    Business miles and the standard-rate deduction.
   missing_receipts.csv           Expenses dated in {year} with no receipt on file.
-  unpaid_bills_at_year_end.csv   Bills still open on Dec 31, {year} (accounts payable).
-
+  unpaid_bills_at_year_end.csv   {bills_line}
+{receipts_block}{skipped_block}
 CASH VS ACCRUAL COLUMNS
   "Paid in year (cash basis)" counts an expense in the year the money left:
   its paid date, or the date of the bank/card transaction it came from. This
@@ -557,9 +654,18 @@ CASH VS ACCRUAL COLUMNS
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
+        for r in receipts["included"]:
+            try:
+                with r["file"].open("rb") as src, zf.open(r["arcname"], "w") as dst:
+                    shutil.copyfileobj(src, dst)
+            except OSError:
+                # vanished between the existence check and the copy
+                zf.writestr(r["arcname"] + ".missing.txt",
+                            f"Receipt for expense #{r['expense'].pk} could not be read.")
     return buf.getvalue()
 
 
 YEAR_END_FILES = ["expenses_by_category.csv", "all_expenses.csv", "vendors_1099.csv",
                   "mileage.csv", "missing_receipts.csv", "unpaid_bills_at_year_end.csv",
                   "README.txt"]
+YEAR_END_FOLDERS = ["receipts/"]

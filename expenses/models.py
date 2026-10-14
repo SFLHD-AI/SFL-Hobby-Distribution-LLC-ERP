@@ -108,7 +108,8 @@ class Vendor(SoftDeleteModel):
         help_text="Other ways this vendor appears on bank statements, one per line "
                   "(e.g. 'AMZN Mktp', 'AMAZON.COM')")
     is_1099 = models.BooleanField("1099 contractor", default=False,
-                                  help_text="Independent contractor — totals ≥ $600/yr need a 1099-NEC")
+                                  help_text="Independent contractor — a 1099-NEC is due once yearly payments reach "
+                                            "the federal threshold ($600 through tax year 2025, $2,000 from 2026)")
     tax_id_last4 = models.CharField("Tax ID (last 4)", max_length=4, blank=True)
     email = models.EmailField(blank=True)
     phone = models.CharField(max_length=50, blank=True)
