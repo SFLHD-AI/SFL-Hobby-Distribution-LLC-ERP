@@ -6,6 +6,146 @@
   <a href="{% url 'po_create' %}" class="btn-primary">+ New order</a>
 </div>
 
+{# ======================= MONEY ======================= #}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+  <h2 class="font-semibold text-slate-700">Money</h2>
+  <div class="flex flex-wrap gap-3 text-xs">
+    {% if 'banking' in u_modules %}<a href="{% url 'bank_inbox' %}" class="text-indigo-600 hover:underline">Bank transactions →</a>{% endif %}
+    {% if 'expenses' in u_modules %}<a href="{% url 'expense_list' %}" class="text-indigo-600 hover:underline">Expenses →</a>{% endif %}
+    {% if 'accounting' in u_modules and u_can_see_costs %}<a href="{% url 'accounting_index' %}" class="text-indigo-600 hover:underline">Financial statements →</a>{% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4 mb-6">
+  {% if u_can_see_costs %}
+  <div class="lg:col-span-2 space-y-4">
+    {% if money %}
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="stat">
+        <p class="lbl">Cash position</p>
+        <p class="val">{% include "core/_money.html" with v=money.net %}</p>
+        <p class="text-xs text-slate-500 mt-1">
+          {% include "core/_money.html" with v=money.cash %} in the bank{% if money.cards %} · owe {% include "core/_money.html" with v=money.cards %} on cards{% endif %}
+        </p>
+      </div>
+      <div class="stat">
+        <p class="lbl">Net profit this month</p>
+        <p class="val">{% include "core/_money.html" with v=money.snap.net_income_mtd %}</p>
+        <p class="text-xs text-slate-500 mt-1">{{ money.basis_label }} basis · {{ money.other_label }}: {% include "core/_money.html" with v=money.snap_other.net_income_mtd %}</p>
+      </div>
+      <div class="stat">
+        <p class="lbl">Net profit, year to date</p>
+        <p class="val">{% include "core/_money.html" with v=money.snap.net_income_ytd %}</p>
+        <p class="text-xs text-slate-500 mt-1">since {{ money.fy_start|date:"M j" }} · {{ money.other_label }}: {% include "core/_money.html" with v=money.snap_other.net_income_ytd %}</p>
+      </div>
+      <div class="stat">
+        <p class="lbl">Equity <span class="normal-case font-normal">(accrual)</span></p>
+        <p class="val">{% include "core/_money.html" with v=money.equity %}</p>
+        <p class="text-xs mt-1 {% if money.equity_change is not None and money.equity_change < 0 %}text-red-600{% elif money.equity_change %}text-emerald-600{% else %}text-slate-500{% endif %}">
+          {% if money.equity_change is None %}no prior month yet
+          {% elif money.equity_change > 0 %}▲ {% include "core/_money.html" with v=money.equity_change %} since {{ money.equity_prev_label }}
+          {% elif money.equity_change < 0 %}▼ {% include "core/_money.html" with v=money.equity_change %} since {{ money.equity_prev_label }}
+          {% else %}unchanged since {{ money.equity_prev_label }}{% endif %}
+        </p>
+      </div>
+    </div>
+
+    <div class="card-pad">
+      <div class="flex items-center justify-between mb-2">
+        <h3 class="font-semibold text-sm">Bank &amp; card balances</h3>
+        {% if 'banking' in u_modules %}<a href="{% url 'bank_accounts' %}" class="text-xs text-indigo-600 hover:underline">Manage accounts →</a>{% endif %}
+      </div>
+      {% if money.accounts %}
+      <div class="grid sm:grid-cols-2 gap-x-6 gap-y-1 text-sm">
+        {% for row in money.accounts %}
+        <a href="{% url 'bank_account_detail' row.account.pk %}" class="flex justify-between items-center rounded px-2 py-1 hover:bg-slate-50">
+          <span class="truncate mr-2">{{ row.account.name }}{% if row.account.last4 %} <span class="text-slate-400">••••{{ row.account.last4 }}</span>{% endif %}
+            {% if row.unreviewed %}<span class="badge bg-amber-100 text-amber-700 ml-1">{{ row.unreviewed }} to review</span>{% endif %}</span>
+          <span class="font-semibold tabular-nums whitespace-nowrap {% if row.account.is_liability %}text-slate-700{% endif %}">
+            {% if row.account.is_liability %}owe {% endif %}{% include "core/_money.html" with v=row.balance %}</span>
+        </a>
+        {% endfor %}
+      </div>
+      <p class="text-xs text-slate-400 mt-2">Balances = opening balance + every imported or synced transaction. Profit and equity use the {{ money.basis_label }} / accrual ledger built from your documents.</p>
+      {% else %}
+      <p class="text-sm text-slate-500">No bank accounts yet. Add your checking account and credit cards, then import a statement or connect your bank — transactions land in the inbox for a quick review.</p>
+      {% if 'banking' in u_modules %}
+      <div class="flex gap-2 mt-3">
+        <a href="{% url 'bank_account_create' %}" class="btn-primary">+ Add an account</a>
+        <a href="{% url 'bank_connect' %}" class="btn-secondary">Connect a bank</a>
+      </div>
+      {% endif %}
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="card-pad">
+      <h3 class="font-semibold text-sm mb-1">Cash, profit &amp; equity</h3>
+      <p class="text-sm text-slate-500">The money numbers are not available right now. Open <a href="{% url 'accounting_index' %}" class="text-indigo-600 hover:underline">Accounting</a> to see the full statements.</p>
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="lg:col-span-2 card-pad">
+    <h3 class="font-semibold text-sm mb-1">Money</h3>
+    <p class="text-sm text-slate-500">Cash, profit and equity figures are only shown to roles that can see costs. The to-do counts on the right are yours to work through.</p>
+    {% if not has_bank_accounts and 'banking' in u_modules %}
+    <div class="flex gap-2 mt-3">
+      <a href="{% url 'bank_account_create' %}" class="btn-primary">+ Add a bank account</a>
+      <a href="{% url 'bank_connect' %}" class="btn-secondary">Connect a bank</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ---- needs attention ---- #}
+  <div class="card-pad">
+    <div class="flex items-center justify-between mb-3">
+      <h3 class="font-semibold">Needs attention</h3>
+      {% if attention.total %}<span class="badge bg-amber-100 text-amber-700">{{ attention.total }}</span>
+      {% else %}<span class="badge bg-emerald-100 text-emerald-700">all clear</span>{% endif %}
+    </div>
+    <div class="space-y-1 text-sm">
+      {% if 'banking' in u_modules %}
+      <a href="{% url 'bank_inbox' %}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+        <span>Bank transactions to review
+          {% if attention.unreviewed_oldest %}<span class="block text-xs text-slate-400">oldest {{ attention.unreviewed_oldest|date:"M j" }}{% if attention.unreviewed_suggested %} · {{ attention.unreviewed_suggested }} with a suggestion{% endif %}</span>{% endif %}</span>
+        <span class="font-bold tabular-nums {% if attention.unreviewed %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.unreviewed }}</span>
+      </a>
+      {% endif %}
+      {% if 'expenses' in u_modules %}
+      <a href="{% url 'expense_report_unpaid_bills' %}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+        <span>Bills due in 7 days
+          <span class="block text-xs {% if attention.bills_overdue %}text-red-600{% else %}text-slate-400{% endif %}">
+            {% if attention.bills_overdue %}{{ attention.bills_overdue }} overdue{% else %}nothing overdue{% endif %}{% if u_can_see_costs and attention.bills_due %} · {% include "core/_money.html" with v=attention.bills_due_total %}{% endif %}</span></span>
+        <span class="font-bold tabular-nums {% if attention.bills_overdue %}text-red-600{% elif attention.bills_due %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.bills_due }}</span>
+      </a>
+      <a href="{% url 'expense_report_missing_receipts' %}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+        <span>Expenses this month missing a receipt
+          {% if u_can_see_costs and attention.missing_receipts %}<span class="block text-xs text-slate-400">{% include "core/_money.html" with v=attention.missing_receipts_total %} without paperwork</span>{% endif %}</span>
+        <span class="font-bold tabular-nums {% if attention.missing_receipts %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.missing_receipts }}</span>
+      </a>
+      <a href="{% url 'expense_list' %}?review=1" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+        <span>Auto-created expenses to confirm
+          <span class="block text-xs text-slate-400">from the bank feed or recurring templates</span></span>
+        <span class="font-bold tabular-nums {% if attention.expenses_to_review %}text-amber-600{% else %}text-slate-400{% endif %}">{{ attention.expenses_to_review }}</span>
+      </a>
+      {% endif %}
+      {% if 'banking' in u_modules and attention.connections_attention %}
+      <a href="{% url 'bank_accounts' %}" class="flex justify-between items-start rounded px-2 py-1.5 hover:bg-slate-50">
+        <span>Bank connections to re-link
+          <span class="block text-xs text-red-600">transactions stop syncing until you do</span></span>
+        <span class="font-bold tabular-nums text-red-600">{{ attention.connections_attention }}</span>
+      </a>
+      {% endif %}
+      {% if 'banking' not in u_modules and 'expenses' not in u_modules %}
+      <p class="text-slate-400">Your role has no money modules.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+{# ======================= OPERATIONS ======================= #}
+<h2 class="font-semibold text-slate-700 mb-3">Operations</h2>
 <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
   <div class="stat"><p class="lbl">Today's revenue</p><p class="val">${{ today_revenue|floatformat:2|intcomma }}</p></div>
   <div class="stat"><p class="lbl">Month-to-date</p><p class="val">${{ mtd_revenue|floatformat:2|intcomma }}</p></div>

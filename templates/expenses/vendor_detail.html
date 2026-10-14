@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ vendor.name }}{% endblock %}
+{% block header_actions %}<a href="{% url 'expense_vendor_edit' vendor.pk %}" class="btn-secondary">Edit</a>{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center gap-3 mb-5">
+  <h1 class="page-title">{{ vendor.name }}</h1>
+  {% if vendor.is_1099 %}<span class="badge bg-violet-100 text-violet-700">1099 contractor</span>{% endif %}
+  {% if not vendor.active %}<span class="badge bg-slate-200 text-slate-600">Inactive</span>{% endif %}
+  <a href="{% url 'expense_create' %}?vendor={{ vendor.name|urlencode }}{% if vendor.default_category %}&category={{ vendor.default_category.pk }}{% endif %}" class="btn-primary ml-auto">+ Expense</a>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4 mb-4">
+  <div class="card-pad text-sm space-y-1">
+    <h2 class="font-semibold mb-2">Details</h2>
+    <div><span class="text-slate-500">Default category:</span> {{ vendor.default_category|default:"—" }}</div>
+    {% if vendor.email %}<div><span class="text-slate-500">Email:</span> <a href="mailto:{{ vendor.email }}" class="text-indigo-600 hover:underline">{{ vendor.email }}</a></div>{% endif %}
+    {% if vendor.phone %}<div><span class="text-slate-500">Phone:</span> {{ vendor.phone }}</div>{% endif %}
+    {% if vendor.website %}<div><span class="text-slate-500">Website:</span> {{ vendor.website }}</div>{% endif %}
+    {% if vendor.account_number %}<div><span class="text-slate-500">Your account #:</span> {{ vendor.account_number }}</div>{% endif %}
+    {% if vendor.is_1099 %}<div><span class="text-slate-500">Tax ID last 4:</span> {{ vendor.tax_id_last4|default:"missing — needed for the 1099" }}</div>{% endif %}
+    {% if vendor.notes %}<div class="text-slate-600 pt-2 whitespace-pre-line">{{ vendor.notes }}</div>{% endif %}
+    <div class="pt-2 text-slate-500">{{ expense_count }} expense{{ expense_count|pluralize }} · ${{ total|floatformat:2|intcomma }} all time</div>
+  </div>
+
+  <form method="post" class="card-pad text-sm space-y-2">
+    {% csrf_token %}<input type="hidden" name="action" value="aliases">
+    <h2 class="font-semibold">Statement aliases</h2>
+    <p class="text-xs text-slate-500">How this vendor appears on bank and card statements, one per line. New transactions that contain any of these are matched to this vendor.</p>
+    <textarea name="aliases" rows="4" class="w-full rounded-lg border-slate-300 text-sm" placeholder="AMZN Mktp&#10;AMAZON.COM">{{ vendor.aliases }}</textarea>
+    <button class="btn-secondary">Save aliases</button>
+  </form>
+
+  <div class="card-pad text-sm space-y-3">
+    <h2 class="font-semibold">By year</h2>
+    <table class="tbl"><thead><tr><th>Year</th><th class="num">Total</th><th class="num">Unpaid</th><th class="num">No receipt</th></tr></thead>
+      <tbody>
+      {% for y in by_year %}
+        <tr><td><a href="{% url 'expense_list' %}?preset=custom&start={{ y.year }}-01-01&end={{ y.year }}-12-31&vendor={{ vendor.name|urlencode }}" class="text-indigo-600 hover:underline">{{ y.year }}</a> <span class="text-xs text-slate-400">({{ y.count }})</span></td>
+          <td class="num">${{ y.total|floatformat:2|intcomma }}</td>
+          <td class="num {% if y.unpaid %}text-amber-700{% else %}text-slate-400{% endif %}">${{ y.unpaid|floatformat:2|intcomma }}</td>
+          <td class="num {% if y.no_receipt %}text-rose-600{% else %}text-slate-400{% endif %}">{{ y.no_receipt }}</td></tr>
+      {% empty %}<tr><td colspan="4" class="text-slate-400 text-center py-4">No expenses linked yet.</td></tr>{% endfor %}
+      </tbody></table>
+    {% if unlinked_count %}
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="link_matching">
+      <button class="btn-secondary w-full">Link {{ unlinked_count }} expense{{ unlinked_count|pluralize }} that match this vendor's name</button></form>
+    {% endif %}
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <div class="card">
+    <div class="px-4 py-3 border-b border-slate-200 font-semibold text-sm">Expenses{% if expense_count > 100 %} <span class="text-slate-400 font-normal">(latest 100 of {{ expense_count }})</span>{% endif %}</div>
+    <div class="overflow-x-auto"><table class="tbl">
+      <thead><tr><th>Date</th><th>Category</th><th>Note</th><th class="num">Amount</th><th></th></tr></thead>
+      <tbody>
+      {% for e in expenses %}
+        <tr><td class="whitespace-nowrap"><a href="{% url 'expense_edit' e.pk %}" class="text-indigo-600 hover:underline">{{ e.date|date:"M j, Y" }}</a></td>
+          <td>{{ e.category|default:"Uncategorized" }}</td>
+          <td class="text-xs text-slate-500 truncate max-w-[12rem]">{{ e.note }}</td>
+          <td class="num {% if e.amount < 0 %}text-red-600{% endif %}">${{ e.amount|floatformat:2|intcomma }}</td>
+          <td class="text-xs">{% if not e.is_paid %}<span class="badge bg-amber-100 text-amber-700">Unpaid</span>{% endif %}{% if not e.has_receipt %}<span class="badge bg-rose-50 text-rose-600">No receipt</span>{% endif %}</td></tr>
+      {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-8">Nothing yet.</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+  <div class="card">
+    <div class="px-4 py-3 border-b border-slate-200 font-semibold text-sm">Bank &amp; card transactions matched to this vendor</div>
+    <div class="overflow-x-auto"><table class="tbl">
+      <thead><tr><th>Date</th><th>Account</th><th>Description</th><th class="num">Amount</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for t in bank_txns %}
+        <tr><td class="whitespace-nowrap"><a href="{% url 'bank_transaction_detail' t.pk %}" class="text-indigo-600 hover:underline">{{ t.date|date:"M j, Y" }}</a></td>
+          <td class="text-xs">{{ t.account.name }}</td>
+          <td class="text-xs text-slate-600 truncate max-w-[14rem]">{{ t.description }}</td>
+          <td class="num {% if t.amount > 0 %}text-emerald-700{% endif %}">${{ t.abs_amount|floatformat:2|intcomma }}</td>
+          <td class="text-xs text-slate-500">{{ t.get_status_display }}</td></tr>
+      {% empty %}<tr><td colspan="5" class="text-center text-slate-400 py-8">No bank transactions matched yet. Add statement aliases so the feed can recognise this vendor.</td></tr>{% endfor %}
+      </tbody></table></div>
+  </div>
+</div>
+{% endblock %}

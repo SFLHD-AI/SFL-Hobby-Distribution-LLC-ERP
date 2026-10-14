@@ -1,0 +1,60 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Income statement{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Income statement</h1>
+    <p class="text-sm text-slate-500">{{ basis_label }} · {{ period_text }}</p>
+  </div>
+  <a href="{% url 'accounting_index' %}?basis={{ basis }}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+</div>
+
+{% include "accounting/_period_filter.html" with export_csv=True export_pdf=True %}
+
+<div class="grid sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">Total income</p><p class="val">{% include "accounting/_money.html" with v=stmt.total_income %}</p></div>
+  <div class="stat"><p class="lbl">Gross profit{% if stmt.gross_margin_pct is not None %} · {{ stmt.gross_margin_pct|floatformat:1 }}% margin{% endif %}</p><p class="val">{% include "accounting/_money.html" with v=stmt.gross_profit %}</p></div>
+  <div class="stat {% if stmt.net_income < 0 %}border-red-200{% else %}border-emerald-200{% endif %}"><p class="lbl">Net income</p><p class="val">{% include "accounting/_money.html" with v=stmt.net_income %}</p></div>
+</div>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th class="w-16">Code</th><th>Account</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      <tr class="bg-slate-50"><td colspan="3" class="text-xs font-bold uppercase tracking-wider text-slate-500">Income</td></tr>
+      {% for r in stmt.income %}
+      <tr><td class="text-slate-400 text-xs">{{ r.account.code }}</td>
+        <td><a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a></td>
+        <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+      {% empty %}<tr><td></td><td class="text-slate-400" colspan="2">No income recorded in this period.</td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td></td><td>Total income</td><td class="num">{% include "accounting/_money.html" with v=stmt.total_income %}</td></tr>
+
+      <tr class="bg-slate-50"><td colspan="3" class="text-xs font-bold uppercase tracking-wider text-slate-500">Cost of goods sold</td></tr>
+      {% for r in stmt.cogs %}
+      <tr><td class="text-slate-400 text-xs">{{ r.account.code }}</td>
+        <td><a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a></td>
+        <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+      {% empty %}<tr><td></td><td class="text-slate-400" colspan="2">No cost of goods in this period.</td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td></td><td>Total cost of goods sold</td><td class="num">{% include "accounting/_money.html" with v=stmt.total_cogs %}</td></tr>
+
+      <tr class="!bg-indigo-50 font-bold text-base border-y-2 border-indigo-200">
+        <td></td><td>Gross profit {% if stmt.gross_margin_pct is not None %}<span class="text-xs font-normal text-slate-500 ml-2">{{ stmt.gross_margin_pct|floatformat:1 }}% gross margin</span>{% endif %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=stmt.gross_profit %}</td></tr>
+
+      <tr class="bg-slate-50"><td colspan="3" class="text-xs font-bold uppercase tracking-wider text-slate-500">Expenses</td></tr>
+      {% for r in stmt.expenses %}
+      <tr><td class="text-slate-400 text-xs">{{ r.account.code }}</td>
+        <td><a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a>
+          {% if r.account.system_key == 'uncat_expense' %}<a href="{% url 'bank_inbox' %}" class="badge bg-amber-100 text-amber-800 ml-2">review in Banking</a>{% endif %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+      {% empty %}<tr><td></td><td class="text-slate-400" colspan="2">No expenses in this period.</td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td></td><td>Total expenses</td><td class="num">{% include "accounting/_money.html" with v=stmt.total_expenses %}</td></tr>
+
+      <tr class="!bg-slate-100 font-bold text-lg border-t-2 border-slate-400">
+        <td></td><td>Net income</td><td class="num">{% include "accounting/_money.html" with v=stmt.net_income %}</td></tr>
+    </tbody>
+  </table>
+</div>
+<p class="text-xs text-slate-400 mt-2">Click any account to see every line behind the number.
+  {% if basis == 'cash' %}Unpaid bills and open invoices are not included on cash basis.{% else %}Invoices count when sent and bills when received, even if money has not moved yet.{% endif %}</p>
+{% endblock %}

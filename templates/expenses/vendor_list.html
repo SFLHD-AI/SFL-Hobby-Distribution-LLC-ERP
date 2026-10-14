@@ -1,0 +1,56 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Vendors{% endblock %}
+{% block header_actions %}<a href="{% url 'expense_vendor_create' %}" class="btn-primary">+ New vendor</a>{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <h1 class="page-title">Vendors</h1>
+  <form method="get" class="flex gap-2 items-center field-inline text-sm">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search name or alias…" class="w-48">
+    <label class="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" name="inactive" value="1" {% if show_inactive %}checked{% endif %} class="rounded"> show inactive</label>
+    <button class="btn-secondary">Search</button>
+  </form>
+</div>
+<p class="text-sm text-slate-500 mb-4">Saved vendors let the bank feed recognise who you paid, pre-fill the category, and build the 1099 list at year end.</p>
+
+{% if suggestions %}
+<div class="card-pad mb-4">
+  <h2 class="font-semibold text-sm mb-2">Names typed on expenses that aren't saved vendors yet</h2>
+  <div class="flex flex-wrap gap-2">
+    {% for s in suggestions %}
+    <a href="{% url 'expense_vendor_create' %}?name={{ s.vendor|urlencode }}" class="badge bg-slate-100 text-slate-700 hover:bg-indigo-100 hover:text-indigo-700" title="Create vendor and link {{ s.n }} expense{{ s.n|pluralize }}">
+      + {{ s.vendor }} <span class="ml-1 text-slate-400">×{{ s.n }}</span></a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Vendor</th><th>Default category</th><th>Flags</th><th class="num">{{ year }} spend</th><th class="num">All time</th><th class="num">Expenses</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a href="{% url 'expense_vendor_detail' r.vendor.pk %}" class="font-medium text-slate-900 hover:underline">{{ r.vendor.name }}</a>
+          {% if r.vendor.alias_list %}<div class="text-xs text-slate-400 truncate max-w-xs">aka {{ r.vendor.alias_list|join:", " }}</div>{% endif %}</td>
+        <td>{{ r.vendor.default_category|default:"—" }}</td>
+        <td><div class="flex gap-1">
+          {% if r.vendor.is_1099 %}<span class="badge bg-violet-100 text-violet-700">1099</span>{% endif %}
+          {% if not r.vendor.active %}<span class="badge bg-slate-200 text-slate-600">Inactive</span>{% endif %}
+        </div></td>
+        <td class="num {% if r.ytd < 0 %}text-red-600{% endif %}">${{ r.ytd|floatformat:2|intcomma }}</td>
+        <td class="num text-slate-500">${{ r.total|floatformat:2|intcomma }}</td>
+        <td class="num text-slate-500">{{ r.count }}</td>
+        <td class="text-right text-xs whitespace-nowrap">
+          <a href="{% url 'expense_create' %}?vendor={{ r.vendor.name|urlencode }}{% if r.vendor.default_category %}&category={{ r.vendor.default_category.pk }}{% endif %}" class="text-emerald-700 hover:underline">+ Expense</a> ·
+          <a href="{% url 'expense_vendor_edit' r.vendor.pk %}" class="text-indigo-600 hover:underline">Edit</a>
+        </td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="text-center text-slate-400 py-10">No vendors yet. <a href="{% url 'expense_vendor_create' %}" class="text-indigo-600 hover:underline">Add your first vendor</a>.</td></tr>
+    {% endfor %}
+    {% if rows %}<tr class="!bg-slate-100 font-bold border-t-2 border-slate-300"><td colspan="3">TOTAL</td><td class="num">${{ ytd_total|floatformat:2|intcomma }}</td><td colspan="3"></td></tr>{% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -5,6 +5,14 @@
 <form method="post" enctype="multipart/form-data" class="max-w-3xl space-y-6">
   {% csrf_token %}
   {{ form.non_field_errors }}
+  {% if form.errors %}
+  <div class="rounded-lg px-4 py-3 text-sm border bg-red-50 text-red-800 border-red-200">
+    Some fields need a second look:
+    <ul class="list-disc ml-5 mt-1">
+      {% for field in form %}{% for err in field.errors %}<li><b>{{ field.label }}</b>: {{ err }}</li>{% endfor %}{% endfor %}
+    </ul>
+  </div>
+  {% endif %}
   <div class="card-pad space-y-4">
     <h2 class="font-semibold">Company identity</h2>
     <div class="grid md:grid-cols-2 gap-4">
@@ -54,11 +62,76 @@
     </div>
   </div>
 
+  {# ---------------- Accounting ---------------- #}
+  <div class="card-pad space-y-4" id="accounting">
+    <h2 class="font-semibold">Accounting</h2>
+    <p class="text-sm text-slate-500">You file taxes on the <b>cash basis</b> (income when the money arrives, costs when it leaves). The <b>accrual basis</b> shows the true picture — inventory on the shelf, invoices not yet collected, bills not yet paid — and tells you whether you are building equity. Both are always available; this only picks which one you see first.</p>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Show first</label>{{ form.accounting_basis_default }}
+        {% for err in form.accounting_basis_default.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field"><label>Fiscal year starts in</label>{{ form.fiscal_year_start_month }}
+        <p class="text-xs text-slate-400 mt-1">January for almost every small business. Year-to-date profit and retained earnings reset here.</p>
+        {% for err in form.fiscal_year_start_month.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Books start date</label>{{ form.books_start_date }}
+        <p class="text-xs text-slate-400 mt-1">First day this system is your book of record. Enter bank opening balances as of this date.</p>
+        {% for err in form.books_start_date.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field"><label>Mileage rate ($ per mile)</label>{{ form.mileage_rate }}
+        <p class="text-xs text-slate-400 mt-1">IRS standard rate (0.70 for 2025). Used for the mileage deduction at year end.</p>
+        {% for err in form.mileage_rate.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field"><label>Sales tax filing</label>{{ form.sales_tax_filing_frequency }}
+        <p class="text-xs text-slate-400 mt-1">How often you remit to the state; sets the default period on the sales tax report.</p>
+        {% for err in form.sales_tax_filing_frequency.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+    </div>
+    {% if u_can_see_costs %}
+    <p class="text-xs text-slate-500">Chart of accounts, period lock and the year-end package live under
+      <a href="{% url 'accounting_index' %}" class="text-indigo-600 hover:underline">Accounting</a>.</p>
+    {% endif %}
+  </div>
+
+  {# ---------------- Bank feed ---------------- #}
+  <div class="card-pad space-y-4" id="bank-feed">
+    <h2 class="font-semibold">Bank feed (Plaid)
+      {% if plaid_configured %}<span class="badge bg-emerald-100 text-emerald-700 ml-2">Plaid configured{% if plaid_from_env %} (from .env){% endif %}</span>
+      {% else %}<span class="badge bg-slate-100 text-slate-600 ml-2">Not configured — CSV import still works</span>{% endif %}
+    </h2>
+    <p class="text-sm text-slate-500">Plaid connects your checking account and credit cards so new transactions show up here every hour, already matched to rules you have taught the system. It is optional: without it you can import the CSV statement any bank lets you download (Banking → Import CSV).</p>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Plaid client ID</label>{{ form.plaid_client_id }}
+        {% for err in form.plaid_client_id.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field"><label>Plaid secret</label>{{ form.plaid_secret }}
+        {% for err in form.plaid_secret.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field"><label>Plaid environment</label>{{ form.plaid_env }}
+        <p class="text-xs text-slate-400 mt-1">Sandbox = fake test banks. Switch to Production once Plaid approves your account.</p>
+        {% for err in form.plaid_env.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+    </div>
+    <div class="grid md:grid-cols-2 gap-3">
+      <label class="flex items-center gap-2 text-sm">{{ form.bank_sync_enabled }} Pull new transactions automatically (hourly)</label>
+      <label class="flex items-center gap-2 text-sm">{{ form.expense_review_digest }} Send the weekly money review email (Monday 7am, to the alert email below)</label>
+    </div>
+    <details class="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm">
+      <summary class="cursor-pointer font-medium">How to get Plaid keys (5 minutes)</summary>
+      <ol class="list-decimal ml-5 mt-2 space-y-1 text-slate-700">
+        <li>Create a free account at <span class="font-mono">dashboard.plaid.com</span> (choose "I'm a developer / building for my own business").</li>
+        <li>Open <b>Team Settings → Keys</b>. Copy the <b>client_id</b> and the <b>Sandbox secret</b> into the fields above, leave the environment on Sandbox, save.</li>
+        <li>Go to <a href="{% url 'bank_connect' %}" class="text-indigo-600 hover:underline">Banking → Connect a bank</a> and link Plaid's test bank with user <span class="font-mono">user_good</span> / password <span class="font-mono">pass_good</span> to see the flow end to end.</li>
+        <li>In the Plaid dashboard request <b>Production access</b> (Transactions product only). Approval for a small business usually takes a day or two.</li>
+        <li>Paste the <b>Production secret</b> here, switch the environment to Production, save, then connect your real Chase (or any) login.</li>
+      </ol>
+      <p class="mt-2 text-slate-600">The same values can live in <span class="font-mono">.env</span> as <span class="font-mono">PLAID_CLIENT_ID</span>, <span class="font-mono">PLAID_SECRET</span>, <span class="font-mono">PLAID_ENV</span>; what you enter here wins.
+        Set <span class="font-mono">PUBLIC_BASE_URL</span>{% if public_base_url %} (currently <span class="font-mono">{{ public_base_url }}</span>){% endif %} so the Plaid Link redirect and email links point at this server.
+        Full walkthrough, bank-by-bank CSV export steps and troubleshooting: <span class="font-mono">docs/BANK_CONNECTIONS.md</span> in the install folder.</p>
+    </details>
+  </div>
+
   <div class="card-pad space-y-4">
     <h2 class="font-semibold">Alerts</h2>
     <div class="grid md:grid-cols-2 gap-4 items-end">
       <label class="flex items-center gap-2 text-sm">{{ form.low_stock_email_digest }} Send daily low-stock email digest</label>
-      <div class="field"><label>Alert email</label>{{ form.alert_email }}</div>
+      <div class="field"><label>Alert email</label>{{ form.alert_email }}
+        <p class="text-xs text-slate-400 mt-1">Where the low-stock digest and the weekly money review are sent.</p>
+        {% for err in form.alert_email.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
     </div>
   </div>
 

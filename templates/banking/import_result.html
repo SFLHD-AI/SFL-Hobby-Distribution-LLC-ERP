@@ -1,0 +1,28 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Import finished{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Import finished</h1>
+{% include "banking/_subnav.html" %}
+<div class="card-pad mb-4">
+  <p class="text-sm text-slate-500">{{ batch.filename|default:batch.get_source_display }} → <a class="underline" href="{% url 'bank_account_detail' batch.account.pk %}">{{ batch.account.name }}</a> · {{ batch.created_at|date:"M j, Y g:i a" }}{% if batch.date_min %} · {{ batch.date_min|date:"M j" }} – {{ batch.date_max|date:"M j, Y" }}{% endif %}</p>
+  <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4">
+    <div class="stat"><div class="lbl">Imported</div><div class="val text-emerald-700">{{ batch.rows_imported }}</div></div>
+    <div class="stat"><div class="lbl">Categorized by rules</div><div class="val">{{ batch.rows_auto_categorized }}</div></div>
+    <div class="stat"><div class="lbl">Duplicates skipped</div><div class="val text-slate-500">{{ batch.rows_duplicate }}</div></div>
+    <div class="stat"><div class="lbl">Other skipped</div><div class="val text-slate-500">{{ batch.rows_skipped }}</div><div class="text-[10px] text-slate-400">before opening date or unreadable</div></div>
+  </div>
+  <div class="flex flex-wrap gap-2 mt-4">
+    <a href="{% url 'bank_inbox' %}?batch={{ batch.pk }}" class="btn-primary">Review these transactions</a>
+    <a href="{% url 'bank_inbox' %}?status=all&batch={{ batch.pk }}" class="btn-secondary">See everything imported</a>
+    <a href="{% url 'bank_import' %}?account={{ batch.account.pk }}" class="btn-secondary">Import another file</a>
+  </div>
+</div>
+{% if sample %}
+<div class="card overflow-x-auto">
+  <div class="px-4 pt-3 text-sm font-semibold">A few of the imported rows</div>
+  <table class="tbl"><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th>Status</th></tr></thead><tbody>
+  {% for t in sample %}<tr><td>{{ t.date|date:"M j, Y" }}</td><td><a class="hover:underline" href="{% url 'bank_transaction_detail' t.pk %}">{{ t.description|truncatechars:60 }}</a></td><td class="num {% if t.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if t.amount < 0 %}−{% else %}+{% endif %}${{ t.abs_amount|floatformat:2|intcomma }}</td><td class="text-sm">{% if t.category_account %}{{ t.category_account.name }}{% else %}{{ t.get_status_display }}{% endif %}</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+{% endblock %}

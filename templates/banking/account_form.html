@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}{% if account %}Edit {{ account.name }}{% else %}Add account{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">{% if account %}Edit {{ account.name }}{% else %}Add a bank or card account{% endif %}</h1>
+{% include "banking/_subnav.html" %}
+<form method="post" class="card-pad max-w-xl space-y-4">
+  {% csrf_token %}
+  {% include "banking/_field.html" with f=form.name %}
+  <div class="grid sm:grid-cols-2 gap-4">
+    {% include "banking/_field.html" with f=form.institution %}
+    {% include "banking/_field.html" with f=form.account_type %}
+  </div>
+  <div class="grid sm:grid-cols-2 gap-4">
+    {% include "banking/_field.html" with f=form.last4 %}
+    {% include "banking/_field.html" with f=form.opening_date %}
+  </div>
+  {% include "banking/_field.html" with f=form.opening_balance %}
+  <div class="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600 space-y-1">
+    <p><strong>Checking / savings:</strong> the balance shown on the statement for the opening date.</p>
+    <p><strong>Credit card:</strong> the amount you owed on the opening date, as a positive number (owing $412.50 = enter 412.50). Charges after that date increase it, payments reduce it.</p>
+    <p>If you connect this account through Plaid later, the opening balance is worked out from the bank automatically on the first sync.</p>
+  </div>
+  {% include "banking/_field.html" with f=form.is_default %}
+  {% include "banking/_field.html" with f=form.active %}
+  {% include "banking/_field.html" with f=form.notes %}
+  {% if form.non_field_errors %}<p class="text-sm text-red-600">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  <div class="flex gap-2"><button class="btn-primary">Save account</button><a href="{% if account %}{% url 'bank_account_detail' account.pk %}{% else %}{% url 'bank_accounts' %}{% endif %}" class="btn-secondary">Cancel</a></div>
+</form>
+{% endblock %}

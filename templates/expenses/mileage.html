@@ -1,0 +1,61 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Mileage {{ year }}{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+  <h1 class="page-title">Mileage {{ year }}</h1>
+  <div class="flex flex-wrap gap-1 text-sm items-center">
+    {% for y in years %}<a href="?year={{ y }}" class="px-3 py-1.5 rounded-lg {% if y == year %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">{{ y }}</a>{% endfor %}
+    <a href="?year={{ year }}&export=csv" class="btn-secondary ml-2">⬇ CSV</a>
+  </div>
+</div>
+<p class="text-sm text-slate-500 mb-4">Log business trips (card shows, supplier pickups, post office runs). Each entry locks in the IRS rate from Settings on the day you log it, so the deduction is right at year end.</p>
+
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+  <div class="stat"><div class="lbl">Trips</div><div class="val">{{ summary.count }}</div></div>
+  <div class="stat"><div class="lbl">Miles</div><div class="val">{{ summary.total_miles|floatformat:1|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">Deduction</div><div class="val text-emerald-700">${{ summary.total_deduction|floatformat:2|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">Current rate</div><div class="val">${{ rate }}<span class="text-sm font-normal text-slate-500">/mi</span></div><a href="{% url 'settings_edit' %}" class="text-xs text-indigo-600 hover:underline">change in Settings</a></div>
+</div>
+
+<form method="post" class="card-pad mb-4">
+  {% csrf_token %}<input type="hidden" name="action" value="add">
+  <h2 class="font-semibold text-sm mb-3">Log a trip</h2>
+  <div class="grid grid-cols-2 lg:grid-cols-7 gap-3 items-end field-inline text-sm">
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ form.date.id_for_label }}">Date *</label>{{ form.date }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ form.miles.id_for_label }}">Miles *</label>{{ form.miles }}</div>
+    <label class="flex items-center gap-2 pb-2 col-span-2 lg:col-span-1">{{ form.round_trip }} Round trip</label>
+    <div class="col-span-2"><label class="text-xs text-slate-500 block mb-1" for="{{ form.purpose.id_for_label }}">Purpose *</label>{{ form.purpose }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ form.from_location.id_for_label }}">From</label>{{ form.from_location }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ form.to_location.id_for_label }}">To</label>{{ form.to_location }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ form.vehicle.id_for_label }}">Vehicle</label>{{ form.vehicle }}</div>
+    <div class="col-span-2 lg:col-span-6"><button class="btn-primary">Log trip</button></div>
+  </div>
+  {% if form.errors %}<div class="mt-2 text-xs text-red-600">{% for field in form %}{% for e in field.errors %}<div>{{ field.label }}: {{ e }}</div>{% endfor %}{% endfor %}</div>{% endif %}
+</form>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Purpose</th><th>Route</th><th class="num">Miles</th><th class="num">Rate</th><th class="num">Deduction</th><th></th></tr></thead>
+    <tbody>
+    {% for m in summary.entries %}
+      <tr>
+        <td class="whitespace-nowrap">{{ m.date|date:"M j, Y" }}</td>
+        <td>{{ m.purpose }}{% if m.vehicle %}<div class="text-xs text-slate-400">{{ m.vehicle }}</div>{% endif %}</td>
+        <td class="text-xs text-slate-500">{% if m.from_location or m.to_location %}{{ m.from_location }} → {{ m.to_location }}{% endif %}{% if m.round_trip %} <span class="badge bg-slate-100 text-slate-600">round trip</span>{% endif %}</td>
+        <td class="num">{{ m.total_miles|floatformat:1 }}{% if m.round_trip %}<div class="text-[11px] text-slate-400">{{ m.miles|floatformat:1 }} × 2</div>{% endif %}</td>
+        <td class="num text-slate-500">${{ m.rate }}</td>
+        <td class="num">${{ m.deduction|floatformat:2|intcomma }}</td>
+        <td class="text-right"><form method="post" onsubmit="return confirm('Delete this trip?')">{% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ m.pk }}"><input type="hidden" name="year" value="{{ year }}">
+          <button class="text-xs text-red-600 hover:underline">Delete</button></form></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="text-center text-slate-400 py-10">No trips logged for {{ year }}.</td></tr>
+    {% endfor %}
+    {% if summary.entries %}
+      <tr class="!bg-slate-100 font-bold border-t-2 border-slate-300"><td colspan="3">TOTAL</td><td class="num">{{ summary.total_miles|floatformat:1|intcomma }}</td><td></td><td class="num">${{ summary.total_deduction|floatformat:2|intcomma }}</td><td></td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

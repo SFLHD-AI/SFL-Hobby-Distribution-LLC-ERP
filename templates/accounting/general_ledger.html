@@ -1,0 +1,93 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}General ledger{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">General ledger</h1>
+    <p class="text-sm text-slate-500">{{ basis_label }} · {{ period_text }}{% if account %} · {{ account.code }} {{ account.name }}{% endif %}</p>
+  </div>
+  <a href="{% url 'accounting_index' %}?basis={{ basis }}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+</div>
+
+<form method="get" class="card-pad mb-4 space-y-3">
+  <div class="flex flex-wrap gap-3 items-end field-inline">
+    <div class="w-full sm:w-auto sm:min-w-[20rem]">
+      <label class="text-xs text-slate-500 block mb-1" for="f_account">Account</label>
+      <select id="f_account" name="account" class="w-full" required>
+        <option value="">Pick an account…</option>
+        {% for g in groups %}
+        <optgroup label="{{ g.label }}">
+          {% for a in g.accounts %}<option value="{{ a.pk }}" {% if account and account.pk == a.pk %}selected{% endif %}>{{ a.code }} {{ a.name }}{% if not a.active %} (inactive){% endif %}</option>{% endfor %}
+        </optgroup>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <span class="text-xs text-slate-500 block mb-1">Basis</span>
+      <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+        <label class="px-3 py-2 cursor-pointer {% if basis == 'cash' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="cash" class="sr-only" {% if basis == 'cash' %}checked{% endif %}>Cash</label>
+        <label class="px-3 py-2 cursor-pointer border-l border-slate-300 {% if basis == 'accrual' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="accrual" class="sr-only" {% if basis == 'accrual' %}checked{% endif %}>Accrual</label>
+      </div>
+    </div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_start">From</label>
+      <input type="date" id="f_start" name="start" value="{{ start|date:'Y-m-d' }}" required></div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_end">To</label>
+      <input type="date" id="f_end" name="end" value="{{ end|date:'Y-m-d' }}" required></div>
+    <button class="btn-primary">Run</button>
+    {% if gl %}<a href="?{{ export_qs }}&export=csv" class="btn-secondary sm:ml-auto">⬇ CSV</a>{% endif %}
+  </div>
+  {% if account %}
+  <div class="flex flex-wrap gap-1.5 text-xs">
+    <span class="text-slate-500 self-center mr-1">Quick picks:</span>
+    {% for p in presets %}
+    <a href="?basis={{ basis }}&account={{ account.pk }}&start={{ p.start|date:'Y-m-d' }}&end={{ p.end|date:'Y-m-d' }}"
+       class="badge {% if active_preset == p.key %}bg-indigo-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">{{ p.label }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+</form>
+
+{% if not account %}
+<div class="card-pad text-center text-slate-500 py-10">
+  <p class="text-3xl mb-2">📖</p>
+  <p>Pick an account above to see every line that touched it, with a link back to the document behind each one.</p>
+</div>
+{% else %}
+<div class="grid sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">Opening balance {{ start|date:"M j" }}</p><p class="val">{% include "accounting/_money.html" with v=gl.opening_balance %}</p></div>
+  <div class="stat"><p class="lbl">Activity</p><p class="val text-base">Dr {% include "accounting/_money.html" with v=total_debit %} <span class="text-slate-300">·</span> Cr {% include "accounting/_money.html" with v=total_credit %}</p></div>
+  <div class="stat border-indigo-200"><p class="lbl">Closing balance {{ end|date:"M j" }}</p><p class="val">{% include "accounting/_money.html" with v=gl.closing_balance %}</p></div>
+</div>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Memo</th><th class="hidden md:table-cell">Source</th><th class="num">Debit</th><th class="num">Credit</th><th class="num">Balance</th></tr></thead>
+    <tbody>
+      <tr class="bg-slate-50 italic text-slate-600">
+        <td>{{ start|date:"M j, Y" }}</td><td colspan="4">Opening balance</td>
+        <td class="num">{% include "accounting/_money.html" with v=gl.opening_balance %}</td>
+      </tr>
+    {% for r in gl.rows %}
+      <tr>
+        <td class="whitespace-nowrap">{{ r.date|date:"M j, Y" }}</td>
+        <td>{% if r.source_url %}<a href="{{ r.source_url }}" class="hover:underline">{{ r.memo }}</a>{% else %}{{ r.memo }}{% endif %}</td>
+        <td class="hidden md:table-cell text-xs text-slate-500">{{ r.source_type }}{% if r.source_id %} #{{ r.source_id }}{% endif %}</td>
+        <td class="num">{% if r.debit %}{% include "accounting/_money.html" with v=r.debit %}{% endif %}</td>
+        <td class="num">{% if r.credit %}{% include "accounting/_money.html" with v=r.credit %}{% endif %}</td>
+        <td class="num font-medium">{% include "accounting/_money.html" with v=r.balance %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="6" class="text-center text-slate-400 py-6">No activity in this account for the period.</td></tr>{% endfor %}
+      <tr class="!bg-slate-100 font-bold border-t-2 border-slate-400">
+        <td>{{ end|date:"M j, Y" }}</td><td colspan="2">Closing balance</td>
+        <td class="num">{% include "accounting/_money.html" with v=total_debit %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=total_credit %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=gl.closing_balance %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<p class="text-xs text-slate-400 mt-2">{{ gl.rows|length }} lines. Balance is shown the natural way for this account: positive for money in an asset, positive for an amount owed, positive for income earned. Click a memo to open the document.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,51 @@
+{# Shared filter bar: basis toggle, period or as-of date, quick presets.
+   Expects: basis, other_basis, show_period, show_as_of, hide_basis, start, end,
+   as_of, presets, active_preset, export_qs, export_csv, export_pdf,
+   optional hidden_name/hidden_value (extra GET param to keep, e.g. account). #}
+<form method="get" class="card-pad mb-4 space-y-3">
+  {% if hidden_name and hidden_value %}<input type="hidden" name="{{ hidden_name }}" value="{{ hidden_value }}">{% endif %}
+  <div class="flex flex-wrap gap-3 items-end field-inline">
+    {% if not hide_basis %}
+    <div>
+      <span class="text-xs text-slate-500 block mb-1">Basis</span>
+      <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm">
+        <label class="px-3 py-2 cursor-pointer {% if basis == 'cash' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="cash" class="sr-only" {% if basis == 'cash' %}checked{% endif %} onchange="this.form.submit()">Cash</label>
+        <label class="px-3 py-2 cursor-pointer border-l border-slate-300 {% if basis == 'accrual' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="accrual" class="sr-only" {% if basis == 'accrual' %}checked{% endif %} onchange="this.form.submit()">Accrual</label>
+      </div>
+    </div>
+    {% endif %}
+    {% if show_period %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_start">From</label>
+      <input type="date" id="f_start" name="start" value="{{ start|date:'Y-m-d' }}" required></div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_end">To</label>
+      <input type="date" id="f_end" name="end" value="{{ end|date:'Y-m-d' }}" required></div>
+    {% endif %}
+    {% if show_as_of %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_as_of">As of</label>
+      <input type="date" id="f_as_of" name="as_of" value="{{ as_of|date:'Y-m-d' }}" required></div>
+    {% endif %}
+    <button class="btn-primary">Run</button>
+    {% if export_csv or export_pdf %}
+    <div class="flex gap-2 sm:ml-auto">
+      {% if export_csv %}<a href="?{{ export_qs }}&export=csv" class="btn-secondary">⬇ CSV</a>{% endif %}
+      {% if export_pdf %}<a href="?{{ export_qs }}&export=pdf" target="_blank" class="btn-secondary">📄 PDF</a>{% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% if show_period %}
+  <div class="flex flex-wrap gap-1.5 text-xs">
+    <span class="text-slate-500 self-center mr-1">Quick picks:</span>
+    {% for p in presets %}
+    <a href="?{% if not hide_basis %}basis={{ basis }}&{% endif %}{% if hidden_name and hidden_value %}{{ hidden_name }}={{ hidden_value }}&{% endif %}start={{ p.start|date:'Y-m-d' }}&end={{ p.end|date:'Y-m-d' }}"
+       class="badge {% if active_preset == p.key %}bg-indigo-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">{{ p.label }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% if not hide_basis and basis_help %}
+  <p class="text-xs text-slate-500">{{ basis_help }}
+    <a href="?{% if hidden_name and hidden_value %}{{ hidden_name }}={{ hidden_value }}&{% endif %}basis={{ other_basis }}{% if show_period %}&start={{ start|date:'Y-m-d' }}&end={{ end|date:'Y-m-d' }}{% endif %}{% if show_as_of %}&as_of={{ as_of|date:'Y-m-d' }}{% endif %}{% if months %}&months={{ months }}{% endif %}"
+       class="text-indigo-600 hover:underline">Switch to {{ other_basis }} basis</a></p>
+  {% endif %}
+</form>

@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Year-end package{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Year-end package</h1>
+    <p class="text-sm text-slate-500">Everything your accountant needs for a year or a month, in one ZIP.</p>
+  </div>
+  <a href="{% url 'accounting_index' %}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+</div>
+
+<div class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 text-sm px-4 py-3 mb-5">
+  The package holds every statement on <b>both</b> bases. Hand your CPA the cash-basis files for the return and keep the accrual files
+  for yourself: they show whether the year actually built equity. A README inside explains each file.
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4 mb-5">
+  <div class="card-pad">
+    <h2 class="font-semibold mb-1">Year-end</h2>
+    <p class="text-xs text-slate-500 mb-3">Fiscal years start in {{ start_month_name }}. The most recent complete year is highlighted.</p>
+    <ul class="divide-y divide-slate-100">
+      {% for y in years %}
+      <li class="flex items-center justify-between gap-3 py-2.5">
+        <div>
+          <p class="font-medium">{{ y.label }} {% if y.default %}<span class="badge bg-indigo-100 text-indigo-700 ml-1">last complete year</span>{% elif not y.complete %}<span class="badge bg-amber-100 text-amber-800 ml-1">in progress</span>{% endif %}</p>
+          <p class="text-xs text-slate-500">{{ y.start|date:"M j, Y" }} – {{ y.end|date:"M j, Y" }}</p>
+        </div>
+        <a href="?year={{ y.year }}" class="{% if y.default %}btn-primary{% else %}btn-secondary{% endif %}">⬇ ZIP</a>
+      </li>
+      {% endfor %}
+    </ul>
+    <form method="get" class="mt-3 flex gap-2 items-end field-inline">
+      <div><label class="text-xs text-slate-500 block mb-1" for="f_year">Another year</label>
+        <input type="number" id="f_year" name="year" min="1990" max="{{ today.year }}" value="{{ default_year }}" class="w-28" required></div>
+      <button class="btn-secondary">⬇ ZIP</button>
+    </form>
+  </div>
+
+  <div class="card-pad">
+    <h2 class="font-semibold mb-1">Month-end</h2>
+    <p class="text-xs text-slate-500 mb-3">Same files for a single month. Handy for a monthly check-in or a bookkeeper.</p>
+    <form method="get" class="flex flex-wrap gap-2 items-end field-inline">
+      <div><label class="text-xs text-slate-500 block mb-1" for="f_month">Month</label>
+        <select id="f_month" name="month" required>
+          <option value="{{ this_month }}">This month so far</option>
+          {% for m in months %}<option value="{{ m.value }}" {% if forloop.first %}selected{% endif %}>{{ m.label }}</option>{% endfor %}
+        </select></div>
+      <button class="btn-primary">⬇ ZIP</button>
+    </form>
+    <p class="text-xs text-slate-400 mt-3">Or type any month in the address bar as <code>?month=YYYY-MM</code>.</p>
+  </div>
+</div>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>File</th><th>What it is</th></tr></thead>
+    <tbody>
+      {% for name, desc in files %}
+      <tr><td class="font-mono text-xs whitespace-nowrap">{{ name }}</td><td class="text-sm">{{ desc }}</td></tr>
+      {% endfor %}
+      <tr><td class="font-mono text-xs">README.txt</td><td class="text-sm">Which basis each file uses and how to read the numbers.</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}

@@ -1,0 +1,61 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Expense categories{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<h1 class="page-title mb-2">Expense categories</h1>
+<p class="text-sm text-slate-500 mb-4">Each category is one line on your profit &amp; loss and one ledger account. Renaming a category renames its account.
+  The Schedule C line and deductible % only matter for the year-end package.</p>
+
+<form method="post" class="card-pad mb-4">
+  {% csrf_token %}<input type="hidden" name="action" value="add">
+  <h2 class="font-semibold text-sm mb-3">Add a category</h2>
+  <div class="grid grid-cols-2 lg:grid-cols-6 gap-3 items-end field-inline text-sm">
+    <div class="col-span-2 lg:col-span-1"><label class="text-xs text-slate-500 block mb-1" for="{{ add_form.name.id_for_label }}">Name *</label>{{ add_form.name }}</div>
+    <div class="col-span-2 lg:col-span-2"><label class="text-xs text-slate-500 block mb-1" for="{{ add_form.description.id_for_label }}">What goes here</label>{{ add_form.description }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ add_form.tax_line.id_for_label }}">Schedule C line</label>{{ add_form.tax_line }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ add_form.deductible_pct.id_for_label }}">Deductible %</label>{{ add_form.deductible_pct }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ add_form.monthly_budget.id_for_label }}">Monthly budget $</label>{{ add_form.monthly_budget }}</div>
+    <div class="col-span-2 lg:col-span-6"><button class="btn-primary">Add category</button></div>
+  </div>
+  {% if add_form.errors %}<div class="mt-2 text-xs text-red-600">{% for field in add_form %}{% for e in field.errors %}<div>{{ field.label }}: {{ e }}</div>{% endfor %}{% endfor %}</div>{% endif %}
+</form>
+
+<div class="card overflow-hidden">
+  <div class="hidden lg:grid grid-cols-12 gap-2 px-4 py-2 text-[11px] uppercase tracking-wider text-slate-500 font-semibold border-b border-slate-200">
+    <div class="col-span-2">Category</div><div class="col-span-2">What goes here</div><div class="col-span-2">Schedule C line</div>
+    <div>Deductible %</div><div>Monthly budget $</div><div class="text-right">{{ year }} spend</div><div>Ledger</div><div class="col-span-2 text-right">Actions</div>
+  </div>
+  {% for r in rows %}
+  <form method="post" class="grid grid-cols-2 lg:grid-cols-12 gap-2 px-4 py-3 border-b border-slate-100 items-center field-inline text-sm {% cycle '' 'bg-slate-50/60' %}">
+    {% csrf_token %}<input type="hidden" name="action" value="update"><input type="hidden" name="id" value="{{ r.cat.pk }}">
+    <div class="col-span-2 lg:col-span-2"><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Category</span>{{ r.form.name }}</div>
+    <div class="col-span-2 lg:col-span-2"><span class="lg:hidden text-[11px] uppercase text-slate-500 block">What goes here</span>{{ r.form.description }}</div>
+    <div class="col-span-2 lg:col-span-2"><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Schedule C line</span>{{ r.form.tax_line }}</div>
+    <div><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Deductible %</span>{{ r.form.deductible_pct }}</div>
+    <div><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Monthly budget $</span>{{ r.form.monthly_budget }}</div>
+    <div class="text-right tabular-nums {% if r.ytd < 0 %}text-red-600{% endif %}"><span class="lg:hidden text-[11px] uppercase text-slate-500 block text-left">{{ year }} spend</span>
+      <a href="{% url 'expense_list' %}?preset=this_year&category={{ r.cat.pk }}" class="hover:underline">${{ r.ytd|floatformat:2|intcomma }}</a>
+      <div class="text-[11px] text-slate-400">{{ r.count }} all time</div></div>
+    <div class="text-xs text-slate-500"><span class="lg:hidden text-[11px] uppercase text-slate-500 block">Ledger</span>{% if r.cat.account %}{{ r.cat.account.code }}{% else %}—{% endif %}</div>
+    <div class="col-span-2 lg:col-span-2 flex justify-end gap-2">
+      <button class="btn-secondary !py-1 !px-3">Save</button>
+      <button type="submit" form="del-{{ r.cat.pk }}" class="btn-danger !py-1 !px-3 disabled:opacity-40 disabled:cursor-not-allowed"
+              {% if r.in_use %}disabled title="In use by {{ r.count }} expense{{ r.count|pluralize }} or a recurring template — move them first"{% endif %}>Delete</button>
+    </div>
+  </form>
+  {% empty %}
+  <p class="text-center text-slate-400 py-10">No categories yet. Add one above — the bank review screen and the register both use them.</p>
+  {% endfor %}
+  {% if rows %}
+  <div class="grid grid-cols-2 lg:grid-cols-12 gap-2 px-4 py-2 text-sm font-bold bg-slate-100">
+    <div class="col-span-1 lg:col-span-8">TOTAL</div>
+    <div class="text-right tabular-nums">${{ ytd_total|floatformat:2|intcomma }}</div>
+    <div class="lg:col-span-3"></div>
+  </div>
+  {% endif %}
+</div>
+{% for r in rows %}
+<form id="del-{{ r.cat.pk }}" method="post" class="hidden" onsubmit="return confirm('Delete category {{ r.cat.name|escapejs }}?')">
+  {% csrf_token %}<input type="hidden" name="action" value="delete"><input type="hidden" name="id" value="{{ r.cat.pk }}"></form>
+{% endfor %}
+{% endblock %}

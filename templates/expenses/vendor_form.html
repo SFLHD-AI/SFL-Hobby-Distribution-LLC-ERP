@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}{% if vendor %}Edit {{ vendor.name }}{% else %}New vendor{% endif %}{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<h1 class="page-title mb-5">{% if vendor %}Edit {{ vendor.name }}{% else %}New vendor{% endif %}</h1>
+<form method="post" class="max-w-3xl space-y-6">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.name %}
+      {% include "expenses/_field.html" with f=form.default_category %}
+    </div>
+    {% include "expenses/_field.html" with f=form.aliases %}
+    {% include "expenses/_field.html" with f=form.active %}
+  </div>
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Taxes</h2>
+    {% include "expenses/_field.html" with f=form.is_1099 %}
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.tax_id_last4 %}
+    </div>
+    <p class="text-xs text-slate-500">Flag independent contractors (photographers, graders, freelancers, show help). Anyone paid $600 or more in a year shows on the 1099 report.</p>
+  </div>
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Contact</h2>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.email %}
+      {% include "expenses/_field.html" with f=form.phone %}
+      {% include "expenses/_field.html" with f=form.website %}
+    </div>
+    {% include "expenses/_field.html" with f=form.account_number %}
+    {% include "expenses/_field.html" with f=form.notes %}
+  </div>
+  <div class="flex gap-2">
+    <button class="btn-primary">Save vendor</button>
+    <a href="{% if vendor %}{% url 'expense_vendor_detail' vendor.pk %}{% else %}{% url 'expense_vendors' %}{% endif %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% if vendor %}
+<form method="post" class="mt-6 max-w-3xl flex items-center gap-3" onsubmit="return confirm('Delete {{ vendor.name|escapejs }}? Its expenses keep the vendor name.')">
+  {% csrf_token %}<input type="hidden" name="action" value="delete">
+  <button class="btn-danger">Delete vendor</button>
+  <span class="text-xs text-slate-500">Prefer "Inactive" if you might pay them again — deleted vendors stop matching the bank feed.</span>
+</form>
+{% endif %}
+{% endblock %}

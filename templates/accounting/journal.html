@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}General journal{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">General journal</h1>
+    <p class="text-sm text-slate-500">{{ basis_label }} · {{ period_text }} · {{ entry_count|intcomma }} entr{{ entry_count|pluralize:"y,ies" }}, {{ row_count|intcomma }} line{{ row_count|pluralize }}</p>
+  </div>
+  <div class="flex items-center gap-3">
+    {% if balanced and not unbalanced %}<span class="badge bg-emerald-100 text-emerald-700">✓ Debits = credits</span>
+    {% else %}<span class="badge bg-red-100 text-red-700">Unbalanced</span>{% endif %}
+    <a href="{% url 'accounting_index' %}?basis={{ basis }}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+  </div>
+</div>
+
+<div class="rounded-xl border border-slate-200 bg-white text-slate-700 text-sm px-4 py-3 mb-4">
+  This is the raw double-entry list your accountant may ask for. The CSV has every line with the source document type and id; it opens in Excel or imports into QuickBooks.
+</div>
+
+{% include "accounting/_period_filter.html" with export_csv=True %}
+
+{% if unbalanced %}
+<div class="rounded-xl border-2 border-red-400 bg-red-50 text-red-800 px-4 py-3 mb-4 text-sm">
+  <b>{{ unbalanced }} entr{{ unbalanced|pluralize:"y,ies" }} do not balance.</b> This should never happen. Tell your administrator.
+</div>
+{% endif %}
+{% if truncated %}
+<div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-800 px-4 py-3 mb-4 text-sm">
+  Showing the first {{ rows|length|intcomma }} of {{ row_count|intcomma }} lines. Download the CSV for the full list, or pick a shorter period.
+</div>
+{% endif %}
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Memo</th><th class="hidden md:table-cell">Source</th><th>Account</th><th class="num">Debit</th><th class="num">Credit</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td class="whitespace-nowrap">{{ r.date|date:"M j, Y" }}</td>
+        <td class="text-sm">{{ r.memo }}</td>
+        <td class="hidden md:table-cell text-xs text-slate-500">{{ r.source_type }}{% if r.source_id %} #{{ r.source_id }}{% endif %}</td>
+        <td><span class="text-slate-400 text-xs mr-1">{{ r.account.code }}</span>{{ r.account.name }}</td>
+        <td class="num">{% if r.debit %}{% include "accounting/_money.html" with v=r.debit %}{% endif %}</td>
+        <td class="num">{% if r.credit %}{% include "accounting/_money.html" with v=r.credit %}{% endif %}</td>
+      </tr>
+    {% empty %}<tr><td colspan="6" class="text-center text-slate-400 py-8">No journal lines in this period.</td></tr>{% endfor %}
+      <tr class="!bg-slate-100 font-bold border-t-2 border-slate-400">
+        <td colspan="4">Totals for the period</td>
+        <td class="num">{% include "accounting/_money.html" with v=total_debit %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=total_credit %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}

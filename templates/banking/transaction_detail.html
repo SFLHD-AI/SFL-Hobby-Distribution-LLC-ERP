@@ -1,0 +1,167 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ txn.description|truncatechars:40 }}{% endblock %}
+{% block header_actions %}
+<a href="{% url 'bank_account_detail' txn.account.pk %}" class="btn-secondary hidden sm:inline-flex">Account register</a>
+<a href="{% url 'bank_inbox' %}" class="btn-secondary">← Inbox</a>
+{% endblock %}
+{% block content %}
+{% include "banking/_subnav.html" %}
+<datalist id="vendorList">{% for v in vendor_names %}<option value="{{ v }}">{% endfor %}</datalist>
+
+<div class="card-pad mb-4 flex flex-wrap items-start justify-between gap-4">
+  <div class="min-w-0">
+    <div class="text-sm text-slate-500">{{ txn.date|date:"l, M j, Y" }} · <a href="{% url 'bank_account_detail' txn.account.pk %}" class="hover:underline">{{ txn.account }}</a>{% if txn.pending %} · <span class="badge bg-slate-200 text-slate-700">pending</span>{% endif %}</div>
+    <h1 class="page-title break-words">{{ txn.description }}</h1>
+    {% if txn.merchant_name %}<p class="text-sm text-slate-600">{{ txn.merchant_name }}</p>{% endif %}
+    <div class="flex flex-wrap gap-1 mt-2">
+      {% if txn.status == 'unreviewed' %}<span class="badge bg-amber-100 text-amber-700">Needs review</span>
+      {% elif txn.status == 'categorized' %}<span class="badge bg-emerald-100 text-emerald-700">{{ txn.category_account.name }}</span>
+      {% elif txn.status == 'matched' %}<span class="badge bg-sky-100 text-sky-700">Matched to a document</span>
+      {% elif txn.status == 'transfer' %}<span class="badge bg-violet-100 text-violet-700">Transfer</span>
+      {% elif txn.status == 'ignored' %}<span class="badge bg-slate-200 text-slate-600">Ignored</span>{% endif %}
+      {% if txn.auto_categorized and txn.rule_applied %}<a href="{% url 'bank_rule_edit' txn.rule_applied.pk %}" class="badge bg-slate-100 text-slate-600 hover:underline">by rule: {{ txn.rule_applied.name }}</a>{% endif %}
+      {% if txn.vendor %}<span class="badge bg-slate-100 text-slate-600">Vendor: {{ txn.vendor.name }}</span>{% endif %}
+    </div>
+  </div>
+  <div class="text-right">
+    <div class="text-3xl font-bold tabular-nums {% if txn.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if txn.amount < 0 %}−{% else %}+{% endif %}${{ txn.abs_amount|floatformat:2|intcomma }}</div>
+    <div class="text-xs text-slate-500">{% if txn.amount < 0 %}money out of{% else %}money into{% endif %} {{ txn.account.name }}</div>
+  </div>
+</div>
+
+<div class="grid lg:grid-cols-5 gap-4">
+  <div class="lg:col-span-3 space-y-4">
+    {# ---- review form ---- #}
+    <div class="card-pad">
+      <h2 class="font-semibold mb-3">{% if txn.status == 'unreviewed' %}What was this for?{% else %}Change the category{% endif %}</h2>
+      {% if txn.status == 'transfer' and txn.transfer_peer %}
+      <p class="text-sm mb-3 text-violet-800 bg-violet-50 border border-violet-200 rounded-lg px-3 py-2">Paired with <a class="underline" href="{% url 'bank_transaction_detail' txn.transfer_peer.pk %}">{{ txn.transfer_peer.description }}</a> in {{ txn.transfer_peer.account.name }} on {{ txn.transfer_peer.date|date:"M j" }}. Transfers move money between your own accounts and do not count as income or expense.</p>
+      {% endif %}
+      {% if txn.status == 'matched' %}
+      <div class="text-sm mb-3 bg-sky-50 border border-sky-200 rounded-lg px-3 py-2 space-y-1">
+        {% if txn.expense %}<p>Linked expense: <strong>{{ txn.expense.vendor }}</strong> — {{ txn.expense.category|default:"no category" }} ${{ txn.expense.amount|floatformat:2|intcomma }}{% if expense_url %} <a class="underline" href="{{ expense_url }}">open</a>{% endif %}</p>{% endif %}
+        {% for p in linked_payments %}<p>Customer payment: {{ p.customer.business_name }} ${{ p.amount|floatformat:2|intcomma }} ({{ p.get_method_display }} {{ p.date|date:"M j" }}) <a class="underline" href="{% url 'payment_detail' p.pk %}">open</a></p>{% endfor %}
+        {% for r in linked_receipts %}<p>Supplier receipt: RCV-{{ r.pk }} {{ r.supplier|default:"" }} ${{ r.landed_total|floatformat:2|intcomma }} <a class="underline" href="{% url 'receipt_detail' r.pk %}">open</a></p>{% endfor %}
+      </div>
+      {% endif %}
+      {% if txn.status == 'categorized' and txn.expense %}
+      <p class="text-sm mb-3 text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">An expense row was created in the register: {% if expense_url %}<a class="underline" href="{{ expense_url }}">{% endif %}{{ txn.expense.vendor }} ${{ txn.expense.amount|floatformat:2|intcomma }}{% if expense_url %}</a>{% endif %}. Attach the receipt here and it shows up there too.</p>
+      {% endif %}
+      <form method="post" class="space-y-3">
+        {% csrf_token %}
+        <div class="grid sm:grid-cols-2 gap-3 field-inline">
+          <div><label class="text-xs text-slate-500 block mb-1">Category</label>
+            {% include "banking/_category_select.html" with name="category" selected=txn.category_account_id|default:txn.suggested_account_id groups=category_groups %}</div>
+          <div><label class="text-xs text-slate-500 block mb-1">Vendor</label>
+            <input type="text" name="vendor" list="vendorList" value="{{ txn.vendor.name|default:'' }}" placeholder="Type to search or add" class="w-full rounded-lg border-slate-300 text-sm"></div>
+          <div class="sm:col-span-2"><label class="text-xs text-slate-500 block mb-1">Note</label>
+            <input type="text" name="note" value="{{ txn.notes }}" class="w-full rounded-lg border-slate-300 text-sm"></div>
+        </div>
+        <label class="inline-flex items-center gap-2 text-sm text-slate-700"><input type="checkbox" name="always" value="1" class="rounded border-slate-300"> Always categorize transactions like this (creates a rule)</label>
+        <div class="flex flex-wrap gap-2 pt-1">
+          <button name="action" value="save" class="btn-primary">Save category</button>
+          <button name="action" value="transfer" class="btn-secondary" title="Pair with the same amount in another account">Transfer</button>
+          <button name="action" value="personal" class="btn-secondary" title="Owner draw / owner contribution">Personal</button>
+          <button name="action" value="ignore" class="btn-secondary text-slate-500">Ignore</button>
+          {% if txn.status != 'unreviewed' %}<button name="action" value="reset" class="btn-secondary ml-auto">Undo review</button>{% endif %}
+        </div>
+      </form>
+    </div>
+
+    {# ---- matching ---- #}
+    {% if txn.status == 'unreviewed' or txn.status == 'categorized' %}
+    <div class="card-pad">
+      <h2 class="font-semibold mb-1">Match to something already recorded</h2>
+      <p class="text-xs text-slate-500 mb-3">Linking avoids double counting: the deposit becomes those customer payments; the card charge becomes that bill or expense.</p>
+      {% if not has_suggestions %}<p class="text-sm text-slate-500">No customer payments, supplier receipts or hand-entered expenses with a matching amount were found.</p>{% endif %}
+
+      {% if sugg.payments or sugg.payment_groups %}
+      <form method="post" class="mb-4">{% csrf_token %}<input type="hidden" name="action" value="link_payments">
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">Customer payments</h3>
+        {% for p in sugg.payments %}
+        <label class="flex items-center gap-2 text-sm py-1"><input type="checkbox" name="payment_ids" value="{{ p.pk }}" class="rounded border-slate-300" {% if sugg.payments|length == 1 %}checked{% endif %}>
+          <span>{{ p.date|date:"M j" }} · {{ p.customer.business_name }} · {{ p.get_method_display }}{% if p.reference %} #{{ p.reference }}{% endif %}</span><span class="ml-auto font-semibold">${{ p.amount|floatformat:2|intcomma }}</span></label>
+        {% endfor %}
+        {% if sugg.payments %}<button class="btn-primary mt-2">Link selected payment{{ sugg.payments|length|pluralize }}</button>{% endif %}
+      </form>
+      {% for group in sugg.payment_groups %}
+      <form method="post" class="mb-3 rounded-lg border border-slate-200 p-3">{% csrf_token %}<input type="hidden" name="action" value="link_payments">
+        <p class="text-xs text-slate-500 mb-1">These {{ group|length }} payments add up to the deposit:</p>
+        {% for p in group %}<input type="hidden" name="payment_ids" value="{{ p.pk }}"><div class="flex text-sm py-0.5"><span>{{ p.date|date:"M j" }} · {{ p.customer.business_name }} · {{ p.get_method_display }}</span><span class="ml-auto">${{ p.amount|floatformat:2|intcomma }}</span></div>{% endfor %}
+        <button class="btn-secondary mt-2">Link these {{ group|length }} payments</button>
+      </form>
+      {% endfor %}
+      {% endif %}
+
+      {% if sugg.receipts %}
+      <form method="post" class="mb-4">{% csrf_token %}<input type="hidden" name="action" value="link_receipts">
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">Supplier receipts (bills)</h3>
+        {% for r in sugg.receipts %}
+        <label class="flex items-center gap-2 text-sm py-1"><input type="checkbox" name="receipt_ids" value="{{ r.pk }}" class="rounded border-slate-300" {% if sugg.receipts|length == 1 %}checked{% endif %}>
+          <span>RCV-{{ r.pk }} · {{ r.supplier|default:"no supplier" }} · {{ r.date|date:"M j" }}{% if r.supplier_invoice_number %} · inv {{ r.supplier_invoice_number }}{% endif %}{% if not r.posted %} · <em>not posted yet</em>{% endif %}</span><span class="ml-auto font-semibold">${{ r.landed_total|floatformat:2|intcomma }}</span></label>
+        {% endfor %}
+        <button class="btn-primary mt-2">Link selected receipt{{ sugg.receipts|length|pluralize }}</button>
+      </form>
+      {% endif %}
+
+      {% if sugg.expenses %}
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">Expenses entered by hand</h3>
+        {% for e in sugg.expenses %}
+        <form method="post" class="flex items-center gap-2 text-sm py-1">{% csrf_token %}<input type="hidden" name="action" value="link_expense"><input type="hidden" name="expense_id" value="{{ e.pk }}">
+          <span>{{ e.date|date:"M j" }} · {{ e.vendor|default:"(no vendor)" }} · {{ e.category|default:"no category" }}{% if e.paid_personally %} · paid personally{% endif %}</span>
+          <span class="ml-auto font-semibold">${{ e.amount|floatformat:2|intcomma }}</span>
+          <button class="btn-secondary !py-1">Link</button>
+        </form>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if sugg.transfer_twins %}
+      <div>
+        <h3 class="text-sm font-semibold text-slate-700 mb-1">Transfer twin in another account</h3>
+        {% for tw in sugg.transfer_twins %}
+        <form method="post" class="flex items-center gap-2 text-sm py-1">{% csrf_token %}<input type="hidden" name="action" value="transfer_with"><input type="hidden" name="peer_id" value="{{ tw.pk }}">
+          <span>{{ tw.date|date:"M j" }} · {{ tw.account.name }} · {{ tw.description|truncatechars:40 }}</span>
+          <span class="ml-auto font-semibold {% if tw.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if tw.amount < 0 %}−{% else %}+{% endif %}${{ tw.abs_amount|floatformat:2|intcomma }}</span>
+          <button class="btn-secondary !py-1">Pair</button>
+        </form>
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="lg:col-span-2 space-y-4">
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">Details</h2>
+      <dl class="grid grid-cols-3 gap-y-1.5">
+        <dt class="text-slate-500">Posted</dt><dd class="col-span-2">{{ txn.posted_date|date:"M j, Y"|default:"—" }}</dd>
+        <dt class="text-slate-500">Check #</dt><dd class="col-span-2">{{ txn.check_number|default:"—" }}</dd>
+        <dt class="text-slate-500">Source</dt><dd class="col-span-2">{{ txn.get_source_display }}{% if txn.import_batch %} · <a class="underline" href="{% url 'bank_inbox' %}?status=all&batch={{ txn.import_batch.pk }}">{{ txn.import_batch.filename|default:txn.import_batch.created_at|date:"M j" }}</a>{% endif %}</dd>
+        {% if txn.original_description and txn.original_description != txn.description %}<dt class="text-slate-500">Bank text</dt><dd class="col-span-2 break-words">{{ txn.original_description }}</dd>{% endif %}
+        {% if txn.external_id %}<dt class="text-slate-500">Bank id</dt><dd class="col-span-2 break-all text-xs">{{ txn.external_id }}</dd>{% endif %}
+        <dt class="text-slate-500">Added</dt><dd class="col-span-2">{{ txn.created_at|date:"M j, Y" }}</dd>
+        {% if txn.reviewed_at %}<dt class="text-slate-500">Reviewed</dt><dd class="col-span-2">{{ txn.reviewed_at|date:"M j, Y" }}{% if txn.reviewed_by %} by {{ txn.reviewed_by.get_full_name|default:txn.reviewed_by.username }}{% endif %}</dd>{% endif %}
+      </dl>
+    </div>
+
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">Receipt</h2>
+      {% if txn.receipt_file %}<p class="mb-2">📎 <a class="underline" href="{{ txn.receipt_file.url }}" target="_blank" rel="noopener">View attached receipt</a></p>{% else %}<p class="text-slate-500 mb-2">No receipt attached. Snap a photo now so you never hunt for it at tax time.</p>{% endif %}
+      <form method="post" enctype="multipart/form-data" class="flex flex-col sm:flex-row gap-2 field-inline">{% csrf_token %}<input type="hidden" name="action" value="upload_receipt">
+        <input type="file" name="receipt_file" accept="image/*,.pdf" capture="environment" required class="text-sm">
+        <button class="btn-secondary">Attach</button>
+      </form>
+    </div>
+
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">History</h2>
+      {% for h in history %}
+      <div class="py-1 border-b border-slate-100 last:border-0"><span class="text-slate-500">{{ h.timestamp|date:"M j, Y g:i a" }}</span> · {{ h.action|cut:"bank_txn_"|capfirst }}{% if h.note %} <span class="text-slate-600">— {{ h.note|truncatechars:60 }}</span>{% endif %}{% if h.user %} <span class="text-slate-400">({{ h.user.username }})</span>{% endif %}</div>
+      {% empty %}<p class="text-slate-500">No review activity yet.</p>{% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

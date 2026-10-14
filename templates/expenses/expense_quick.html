@@ -1,0 +1,107 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Quick add expense{% endblock %}
+{% block content %}
+<div class="max-w-md mx-auto">
+  <div class="flex items-center justify-between mb-4">
+    <h1 class="page-title">Quick add</h1>
+    <div class="flex gap-3 text-sm">
+      <a href="{% url 'expense_create' %}" class="text-slate-500 hover:underline">Full form</a>
+      <a href="{% url 'expense_list' %}" class="text-indigo-600 hover:underline">Register →</a>
+    </div>
+  </div>
+
+  {% if saved %}
+  <div class="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-3 mb-4 text-emerald-900">
+    <div class="font-semibold text-lg">Saved ${{ saved.amount|floatformat:2|intcomma }}{% if saved.vendor %} · {{ saved.vendor }}{% endif %}</div>
+    <div class="text-sm">{{ saved.category|default:"Uncategorized" }} · {{ saved.date|date:"M j" }} ·
+      {% if saved.is_paid %}paid{% if saved.paid_from %} from {{ saved.paid_from.name }}{% elif saved.paid_personally %} personally{% endif %}{% else %}open bill{% endif %}
+      {% if not saved.has_receipt %} · <span class="text-amber-700 font-medium">no receipt</span>{% endif %}</div>
+    <div class="mt-2 flex gap-4 text-sm">
+      <a href="{% url 'expense_edit' saved.pk %}" class="underline">Edit{% if not saved.has_receipt %} / add receipt{% endif %}</a>
+      <a href="{% url 'expense_quick' %}" class="underline font-semibold">Add another</a>
+    </div>
+  </div>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data" class="card-pad space-y-5">
+    {% csrf_token %}
+    {% for e in form.non_field_errors %}<p class="text-sm text-red-600">{{ e }}</p>{% endfor %}
+
+    <div>
+      <label class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1" for="{{ form.amount.id_for_label }}">Amount *</label>
+      <div class="flex items-center gap-2">
+        <span class="text-3xl text-slate-400 font-light">$</span>
+        <input type="number" step="0.01" min="0.01" inputmode="decimal" name="amount" id="{{ form.amount.id_for_label }}"
+               value="{{ form.amount.value|default_if_none:'' }}" required autofocus placeholder="0.00"
+               class="w-full text-4xl font-bold rounded-xl border-slate-300 py-3 px-3 tabular-nums">
+      </div>
+      {% for e in form.amount.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    </div>
+
+    <div>
+      <span class="block text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Receipt</span>
+      <label for="{{ form.receipt_file.id_for_label }}"
+             class="flex items-center justify-center gap-3 rounded-xl border-2 border-dashed border-slate-300 py-5 text-slate-600 cursor-pointer hover:bg-slate-50 active:bg-slate-100">
+        <span class="text-3xl">📷</span><span id="receipt-label" class="text-sm">Take a photo of the receipt</span>
+      </label>
+      <input type="file" name="receipt_file" id="{{ form.receipt_file.id_for_label }}" accept="image/*" capture="environment" class="sr-only"
+             onchange="document.getElementById('receipt-label').textContent = this.files.length ? ('✓ ' + this.files[0].name) : 'Take a photo of the receipt'">
+      {% for e in form.receipt_file.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    </div>
+
+    <div class="field">
+      <label for="{{ form.category.id_for_label }}">Category *</label>
+      {% if chips %}
+      <div class="flex flex-wrap gap-2 mb-2">
+        {% for c in chips %}<button type="button" onclick="pickCat('{{ c.pk }}')" data-cat="{{ c.pk }}"
+            class="chip px-3 py-2 rounded-full border text-sm bg-white border-slate-300 text-slate-700">{{ c.name }}</button>{% endfor %}
+      </div>
+      {% endif %}
+      {{ form.category }}
+      <div class="mt-2">{{ form.new_category }}</div>
+      {% for e in form.category.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+      {% for e in form.new_category.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    </div>
+
+    <div class="field">
+      <label for="{{ form.vendor.id_for_label }}">Vendor</label>
+      {{ form.vendor }}
+      {% for e in form.vendor.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 items-end">
+      <label class="flex items-center gap-2 rounded-xl border border-slate-300 px-3 py-3 text-sm h-[46px]">{{ form.paid }} Already paid</label>
+      <div class="field"><label for="{{ form.paid_from.id_for_label }}">Paid from</label>{{ form.paid_from }}</div>
+    </div>
+    {% for e in form.paid_from.errors %}<p class="text-xs text-red-600">{{ e }}</p>{% endfor %}
+
+    <details class="text-sm" {% if form.note.value or form.errors %}open{% endif %}>
+      <summary class="cursor-pointer text-slate-600 select-none">Date &amp; note</summary>
+      <div class="grid grid-cols-2 gap-3 mt-3">
+        <div class="field"><label for="{{ form.date.id_for_label }}">Date</label>{{ form.date }}
+          {% for e in form.date.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}</div>
+        <div class="field"><label for="{{ form.note.id_for_label }}">Note</label>{{ form.note }}</div>
+      </div>
+    </details>
+
+    <button class="btn-primary w-full py-4 text-lg">Save expense</button>
+    <p class="text-xs text-center text-slate-400">Saved as "Quick capture". You can tidy it up later from the register.</p>
+  </form>
+</div>
+<datalist id="vendor-list">{% for n in vendor_names %}<option value="{{ n }}">{% endfor %}</datalist>
+{% endblock %}
+{% block scripts %}
+<script>
+var catSelect = document.getElementById('{{ form.category.id_for_label }}');
+function syncChips() {
+  var v = catSelect.value;
+  document.querySelectorAll('.chip').forEach(function (b) {
+    var on = b.dataset.cat === v;
+    ['bg-indigo-600', 'text-white', 'border-indigo-600'].forEach(function (c) { b.classList.toggle(c, on); });
+    ['bg-white', 'text-slate-700', 'border-slate-300'].forEach(function (c) { b.classList.toggle(c, !on); });
+  });
+}
+function pickCat(pk) { catSelect.value = pk; syncChips(); }
+if (catSelect) { catSelect.addEventListener('change', syncChips); syncChips(); }
+</script>
+{% endblock %}

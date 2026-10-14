@@ -1,0 +1,98 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Cash vs. accrual{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Cash vs. accrual</h1>
+    <p class="text-sm text-slate-500">{{ period_text }}</p>
+  </div>
+  <a href="{% url 'accounting_index' %}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+</div>
+
+<div class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 text-sm px-4 py-3 mb-4">
+  <b>Cash basis</b> counts money when it moves — that is what your tax return uses.
+  <b>Accrual basis</b> counts sales when invoiced, costs when incurred, and keeps inventory as an asset until it sells — that is the
+  true picture of whether you're building equity. The bridge below explains every dollar between the two.
+</div>
+
+{% include "accounting/_period_filter.html" with export_csv=True export_pdf=True %}
+
+<div class="grid sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">Net income · cash</p><p class="val">{% include "accounting/_money.html" with v=cmp.cash.net_income %}</p></div>
+  <div class="stat"><p class="lbl">Net income · accrual</p><p class="val">{% include "accounting/_money.html" with v=cmp.accrual.net_income %}</p></div>
+  <div class="stat {% if cmp.net_difference > 0 %}border-emerald-200{% elif cmp.net_difference < 0 %}border-red-200{% endif %}">
+    <p class="lbl">Difference (accrual − cash)</p><p class="val">{% include "accounting/_money.html" with v=cmp.net_difference %}</p>
+    <p class="text-xs text-slate-500 mt-1">
+      {% if cmp.net_difference > 0 %}The business did better than the cash number shows.
+      {% elif cmp.net_difference < 0 %}The cash number looks better than the business really did.
+      {% else %}Both bases agree for this period.{% endif %}</p>
+  </div>
+</div>
+
+<div class="card overflow-x-auto mb-5">
+  <table class="tbl">
+    <thead><tr><th>Account</th><th class="num">Cash</th><th class="num">Accrual</th><th class="num">Difference</th></tr></thead>
+    <tbody>
+    {% for sec in sections %}
+      <tr class="bg-slate-50"><td colspan="4" class="text-xs font-bold uppercase tracking-wider text-slate-500">{{ sec.heading }}</td></tr>
+      {% for r in sec.rows %}
+      <tr>
+        <td><span class="text-slate-400 text-xs mr-2">{{ r.account.code }}</span>{{ r.account.name }}</td>
+        <td class="num">{% include "accounting/_money.html" with v=r.cash %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=r.accrual %}</td>
+        <td class="num {% if r.difference == 0 %}text-slate-300{% endif %}">{% include "accounting/_money.html" with v=r.difference %}</td>
+      </tr>
+      {% empty %}<tr><td colspan="4" class="text-slate-400">Nothing in this section for the period.</td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300">
+        <td>Total {{ sec.heading|lower }}</td>
+        <td class="num">{% include "accounting/_money.html" with v=sec.cash %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=sec.accrual %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=sec.difference %}</td>
+      </tr>
+      {% if sec.key == 'cogs' %}
+      <tr class="!bg-indigo-50 font-bold border-y-2 border-indigo-200">
+        <td>Gross profit</td>
+        <td class="num">{% include "accounting/_money.html" with v=cmp.cash.gross_profit %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=cmp.accrual.gross_profit %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=gross_diff %}</td>
+      </tr>
+      {% endif %}
+    {% endfor %}
+      <tr class="!bg-slate-100 font-bold text-lg border-t-2 border-slate-400">
+        <td>Net income</td>
+        <td class="num">{% include "accounting/_money.html" with v=cmp.cash.net_income %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=cmp.accrual.net_income %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=cmp.net_difference %}</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="font-semibold text-slate-800 mb-1">Why they differ</h2>
+<p class="text-sm text-slate-500 mb-3">Start from cash net income, add each row, and you arrive at accrual net income. A positive row means accrual is higher.</p>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Reason</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+      <tr class="font-semibold"><td>Net income on a cash basis</td><td class="num">{% include "accounting/_money.html" with v=cmp.cash.net_income %}</td></tr>
+      {% for b in bridge %}
+      <tr class="{% if b.amount == 0 %}text-slate-500{% endif %}">
+        <td>
+          <div class="font-medium {% if b.amount == 0 %}text-slate-500{% else %}text-slate-800{% endif %}">{{ b.label }}</div>
+          <p class="text-xs text-slate-500 mt-0.5 max-w-2xl">{{ b.explanation }}</p>
+        </td>
+        <td class="num align-top {% if b.amount == 0 %}text-slate-300{% endif %}">{% if b.amount > 0 %}+{% endif %}{% include "accounting/_money.html" with v=b.amount %}</td>
+      </tr>
+      {% endfor %}
+      {% if bridge_unexplained != 0 %}
+      <tr class="text-slate-500">
+        <td><div class="font-medium">Other timing differences</div>
+          <p class="text-xs text-slate-500 mt-0.5 max-w-2xl">Rounding on pro-rata payment splits and inventory valuation true-ups that do not fit a row above.</p></td>
+        <td class="num align-top">{% if bridge_unexplained > 0 %}+{% endif %}{% include "accounting/_money.html" with v=bridge_unexplained %}</td>
+      </tr>
+      {% endif %}
+      <tr class="!bg-slate-100 font-bold text-base border-t-2 border-slate-400"><td>Net income on an accrual basis</td><td class="num">{% include "accounting/_money.html" with v=cmp.accrual.net_income %}</td></tr>
+    </tbody>
+  </table>
+</div>
+{% endblock %}

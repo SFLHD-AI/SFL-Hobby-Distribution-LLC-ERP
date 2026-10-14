@@ -557,6 +557,7 @@ def equity_chart(rows, width=640, height=260):
         bars.append({
             "x": round(cx - bar_w / 2, 1), "y": round(top, 1), "w": round(bar_w, 1),
             "h": round(max(bottom - top, 0.0), 1), "neg": r["equity"] < 0,
+            "d": _bar_path(cx - bar_w / 2, top, bar_w, max(bottom - top, 0.0), r["equity"] < 0),
             "label": r["label"], "value": r["equity"], "cx": round(cx, 1),
             "show_label": (n - 1 - i) % label_every == 0,
             "short": r["month_end"].strftime("%b") if n <= 12 else r["month_end"].strftime("%b %y"),
@@ -566,6 +567,20 @@ def equity_chart(rows, width=640, height=260):
             "zero_y": zero_y, "points": " ".join(points),
             "x_axis_y": pad_top + plot_h, "pad_left": pad_left,
             "plot_right": width - pad_right}
+
+
+def _bar_path(x, y, w, h, neg, radius=4.0):
+    """SVG path for a bar rounded only at its data end (top for positive,
+    bottom for negative) and square at the zero baseline."""
+    if h <= 0:
+        return ""
+    r = min(radius, w / 2, h)
+    x2, y2 = x + w, y + h
+    if neg:      # baseline is the top edge; round the bottom corners
+        return (f"M{x:.1f},{y:.1f} H{x2:.1f} V{y2 - r:.1f} Q{x2:.1f},{y2:.1f} {x2 - r:.1f},{y2:.1f} "
+                f"H{x + r:.1f} Q{x:.1f},{y2:.1f} {x:.1f},{y2 - r:.1f} Z")
+    return (f"M{x:.1f},{y2:.1f} V{y + r:.1f} Q{x:.1f},{y:.1f} {x + r:.1f},{y:.1f} "
+            f"H{x2 - r:.1f} Q{x2:.1f},{y:.1f} {x2:.1f},{y + r:.1f} V{y2:.1f} Z")
 
 
 def _tick_label(v):

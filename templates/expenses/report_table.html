@@ -1,0 +1,95 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <h1 class="page-title">{{ title }}</h1>
+  <div class="flex gap-2">
+    <a href="?{{ export_qs }}&export=csv" class="btn-secondary">⬇ CSV</a>
+    <a href="?{{ export_qs }}&export=pdf" target="_blank" class="btn-secondary">📄 PDF</a>
+  </div>
+</div>
+{% if intro %}<p class="text-sm text-slate-500 mb-4 max-w-3xl">{{ intro }}</p>{% endif %}
+
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline text-sm">
+  {% if show_year %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_year">Year</label>
+      <select name="year" id="f_year">{% for y in years %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></div>
+  {% endif %}
+  {% if show_basis %}
+    <div><span class="text-xs text-slate-500 block mb-1">Basis</span>
+      <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden">
+        <label class="px-3 py-2 cursor-pointer {% if basis == 'cash' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="cash" class="sr-only" {% if basis == 'cash' %}checked{% endif %} onchange="this.form.submit()">Cash (paid date)</label>
+        <label class="px-3 py-2 cursor-pointer border-l border-slate-300 {% if basis == 'accrual' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">
+          <input type="radio" name="basis" value="accrual" class="sr-only" {% if basis == 'accrual' %}checked{% endif %} onchange="this.form.submit()">Accrual (bill date)</label>
+      </div></div>
+  {% endif %}
+  {% if show_period %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_start">From</label><input type="date" id="f_start" name="start" value="{{ start|date:'Y-m-d' }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_end">To</label><input type="date" id="f_end" name="end" value="{{ end|date:'Y-m-d' }}"></div>
+  {% endif %}
+  {% if show_as_of %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_as_of">As of</label><input type="date" id="f_as_of" name="as_of" value="{{ as_of|date:'Y-m-d' }}"></div>
+  {% endif %}
+  {% if show_min %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_min">Only amounts of at least $</label><input type="number" step="0.01" min="0" id="f_min" name="min" value="{{ min_amount|floatformat:2 }}" class="w-28"></div>
+  {% endif %}
+  {% if show_threshold %}
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_threshold">1099 threshold $</label><input type="number" step="1" min="0" id="f_threshold" name="threshold" value="{{ threshold|floatformat:0 }}" class="w-28"></div>
+  {% endif %}
+  <button class="btn-secondary">Run</button>
+</form>
+
+{% if tiles %}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+  {% for t in tiles %}
+  <div class="stat border-l-4 {% if t.tone == 'red' %}border-l-red-500{% elif t.tone == 'orange' %}border-l-orange-400{% elif t.tone == 'amber' %}border-l-amber-400{% else %}border-l-slate-300{% endif %}">
+    <div class="lbl">{{ t.label }}</div><div class="val">${{ t.value|floatformat:2|intcomma }}</div><div class="text-xs text-slate-500">{{ t.count }} bill{{ t.count|pluralize }}</div></div>
+  {% endfor %}
+</div>
+{% endif %}
+{% if summary_pairs %}
+<div class="flex flex-wrap gap-4 mb-4 text-sm">
+  {% for label, value in summary_pairs %}<div class="card px-4 py-2"><span class="text-slate-500">{{ label }}:</span> <span class="font-semibold tabular-nums">${{ value|floatformat:2|intcomma }}</span></div>{% endfor %}
+</div>
+{% endif %}
+
+{% if pre_table %}
+<div class="card mb-4 border-violet-200">
+  <div class="px-4 py-3 border-b border-slate-200 font-semibold text-sm">{{ pre_table.title }}</div>
+  <div class="overflow-x-auto"><table class="tbl">
+    <thead><tr>{% for c in pre_table.columns %}<th {% if forloop.last %}class="num"{% endif %}>{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for row in pre_table.rows %}
+      <tr>{% for cell in row.cells %}<td {% if forloop.last %}class="num"{% endif %}>{% if forloop.first and row.link %}<a href="{{ row.link }}" class="text-indigo-600 hover:underline font-medium">{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>{% endfor %}</tr>
+    {% empty %}<tr><td colspan="{{ pre_table.columns|length }}" class="text-center text-slate-400 py-6">{{ pre_table.empty }}</td></tr>{% endfor %}
+    {% if pre_table.rows %}<tr class="!bg-slate-100 font-bold border-t-2 border-slate-300"><td colspan="{{ pre_table.columns|length|add:'-1' }}">TOTAL</td><td class="num">{{ pre_table.total|floatformat:2|intcomma }}</td></tr>{% endif %}
+    </tbody></table></div>
+</div>
+{% if pre_table.rows %}<h2 class="font-semibold text-sm mb-2">All vendors paid this year</h2>{% endif %}
+{% endif %}
+
+<div class="card overflow-x-auto">
+  <table class="tbl {% if wide %}text-xs{% endif %}">
+    <thead><tr>{% for c in columns %}<th class="{% if not forloop.first %}num{% endif %} {% if forloop.first and sticky_first %}sticky left-0 bg-white z-10{% endif %}">{{ c }}</th>{% endfor %}</tr></thead>
+    <tbody>
+    {% for row in table %}
+      <tr>{% for cell in row.cells %}
+        <td class="{% if not forloop.first %}num tabular-nums{% endif %} {% if forloop.first and sticky_first %}sticky left-0 bg-white z-10 font-medium{% endif %} {% if cell|slice:':1' == '-' %}text-red-600{% endif %}">
+          {% if forloop.first and row.link %}<a href="{{ row.link }}" class="text-indigo-600 hover:underline font-medium" {% if link_hint %}title="{{ link_hint }}"{% endif %}>{{ cell }}</a>{% else %}{{ cell }}{% endif %}</td>
+      {% endfor %}</tr>
+    {% empty %}<tr><td colspan="{{ columns|length }}" class="text-center text-slate-400 py-8">Nothing to show for this selection.</td></tr>{% endfor %}
+    {% if totals %}
+      <tr class="!bg-slate-100 font-bold border-t-2 border-slate-300">
+        {% for cell in totals %}<td class="{% if not forloop.first %}num tabular-nums{% endif %} {% if forloop.first and sticky_first %}sticky left-0 bg-slate-100 z-10{% endif %} {% if cell|slice:':1' == '-' %}text-red-600{% endif %}">{{ cell }}</td>{% endfor %}
+      </tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+<div class="flex flex-wrap justify-between gap-2 mt-2 text-xs text-slate-400">
+  <span>{{ row_count }} row{{ row_count|pluralize }}{% if period %} · {{ period }}{% endif %}</span>
+  {% if note %}<span>{{ note }}</span>{% endif %}
+</div>
+{% endblock %}

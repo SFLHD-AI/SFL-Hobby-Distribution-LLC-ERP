@@ -1,0 +1,107 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Connect a bank{% endblock %}
+{% block header_actions %}
+{% if connections %}<form method="post" action="{% url 'bank_sync_now' %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'bank_connect' %}"><button class="btn-secondary">🔄 Sync all now</button></form>{% endif %}
+{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Connect a bank or card</h1>
+{% include "banking/_subnav.html" %}
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 space-y-4">
+    {% if configured %}
+    <div class="card-pad">
+      <h2 class="font-semibold">Link an account through Plaid</h2>
+      <p class="text-sm text-slate-600 mt-1">You log in at your bank in a secure Plaid window; this system never sees your bank password. New transactions are pulled automatically{% if not sync_enabled %} (automatic sync is currently turned off in Settings){% endif %}, and you can also press "Sync now" any time.</p>
+      {% if env != 'production' %}<p class="text-xs mt-2 text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">Sandbox mode: use Plaid's test bank with user <code>user_good</code> / password <code>pass_good</code>. Switch to Production in Settings to link real banks.</p>{% endif %}
+      <button id="plaidLink" class="btn-primary mt-4">🔗 Connect a bank</button>
+      <p id="plaidError" class="text-sm text-red-600 mt-2 hidden"></p>
+      <form id="exchangeForm" method="post" action="{% url 'bank_connect_exchange' %}" class="hidden">{% csrf_token %}
+        <input type="hidden" name="public_token" id="publicToken"><input type="hidden" name="metadata" id="linkMetadata">
+      </form>
+    </div>
+    {% else %}
+    <div class="card-pad">
+      <h2 class="font-semibold">Automatic bank feeds are not set up yet</h2>
+      <p class="text-sm text-slate-600 mt-1">Bank feeds use <a class="underline" href="https://plaid.com" target="_blank" rel="noopener">Plaid</a>. Once set up, transactions from your checking account and cards arrive here on their own.</p>
+      <ol class="text-sm text-slate-700 list-decimal ml-5 mt-3 space-y-1">
+        <li>Create a free Plaid developer account at dashboard.plaid.com and request Production access for the <em>Transactions</em> product.</li>
+        <li>Copy your <strong>client id</strong> and <strong>secret</strong>.</li>
+        <li>{% if u_is_admin %}Paste them into <a class="underline" href="{% url 'settings_edit' %}">Settings → Bank feed</a>{% else %}Ask an admin to paste them into Settings → Bank feed{% endif %} (or set <code>PLAID_CLIENT_ID</code> / <code>PLAID_SECRET</code> in the .env file) and choose Sandbox or Production.</li>
+        <li>Come back here and press Connect.</li>
+      </ol>
+      <div class="mt-4 rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm">
+        <p class="font-medium">No feed? CSV import works just as well.</p>
+        <p class="text-slate-600 mt-1">Download transactions from your bank's website once a week and <a class="underline" href="{% url 'bank_import' %}">import the file</a>. Duplicates are skipped automatically, and the same rules and review inbox apply.</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <div class="px-4 pt-3 text-sm font-semibold">Connected banks</div>
+      <table class="tbl">
+        <thead><tr><th>Bank</th><th>Accounts</th><th>Status</th><th>Last sync</th><th></th></tr></thead>
+        <tbody>
+        {% for c in connections %}
+          <tr>
+            <td class="font-medium">{{ c.institution_name }}</td>
+            <td class="text-sm">{% for a in c.accounts.all %}<a class="hover:underline" href="{% url 'bank_account_detail' a.pk %}">{{ a.name }}</a>{% if not forloop.last %}, {% endif %}{% empty %}<a class="underline" href="{% url 'bank_connect_accounts' c.pk %}">choose accounts</a>{% endfor %}</td>
+            <td>{% if c.status == 'active' %}<span class="badge bg-emerald-100 text-emerald-700">Active</span>{% elif c.status == 'relink' %}<span class="badge bg-red-100 text-red-700">Re-login needed</span>{% elif c.status == 'error' %}<span class="badge bg-amber-100 text-amber-700">Error</span>{% else %}<span class="badge bg-slate-200 text-slate-600">{{ c.get_status_display }}</span>{% endif %}
+              {% if c.last_error %}<div class="text-xs text-slate-500 max-w-xs truncate" title="{{ c.last_error }}">{{ c.last_error }}</div>{% endif %}</td>
+            <td class="text-sm">{{ c.last_synced_at|naturaltime|default:"never" }}</td>
+            <td class="text-right whitespace-nowrap">
+              {% if c.status != 'disconnected' %}
+              <form method="post" action="{% url 'bank_connection_sync' c.pk %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{% url 'bank_connect' %}"><button class="text-sm text-indigo-600 hover:underline">Sync</button></form>
+              {% if c.status == 'relink' and configured %}<button type="button" class="text-sm text-indigo-600 hover:underline ml-2 plaidRelink">Re-login</button>{% endif %}
+              <form method="post" action="{% url 'bank_connection_disconnect' c.pk %}" class="inline" onsubmit="return confirm('Disconnect {{ c.institution_name }}? Transactions already imported are kept.')">{% csrf_token %}<button class="text-sm text-red-600 hover:underline ml-2">Disconnect</button></form>
+              {% endif %}
+            </td>
+          </tr>
+        {% empty %}<tr><td colspan="5" class="text-center text-slate-500 py-6">No banks connected yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card-pad text-sm text-slate-600 space-y-2">
+    <h2 class="font-semibold text-slate-800">Good to know</h2>
+    <p>Opening balances for connected accounts are set from the bank on the first sync, so the balance here matches your bank from day one.</p>
+    <p>Pending charges show with a <span class="badge bg-slate-200 text-slate-700">pending</span> tag and are replaced when they post. They do not count toward balances until then.</p>
+    <p>If a bank asks you to log in again, the connection shows <span class="badge bg-red-100 text-red-700">Re-login needed</span>; press Re-login to fix it.</p>
+    {% if unlinked_accounts %}<p>Accounts without a feed ({{ unlinked_accounts|join:", " }}) can be attached to a bank when you choose accounts after connecting.</p>{% endif %}
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+{% if configured %}
+<script src="https://cdn.plaid.com/link/v2/stable/link-initialize.js"></script>
+<script>
+(function () {
+  var csrf = document.querySelector('#exchangeForm [name=csrfmiddlewaretoken]').value;
+  var errEl = document.getElementById('plaidError');
+  function showError(msg) { errEl.textContent = msg; errEl.classList.remove('hidden'); }
+  function openLink() {
+    errEl.classList.add('hidden');
+    fetch("{% url 'bank_connect_link_token' %}", {method: 'POST', headers: {'X-CSRFToken': csrf}, credentials: 'same-origin'})
+      .then(function (r) { return r.json().then(function (d) { if (!r.ok) throw new Error(d.error || 'Could not start Plaid.'); return d; }); })
+      .then(function (d) {
+        var handler = Plaid.create({
+          token: d.link_token,
+          onSuccess: function (public_token, metadata) {
+            document.getElementById('publicToken').value = public_token;
+            document.getElementById('linkMetadata').value = JSON.stringify(metadata || {});
+            document.getElementById('exchangeForm').submit();
+          },
+          onExit: function (err) { if (err) showError(err.display_message || err.error_message || 'The bank login was closed.'); }
+        });
+        handler.open();
+      })
+      .catch(function (e) { showError(e.message); });
+  }
+  var btn = document.getElementById('plaidLink');
+  if (btn) btn.addEventListener('click', openLink);
+  document.querySelectorAll('.plaidRelink').forEach(function (b) { b.addEventListener('click', openLink); });
+})();
+</script>
+{% endif %}
+{% endblock %}

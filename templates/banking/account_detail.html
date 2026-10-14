@@ -1,0 +1,100 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ account.name }}{% endblock %}
+{% block header_actions %}
+<a href="{% url 'bank_import' %}?account={{ account.pk }}" class="btn-secondary hidden sm:inline-flex">⬆ Import CSV</a>
+<a href="{% url 'bank_transaction_add' %}?account={{ account.pk }}" class="btn-secondary hidden sm:inline-flex">+ Add</a>
+<a href="{% url 'bank_account_edit' account.pk %}" class="btn-secondary">Edit</a>
+{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-end justify-between gap-3 mb-3">
+  <div>
+    <h1 class="page-title">{{ account }}</h1>
+    <p class="text-sm text-slate-500">{{ account.get_account_type_display }}{% if account.institution %} · {{ account.institution }}{% endif %} · tracking since {{ account.opening_date|date:"M j, Y" }}{% if account.connection %} · feed: {{ account.connection.institution_name }} ({{ account.connection.get_status_display|lower }}){% endif %}</p>
+  </div>
+  <div class="text-right">
+    <div class="text-xs uppercase tracking-wide text-slate-500 font-semibold">{% if account.is_liability %}Balance owed{% else %}Current balance{% endif %}</div>
+    <div class="text-2xl font-bold tabular-nums {% if account.is_liability and balance > 0 or balance < 0 %}text-red-600{% endif %}">${{ balance|floatformat:2|intcomma }}</div>
+    {% if unreviewed %}<a href="{% url 'bank_inbox' %}?account={{ account.pk }}" class="text-xs text-amber-700 underline">{{ unreviewed }} to review</a>{% endif %}
+  </div>
+</div>
+{% include "banking/_subnav.html" %}
+
+<div class="grid lg:grid-cols-3 gap-4 mb-4">
+  <form method="get" class="card-pad lg:col-span-2 field-inline">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-2 items-end text-sm">
+      <div class="col-span-2"><label class="text-xs text-slate-500 block mb-1">Search</label><input type="search" name="q" value="{{ filters.q }}" class="w-full" placeholder="description, check #"></div>
+      <div><label class="text-xs text-slate-500 block mb-1">From</label><input type="date" name="from" value="{{ filters.from }}" class="w-full"></div>
+      <div><label class="text-xs text-slate-500 block mb-1">To</label><input type="date" name="to" value="{{ filters.to }}" class="w-full"></div>
+      <div><label class="text-xs text-slate-500 block mb-1">Status</label><select name="status" class="w-full"><option value="">All</option>{% for v, l in status_choices %}<option value="{{ v }}" {% if filters.status == v %}selected{% endif %}>{{ l }}</option>{% endfor %}</select></div>
+    </div>
+    <div class="flex gap-2 mt-3 items-center">
+      <button class="btn-secondary">Filter</button>
+      <a href="{% url 'bank_account_detail' account.pk %}" class="text-sm text-slate-500 hover:underline">Clear</a>
+      <a href="?{{ querystring }}&export=csv" class="btn-secondary ml-auto">⬇ CSV</a>
+    </div>
+  </form>
+
+  <form method="get" class="card-pad field-inline">
+    <h2 class="font-semibold text-sm mb-2">Check against a statement</h2>
+    <div class="grid grid-cols-2 gap-2 text-sm">
+      <div><label class="text-xs text-slate-500 block mb-1">Statement end date</label><input type="date" name="statement_date" value="{{ filters.statement_date }}" class="w-full" required></div>
+      <div><label class="text-xs text-slate-500 block mb-1">Ending balance $</label><input type="number" step="0.01" name="ending_balance" value="{{ filters.ending_balance }}" class="w-full" required></div>
+    </div>
+    <button class="btn-secondary mt-2 w-full">Compare</button>
+    {% if recon %}
+    <div class="mt-3 text-sm space-y-1 border-t border-slate-100 pt-3">
+      <div class="flex justify-between"><span class="text-slate-500">Statement says</span><span class="font-semibold">${{ recon.ending_balance|floatformat:2|intcomma }}</span></div>
+      <div class="flex justify-between"><span class="text-slate-500">System through {{ recon.statement_date|date:"M j" }}</span><span class="font-semibold">${{ recon.system|floatformat:2|intcomma }}</span></div>
+      <div class="flex justify-between {% if recon.difference == 0 %}text-emerald-700{% else %}text-red-600{% endif %}"><span>Difference</span><span class="font-bold">${{ recon.difference|floatformat:2|intcomma }}</span></div>
+      {% if recon.difference == 0 %}<p class="text-emerald-700 text-xs">Matches. Nothing is missing or doubled through that date.</p>
+      {% else %}<p class="text-xs text-slate-600">Look for a missing or duplicated transaction of exactly this amount. {% if recon.pending %}{{ recon.pending|length }} pending row{{ recon.pending|length|pluralize }} on or before the statement date are not counted.{% endif %}{% if recon.unreviewed_through %} {{ recon.unreviewed_through }} row{{ recon.unreviewed_through|pluralize }} through that date still need review (they do count toward the balance).{% endif %}</p>{% endif %}
+    </div>
+    {% endif %}
+  </form>
+</div>
+
+{% if recon and recon.after %}
+<div class="card mb-4">
+  <div class="px-4 pt-3 text-sm font-semibold">After the statement date ({{ recon.after|length }} shown)</div>
+  <table class="tbl"><tbody>
+  {% for t in recon.after %}<tr><td>{{ t.date|date:"M j" }}</td><td><a class="hover:underline" href="{% url 'bank_transaction_detail' t.pk %}">{{ t.description|truncatechars:50 }}</a></td><td class="num {% if t.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if t.amount < 0 %}−{% else %}+{% endif %}${{ t.abs_amount|floatformat:2|intcomma }}</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Description</th><th>Category / status</th><th class="num">Amount</th>{% if running_ok %}<th class="num">Balance</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for r in register %}
+      <tr class="{% if r.t.status == 'ignored' %}opacity-50{% endif %}">
+        <td class="whitespace-nowrap">{{ r.t.date|date:"M j, Y" }}{% if r.t.pending %} <span class="badge bg-slate-200 text-slate-700">pending</span>{% endif %}</td>
+        <td><a href="{% url 'bank_transaction_detail' r.t.pk %}" class="font-medium hover:underline">{{ r.t.description }}</a>{% if r.t.check_number %} <span class="text-xs text-slate-500">check #{{ r.t.check_number }}</span>{% endif %}{% if r.t.vendor %}<div class="text-xs text-slate-500">{{ r.t.vendor.name }}</div>{% endif %}</td>
+        <td class="text-sm">
+          {% if r.t.status == 'unreviewed' %}<span class="badge bg-amber-100 text-amber-700">Needs review</span>
+          {% elif r.t.status == 'transfer' %}<span class="badge bg-violet-100 text-violet-700">Transfer{% if r.t.transfer_peer %} ↔ {{ r.t.transfer_peer.account.name }}{% endif %}</span>
+          {% elif r.t.status == 'ignored' %}<span class="badge bg-slate-200 text-slate-600">Ignored</span>
+          {% elif r.t.category_account %}{{ r.t.category_account.name }}{% if r.t.status == 'matched' %} <span class="badge bg-sky-100 text-sky-700">matched</span>{% endif %}
+          {% else %}{{ r.t.get_status_display }}{% endif %}
+        </td>
+        <td class="num font-semibold {% if r.t.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if r.t.amount < 0 %}−{% else %}+{% endif %}${{ r.t.abs_amount|floatformat:2|intcomma }}</td>
+        {% if running_ok %}<td class="num text-slate-700">{% if r.running is not None %}${{ r.running|floatformat:2|intcomma }}{% endif %}</td>{% endif %}
+      </tr>
+    {% empty %}
+      <tr><td colspan="5" class="text-center text-slate-500 py-8">No transactions yet. <a class="underline" href="{% url 'bank_import' %}?account={{ account.pk }}">Import a statement</a> or <a class="underline" href="{% url 'bank_transaction_add' %}?account={{ account.pk }}">add one by hand</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if truncated %}<p class="text-xs text-amber-700 mt-2">Showing the first 1,000 rows. Narrow the date range to see the rest.</p>{% endif %}
+{% if not running_ok %}<p class="text-xs text-slate-500 mt-2">The running balance is hidden while a text or status filter is on.</p>{% endif %}
+
+{% if batches %}
+<div class="card mt-4">
+  <div class="px-4 pt-3 text-sm font-semibold">Recent imports</div>
+  <table class="tbl"><thead><tr><th>When</th><th>File</th><th class="num">Imported</th><th class="num">Duplicates</th><th class="num">Skipped</th><th class="num">By rules</th><th>Dates</th></tr></thead><tbody>
+  {% for b in batches %}<tr><td>{{ b.created_at|date:"M j, Y g:i a" }}</td><td><a class="hover:underline" href="{% url 'bank_inbox' %}?status=all&batch={{ b.pk }}">{{ b.filename|default:b.get_source_display }}</a></td><td class="num">{{ b.rows_imported }}</td><td class="num">{{ b.rows_duplicate }}</td><td class="num">{{ b.rows_skipped }}</td><td class="num">{{ b.rows_auto_categorized }}</td><td class="text-xs">{% if b.date_min %}{{ b.date_min|date:"M j" }} – {{ b.date_max|date:"M j, Y" }}{% endif %}</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+{% endblock %}

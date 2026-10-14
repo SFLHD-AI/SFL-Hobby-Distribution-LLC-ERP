@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{% if rule %}Edit rule{% else %}New rule{% endif %}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">{% if rule %}Edit rule: {{ rule.name }}{% else %}New category rule{% endif %}</h1>
+{% include "banking/_subnav.html" %}
+<div class="grid lg:grid-cols-3 gap-4">
+<form method="post" class="card-pad lg:col-span-2 space-y-4">
+  {% csrf_token %}
+  {% include "banking/_field.html" with f=form.name %}
+  <div class="grid sm:grid-cols-3 gap-4">
+    <div class="sm:col-span-2">{% include "banking/_field.html" with f=form.pattern %}</div>
+    {% include "banking/_field.html" with f=form.priority %}
+  </div>
+  <div class="grid sm:grid-cols-3 gap-4">
+    {% include "banking/_field.html" with f=form.match_field %}
+    {% include "banking/_field.html" with f=form.match_type %}
+    {% include "banking/_field.html" with f=form.direction %}
+  </div>
+  <div class="grid sm:grid-cols-3 gap-4">
+    {% include "banking/_field.html" with f=form.account_filter %}
+    {% include "banking/_field.html" with f=form.amount_min %}
+    {% include "banking/_field.html" with f=form.amount_max %}
+  </div>
+  <hr class="border-slate-100">
+  <div class="grid sm:grid-cols-3 gap-4">
+    {% include "banking/_field.html" with f=form.action %}
+    <div class="sm:col-span-2">{% include "banking/_field.html" with f=form.category_account %}</div>
+  </div>
+  {% include "banking/_field.html" with f=form.vendor %}
+  {% include "banking/_field.html" with f=form.auto_confirm %}
+  {% include "banking/_field.html" with f=form.active %}
+  <label class="flex items-start gap-2 py-1 text-sm"><input type="checkbox" name="apply_now" value="1" class="mt-0.5 rounded border-slate-300" checked> <span><span class="font-medium">Apply to the inbox right after saving</span><br><span class="text-xs text-slate-500">Runs this rule on every transaction waiting for review.</span></span></label>
+  {% if form.non_field_errors %}<p class="text-sm text-red-600">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  <div class="flex flex-wrap gap-2">
+    <button class="btn-primary">Save rule</button>
+    <button name="test" value="1" class="btn-secondary" title="Count matching transactions without saving">Test this rule</button>
+    <a href="{% url 'bank_rules' %}" class="btn-secondary ml-auto">Cancel</a>
+  </div>
+</form>
+<div class="space-y-4">
+  {% if test %}
+  <div class="card-pad">
+    <h2 class="font-semibold">Test result</h2>
+    <p class="text-sm mt-1">Would match <strong>{{ test.hits }}</strong> transaction{{ test.hits|pluralize }} waiting for review.</p>
+    {% for t in test.sample %}<div class="text-sm py-1 border-b border-slate-100 last:border-0"><span class="text-slate-500">{{ t.date|date:"M j" }}</span> {{ t.description|truncatechars:40 }} <span class="float-right {% if t.amount < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if t.amount < 0 %}−{% else %}+{% endif %}${{ t.abs_amount|floatformat:2|intcomma }}</span></div>{% endfor %}
+  </div>
+  {% endif %}
+  <div class="card-pad text-sm text-slate-600 space-y-2">
+    <h2 class="font-semibold text-slate-800">Tips</h2>
+    <p><strong>Contains</strong> is right most of the time: "PIRATE SHIP" catches "PIRATE SHIP 8449500000 CA".</p>
+    <p><strong>Direction</strong> keeps refunds from being filed as purchases: a "money out only" rule ignores the credit when a vendor refunds you.</p>
+    <p><strong>Transfer</strong> rules are for credit-card payments and moves between your own accounts; the system looks for the matching amount in another account within 3 days.</p>
+    <p><strong>Ignore</strong> is for things that are not this business at all (a personal card accidentally imported). Use the <em>Personal</em> button in the inbox for owner draws instead so equity stays right.</p>
+  </div>
+  {% if rule %}<div class="card-pad text-sm text-slate-600"><p>Applied <strong>{{ rule.times_applied|intcomma }}</strong> time{{ rule.times_applied|pluralize }}{% if rule.last_applied_at %}, last on {{ rule.last_applied_at|date:"M j, Y" }}{% endif %}.</p></div>{% endif %}
+</div>
+</div>
+{% endblock %}

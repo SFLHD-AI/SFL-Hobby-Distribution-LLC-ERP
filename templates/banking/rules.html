@@ -1,0 +1,35 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Category rules{% endblock %}
+{% block header_actions %}
+<form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'bank_rules' %}"><button class="btn-secondary" {% if not unreviewed %}disabled{% endif %}>⚡ Run on {{ unreviewed }} waiting</button></form>
+<a href="{% url 'bank_rule_create' %}" class="btn-primary">+ New rule</a>
+{% endblock %}
+{% block content %}
+<h1 class="page-title mb-1">Category rules</h1>
+<p class="text-sm text-slate-500 mb-3">"When a transaction looks like X, it is Y." Rules run on every new transaction. Lower priority numbers run first; the first match wins. Tick "Always categorize like this" in the inbox to create one in a click.</p>
+{% include "banking/_subnav.html" %}
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th class="num">Priority</th><th>Rule</th><th>When</th><th>Then</th><th class="num">Hits</th><th>Last hit</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rules %}
+      <tr class="{% if not r.active %}opacity-50{% endif %}">
+        <td class="num">{{ r.priority }}</td>
+        <td><a href="{% url 'bank_rule_edit' r.pk %}" class="font-medium text-indigo-600 hover:underline">{{ r.name }}</a>{% if not r.active %} <span class="badge bg-slate-200 text-slate-600">off</span>{% endif %}</td>
+        <td class="text-sm">{{ r.get_match_field_display|lower }} {{ r.get_match_type_display|lower }} <code class="bg-slate-100 px-1 rounded">{{ r.pattern }}</code>
+          {% if r.direction != 'any' %}<div class="text-xs text-slate-500">{{ r.get_direction_display|lower }}</div>{% endif %}
+          {% if r.account_filter %}<div class="text-xs text-slate-500">only {{ r.account_filter.name }}</div>{% endif %}
+          {% if r.amount_min is not None or r.amount_max is not None %}<div class="text-xs text-slate-500">amount {% if r.amount_min is not None %}≥ ${{ r.amount_min|floatformat:2 }}{% endif %} {% if r.amount_max is not None %}≤ ${{ r.amount_max|floatformat:2 }}{% endif %}</div>{% endif %}</td>
+        <td class="text-sm">{% if r.action == 'categorize' %}{{ r.category_account.name|default:"(no category)" }}{% if r.vendor %} · {{ r.vendor.name }}{% endif %}{% if not r.auto_confirm %} <span class="badge bg-indigo-100 text-indigo-700">suggest only</span>{% endif %}{% else %}{{ r.get_action_display }}{% endif %}</td>
+        <td class="num">{{ r.times_applied|intcomma }}</td>
+        <td class="text-xs text-slate-500">{{ r.last_applied_at|date:"M j, Y"|default:"never" }}</td>
+        <td class="text-right whitespace-nowrap"><a href="{% url 'bank_rule_edit' r.pk %}" class="text-sm text-indigo-600 hover:underline">Edit</a>
+          <form method="post" action="{% url 'bank_rule_delete' r.pk %}" class="inline" onsubmit="return confirm('Remove this rule? Transactions it already categorized stay as they are.')">{% csrf_token %}<button class="text-sm text-red-600 hover:underline ml-2">Remove</button></form></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="text-center text-slate-500 py-8">No rules yet. Categorize a transaction in the inbox and tick "Always categorize like this", or <a class="underline" href="{% url 'bank_rule_create' %}">write one here</a>.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

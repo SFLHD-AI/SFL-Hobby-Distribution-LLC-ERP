@@ -1,0 +1,49 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Bank accounts{% endblock %}
+{% block header_actions %}
+<a href="{% url 'bank_connect' %}" class="btn-secondary hidden sm:inline-flex">🔗 Connect a bank</a>
+<a href="{% url 'bank_account_create' %}" class="btn-primary">+ Add account</a>
+{% endblock %}
+{% block content %}
+<h1 class="page-title mb-3">Bank &amp; card accounts</h1>
+{% include "banking/_subnav.html" %}
+
+<div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><div class="lbl">Cash in the bank</div><div class="val {% if position.cash < 0 %}text-red-600{% endif %}">${{ position.cash|floatformat:2|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">Owed on cards &amp; loans</div><div class="val {% if position.cards > 0 %}text-red-600{% endif %}">${{ position.cards|floatformat:2|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">Net cash position</div><div class="val {% if position.net < 0 %}text-red-600{% endif %}">${{ position.net|floatformat:2|intcomma }}</div><div class="text-xs text-slate-500 mt-1">cash minus what you owe</div></div>
+</div>
+
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Account</th><th>Type</th><th class="num">Balance</th><th class="num">To review</th><th>Last transaction</th><th>Feed</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr {% if not r.account.active %}class="opacity-60"{% endif %}>
+        <td><a href="{% url 'bank_account_detail' r.account.pk %}" class="font-medium text-indigo-600 hover:underline">{{ r.account.name }}</a>{% if r.account.last4 %} <span class="text-xs text-slate-400">••••{{ r.account.last4 }}</span>{% endif %}
+          {% if r.account.is_default %}<span class="badge bg-indigo-100 text-indigo-700 ml-1">default</span>{% endif %}
+          {% if not r.account.active %}<span class="badge bg-slate-200 text-slate-600 ml-1">closed</span>{% endif %}
+          {% if r.account.institution %}<div class="text-xs text-slate-500">{{ r.account.institution }}</div>{% endif %}</td>
+        <td class="text-sm">{{ r.account.get_account_type_display }}</td>
+        <td class="num font-semibold {% if r.account.is_liability and r.balance > 0 %}text-red-600{% elif r.balance < 0 %}text-red-600{% endif %}">${{ r.balance|floatformat:2|intcomma }}{% if r.account.is_liability %}<div class="text-[10px] text-slate-400 font-normal">owed</div>{% endif %}</td>
+        <td class="num">{% if r.unreviewed %}<a href="{% url 'bank_inbox' %}?account={{ r.account.pk }}" class="badge bg-amber-100 text-amber-700">{{ r.unreviewed }}</a>{% else %}<span class="text-slate-400">0</span>{% endif %}</td>
+        <td class="text-sm">{{ r.last_txn|date:"M j, Y"|default:"—" }}</td>
+        <td class="text-sm">
+          {% if r.account.connection %}
+            {% if r.account.connection.status == 'active' %}<span class="badge bg-emerald-100 text-emerald-700">{{ r.account.connection.institution_name }}</span>
+            {% elif r.account.connection.status == 'relink' %}<a href="{% url 'bank_connect' %}" class="badge bg-red-100 text-red-700">Re-login needed</a>
+            {% elif r.account.connection.status == 'error' %}<a href="{% url 'bank_connect' %}" class="badge bg-amber-100 text-amber-700">Feed error</a>
+            {% else %}<span class="badge bg-slate-200 text-slate-600">{{ r.account.connection.get_status_display }}</span>{% endif %}
+            {% if r.account.connection.last_synced_at %}<div class="text-[10px] text-slate-400">synced {{ r.account.connection.last_synced_at|naturaltime }}</div>{% endif %}
+          {% else %}<span class="text-slate-400">CSV / manual</span>{% endif %}
+        </td>
+        <td class="text-right whitespace-nowrap"><a href="{% url 'bank_import' %}?account={{ r.account.pk }}" class="text-sm text-indigo-600 hover:underline">Import</a> · <a href="{% url 'bank_account_edit' r.account.pk %}" class="text-sm text-indigo-600 hover:underline">Edit</a></td>
+      </tr>
+    {% empty %}
+      <tr><td colspan="7" class="text-center text-slate-500 py-8">No accounts yet. <a class="underline" href="{% url 'bank_account_create' %}">Add your checking account and cards</a> to start tracking.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-xs text-slate-500 mt-2">{% if show_inactive %}<a class="underline" href="{% url 'bank_accounts' %}">Hide closed accounts</a>{% else %}<a class="underline" href="?all=1">Show closed accounts</a>{% endif %}</p>
+{% endblock %}

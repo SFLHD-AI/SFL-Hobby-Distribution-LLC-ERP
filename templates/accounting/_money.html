@@ -1,0 +1,1 @@
+{% load humanize %}{% if v is None %}<span class="text-slate-400">—</span>{% elif v < 0 %}<span class="text-red-600">-${{ v|floatformat:2|slice:"1:"|intcomma }}</span>{% else %}${{ v|floatformat:2|intcomma }}{% endif %}

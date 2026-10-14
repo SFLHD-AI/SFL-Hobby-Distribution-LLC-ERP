@@ -1,0 +1,10 @@
+{% with url_name=request.resolver_match.url_name %}
+<nav class="flex flex-wrap gap-1 mb-4 text-sm">
+  <a href="{% url 'bank_inbox' %}" class="px-3 py-1.5 rounded-lg {% if url_name == 'bank_inbox' or url_name == 'bank_transaction_detail' %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">Review inbox{% if nav_unreviewed %} <span class="badge bg-amber-500 text-white ml-1">{{ nav_unreviewed }}</span>{% endif %}</a>
+  <a href="{% url 'bank_accounts' %}" class="px-3 py-1.5 rounded-lg {% if 'bank_account' in url_name %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">Accounts</a>
+  <a href="{% url 'bank_import' %}" class="px-3 py-1.5 rounded-lg {% if 'bank_import' in url_name %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">Import CSV</a>
+  <a href="{% url 'bank_rules' %}" class="px-3 py-1.5 rounded-lg {% if 'bank_rule' in url_name %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">Rules</a>
+  <a href="{% url 'bank_connect' %}" class="px-3 py-1.5 rounded-lg {% if 'bank_connect' in url_name %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">Connect a bank</a>
+  <a href="{% url 'bank_transaction_add' %}" class="px-3 py-1.5 rounded-lg {% if url_name == 'bank_transaction_add' %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">+ Add by hand</a>
+</nav>
+{% endwith %}

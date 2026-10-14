@@ -1,0 +1,37 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Choose accounts{% endblock %}
+{% block content %}
+<h1 class="page-title mb-1">{{ conn.institution_name }}: which accounts should we track?</h1>
+<p class="text-sm text-slate-500 mb-4">Tick the business accounts. Each one becomes a bank account here, or attaches to one you already set up (so its history and rules carry over).</p>
+{% include "banking/_subnav.html" %}
+<form method="post" class="card overflow-x-auto">
+  {% csrf_token %}
+  <table class="tbl">
+    <thead><tr><th>Track</th><th>Account at the bank</th><th>Type</th><th class="num">Balance now</th><th>Set up as</th></tr></thead>
+    <tbody>
+    {% for r in remote %}
+      <tr>
+        <td>{% if r.existing %}<span class="badge bg-emerald-100 text-emerald-700">linked</span>{% else %}<input type="checkbox" name="track_{{ r.external_account_id }}" value="1" class="rounded border-slate-300" {% if r.account_type != 'other' %}checked{% endif %}>{% endif %}</td>
+        <td><div class="font-medium">{{ r.name }}{% if r.mask %} <span class="text-xs text-slate-400">••••{{ r.mask }}</span>{% endif %}</div>{% if r.official_name and r.official_name != r.name %}<div class="text-xs text-slate-500">{{ r.official_name }}</div>{% endif %}</td>
+        <td class="text-sm">{{ r.type|capfirst }}{% if r.subtype %} · {{ r.subtype }}{% endif %}</td>
+        <td class="num">{% if r.current_balance is not None %}${{ r.current_balance|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+        <td class="field-inline">
+          {% if r.existing %}<a class="underline" href="{% url 'bank_account_detail' r.existing.pk %}">{{ r.existing }}</a>
+          {% else %}
+          <select name="map_{{ r.external_account_id }}" class="text-sm">
+            <option value="new">New account: {{ r.official_name|default:r.name|truncatechars:40 }}</option>
+            {% for a in unlinked %}<option value="{{ a.pk }}">Attach to existing: {{ a }}</option>{% endfor %}
+          </select>
+          {% endif %}
+        </td>
+      </tr>
+    {% empty %}<tr><td colspan="5" class="text-center text-slate-500 py-6">Plaid returned no accounts for this login.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  <div class="p-4 flex flex-wrap gap-2 items-center border-t border-slate-100">
+    <button class="btn-primary">Track selected &amp; sync now</button>
+    <a href="{% url 'bank_connect' %}" class="btn-secondary">Back</a>
+    <span class="text-xs text-slate-500 ml-auto">The first sync pulls up to two years of history and sets each new account's opening balance from the bank.</span>
+  </div>
+</form>
+{% endblock %}

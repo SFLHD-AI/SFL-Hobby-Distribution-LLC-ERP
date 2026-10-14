@@ -1,0 +1,82 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Balance sheet{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Balance sheet</h1>
+    <p class="text-sm text-slate-500">{{ basis_label }} · as of {{ as_of|date:"M j, Y" }}</p>
+  </div>
+  <div class="flex items-center gap-3">
+    {% if bs.balanced %}<span class="badge bg-emerald-100 text-emerald-700">✓ Balanced</span>{% endif %}
+    <a href="{% url 'accounting_index' %}?basis={{ basis }}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+  </div>
+</div>
+
+{% if not bs.balanced %}
+<div class="rounded-xl border-2 border-red-400 bg-red-50 text-red-800 px-4 py-3 mb-4 text-sm">
+  <b class="text-base">Out of balance by {% include "accounting/_money.html" with v=bs.difference %}.</b>
+  Assets should equal liabilities plus equity. This should never happen; it usually means a document was edited in a way the
+  ledger could not interpret. Check the <a href="{% url 'accounting_journal' %}?basis={{ basis }}&start={{ bs.fiscal_year_start|date:'Y-m-d' }}&end={{ as_of|date:'Y-m-d' }}" class="underline">journal</a> for the period and tell your administrator.
+</div>
+{% endif %}
+
+{% include "accounting/_period_filter.html" with export_csv=True export_pdf=True %}
+
+<div class="grid sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">Assets</p><p class="val">{% include "accounting/_money.html" with v=bs.total_assets %}</p></div>
+  <div class="stat"><p class="lbl">Liabilities</p><p class="val">{% include "accounting/_money.html" with v=bs.total_liabilities %}</p></div>
+  <div class="stat border-indigo-200"><p class="lbl">Equity</p><p class="val">{% include "accounting/_money.html" with v=bs.total_equity %}</p></div>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <div class="card overflow-x-auto">
+    <table class="tbl">
+      <thead><tr><th class="w-16">Code</th><th>Assets</th><th class="num">Amount</th></tr></thead>
+      <tbody>
+      {% for r in bs.assets %}
+        <tr><td class="text-slate-400 text-xs">{{ r.account.code }}</td>
+          <td><a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ bs.fiscal_year_start|date:'Y-m-d' }}&end={{ as_of|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a></td>
+          <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+      {% empty %}<tr><td></td><td class="text-slate-400" colspan="2">No assets recorded yet.</td></tr>{% endfor %}
+        <tr class="!bg-indigo-50 font-bold text-base border-t-2 border-indigo-200"><td></td><td>Total assets</td><td class="num">{% include "accounting/_money.html" with v=bs.total_assets %}</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="space-y-4">
+    <div class="card overflow-x-auto">
+      <table class="tbl">
+        <thead><tr><th class="w-16">Code</th><th>Liabilities</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+        {% for r in bs.liabilities %}
+          <tr><td class="text-slate-400 text-xs">{{ r.account.code }}</td>
+            <td><a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ bs.fiscal_year_start|date:'Y-m-d' }}&end={{ as_of|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a></td>
+            <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+        {% empty %}<tr><td></td><td class="text-slate-400" colspan="2">Nothing owed.</td></tr>{% endfor %}
+          <tr class="font-semibold border-t border-slate-300"><td></td><td>Total liabilities</td><td class="num">{% include "accounting/_money.html" with v=bs.total_liabilities %}</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card overflow-x-auto">
+      <table class="tbl">
+        <thead><tr><th class="w-16">Code</th><th>Equity</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+        {% for r in bs.equity %}
+          <tr class="{% if r.computed %}italic text-slate-600{% endif %}">
+            <td class="text-slate-400 text-xs">{% if r.account %}{{ r.account.code }}{% endif %}</td>
+            <td>{% if r.account and not r.computed %}<a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}&account={{ r.account.pk }}&start={{ bs.fiscal_year_start|date:'Y-m-d' }}&end={{ as_of|date:'Y-m-d' }}" class="hover:underline">{{ r.account.name }}</a>
+              {% elif r.account %}{{ r.account.name }}{% else %}{{ r.label }}{% endif %}
+              {% if r.computed %}<span class="badge bg-slate-100 text-slate-500 ml-2 not-italic">computed</span>{% endif %}</td>
+            <td class="num">{% include "accounting/_money.html" with v=r.amount %}</td></tr>
+        {% endfor %}
+          <tr class="font-semibold border-t border-slate-300"><td></td><td>Total equity</td><td class="num">{% include "accounting/_money.html" with v=bs.total_equity %}</td></tr>
+          <tr class="!bg-indigo-50 font-bold text-base border-t-2 border-indigo-200"><td></td><td>Total liabilities + equity</td><td class="num">{% include "accounting/_money.html" with v=liab_plus_equity %}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+<p class="text-xs text-slate-400 mt-3">"Retained earnings" is profit from fiscal years before {{ bs.fiscal_year_start|date:"M j, Y" }}; "Net income, fiscal year to date" is this year's profit so far. Both are computed from the income statement, never typed in.
+  {% if basis == 'cash' %}Cash basis has no receivables, inventory or payables.{% endif %}</p>
+{% endblock %}

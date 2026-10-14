@@ -2,16 +2,66 @@
 {% block title %}Reports{% endblock %}
 {% block content %}
 <h1 class="page-title mb-5">Reports</h1>
+
+{% if u_can_see_costs %}
+<h2 class="font-semibold text-slate-700 mb-3">Financial statements</h2>
+<p class="text-sm text-slate-500 mb-3">Built from a double-entry ledger that is rebuilt from your documents on demand. Every statement can be viewed on the <b>cash basis</b> (what the tax return uses) or the <b>accrual basis</b> (the true picture).</p>
+<div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+  <a href="{% url 'accounting_pnl' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📊</p><h2 class="font-semibold">Income statement (P&amp;L)</h2>
+    <p class="text-sm text-slate-500 mt-1">Income, cost of goods, every expense category and net profit for any period — cash or accrual.</p></a>
+  <a href="{% url 'accounting_balance_sheet' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">⚖️</p><h2 class="font-semibold">Balance sheet</h2>
+    <p class="text-sm text-slate-500 mt-1">What you own, what you owe and your equity as of any date. Always balances.</p></a>
+  <a href="{% url 'accounting_compare' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🔀</p><h2 class="font-semibold">Cash vs. accrual</h2>
+    <p class="text-sm text-slate-500 mt-1">Both profit numbers side by side with the bridge that explains the gap: receivables, inventory, unpaid bills.</p></a>
+  <a href="{% url 'accounting_equity_trend' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📈</p><h2 class="font-semibold">Am I building equity?</h2>
+    <p class="text-sm text-slate-500 mt-1">Month-end equity, assets and liabilities for the last 12 months.</p></a>
+  <a href="{% url 'accounting_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🗓️</p><h2 class="font-semibold">Year-end package</h2>
+    <p class="text-sm text-slate-500 mt-1">Everything your tax preparer asks for in one place: statements, trial balance, general ledger exports.</p></a>
+  <a href="{% url 'accounting_index' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📒</p><h2 class="font-semibold">Accounting home</h2>
+    <p class="text-sm text-slate-500 mt-1">Trial balance, general ledger, journal, chart of accounts and the period lock.</p></a>
+</div>
+{% endif %}
+
+<h2 class="font-semibold text-slate-700 mb-3">Expenses &amp; bills</h2>
+<div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+  <a href="{% url 'expense_report_by_month' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🧮</p><h2 class="font-semibold">Expenses by month</h2>
+    <p class="text-sm text-slate-500 mt-1">Each category across the months of the year, against budget.</p></a>
+  <a href="{% url 'expense_report_unpaid_bills' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📬</p><h2 class="font-semibold">Unpaid bills</h2>
+    <p class="text-sm text-slate-500 mt-1">Open expenses and supplier bills by due date — what is coming due and what is late.</p></a>
+  <a href="{% url 'expense_report_missing_receipts' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🧾</p><h2 class="font-semibold">Missing receipts</h2>
+    <p class="text-sm text-slate-500 mt-1">Expenses with no receipt attached. Clear this list monthly and year end is painless.</p></a>
+  <a href="{% url 'expense_report_1099' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">👷</p><h2 class="font-semibold">1099 contractors</h2>
+    <p class="text-sm text-slate-500 mt-1">Contractors paid $600 or more this year, so the 1099-NEC forms are not a scramble in January.</p></a>
+  <a href="{% url 'expense_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📦</p><h2 class="font-semibold">Expense year-end package</h2>
+    <p class="text-sm text-slate-500 mt-1">Totals by Schedule C line, mileage deduction, receipts bundle and the expense register as CSV.</p></a>
+  <a href="{% url 'bank_accounts' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🏦</p><h2 class="font-semibold">Bank &amp; card accounts</h2>
+    <p class="text-sm text-slate-500 mt-1">Balances, last import or sync, and how many transactions still need a review.</p></a>
+</div>
+
+<h2 class="font-semibold text-slate-700 mb-3">Operations</h2>
 <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
   {% if u_can_see_costs %}
   <a href="{% url 'report_inventory_valuation' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📦</p><h2 class="font-semibold">Month-end inventory valuation</h2>
     <p class="text-sm text-slate-500 mt-1">Per-SKU on-hand, unit cost and total value as of any date — computed from the movement ledger.</p></a>
   <a href="{% url 'report_pnl' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">💰</p><h2 class="font-semibold">Monthly P&L</h2>
-    <p class="text-sm text-slate-500 mt-1">Revenue, COGS, gross profit, expenses, net profit for a period.</p></a>
+    <p class="text-2xl mb-2">💰</p><h2 class="font-semibold">Operational P&amp;L (margin view)</h2>
+    <p class="text-sm text-slate-500 mt-1">Invoice revenue, COGS, gross margin, shipping pass-through and expenses for a period.
+      <span class="block text-xs text-slate-400 mt-1">The formal financial statements (cash and accrual) live under Accounting.</span></p></a>
   <a href="{% url 'report_revenue_customer' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🏪</p><h2 class="font-semibold">Revenue & profit by customer</h2>
+    <p class="text-2xl mb-2">🏪</p><h2 class="font-semibold">Revenue &amp; profit by customer</h2>
     <p class="text-sm text-slate-500 mt-1">Who makes you money.</p></a>
   <a href="{% url 'report_revenue_dow' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📅</p><h2 class="font-semibold">Revenue by day of week</h2>
@@ -30,7 +80,7 @@
     <p class="text-2xl mb-2">🏛️</p><h2 class="font-semibold">Sales tax report</h2>
     <p class="text-sm text-slate-500 mt-1">Gross, taxable and tax-exempt sales plus tax collected for any period — defaults to the current quarter for filing.</p></a>
   <a href="{% url 'report_shipping' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🚚</p><h2 class="font-semibold">Shipping & delivery charges</h2>
+    <p class="text-2xl mb-2">🚚</p><h2 class="font-semibold">Shipping &amp; delivery charges</h2>
     <p class="text-sm text-slate-500 mt-1">Shipping billed to customers (and whether it's been paid) vs. what you paid carriers, for any period.</p></a>
   <a href="{% url 'report_ar_aging' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">⏳</p><h2 class="font-semibold">AR aging</h2>

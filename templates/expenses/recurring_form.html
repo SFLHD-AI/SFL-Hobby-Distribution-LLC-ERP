@@ -1,0 +1,52 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{% if template %}Edit {{ template.name }}{% else %}New recurring expense{% endif %}{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<h1 class="page-title mb-5">{% if template %}Edit {{ template.name }}{% else %}New recurring expense{% endif %}</h1>
+<div class="grid lg:grid-cols-3 gap-6">
+<form method="post" class="lg:col-span-2 space-y-6">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.name %}
+      {% include "expenses/_field.html" with f=form.vendor_link %}
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.category %}
+      {% include "expenses/_field.html" with f=form.amount %}
+      {% include "expenses/_field.html" with f=form.frequency %}
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.next_date %}
+      {% include "expenses/_field.html" with f=form.end_date %}
+    </div>
+    {% include "expenses/_field.html" with f=form.note %}
+  </div>
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Payment</h2>
+    {% include "expenses/_field.html" with f=form.auto_mark_paid %}
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.paid_from %}
+    </div>
+    {% include "expenses/_field.html" with f=form.active %}
+  </div>
+  <div class="flex gap-2">
+    <button class="btn-primary">Save template</button>
+    <a href="{% url 'expense_recurring' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% if template %}
+<div class="card">
+  <div class="px-4 py-3 border-b border-slate-200 text-sm font-semibold">Expenses created from this template</div>
+  <table class="tbl"><tbody>
+  {% for e in generated %}
+    <tr><td><a href="{% url 'expense_edit' e.pk %}" class="text-indigo-600 hover:underline">{{ e.date|date:"M j, Y" }}</a></td>
+      <td class="num">${{ e.amount|floatformat:2|intcomma }}</td>
+      <td class="text-xs">{% if e.is_paid %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>{% else %}<span class="badge bg-amber-100 text-amber-700">Unpaid</span>{% endif %}</td></tr>
+  {% empty %}<tr><td class="text-center text-slate-400 py-6">None yet — the first one is created on {{ template.next_date|date:"M j, Y" }}.</td></tr>{% endfor %}
+  </tbody></table>
+</div>
+{% endif %}
+</div>
+{% endblock %}

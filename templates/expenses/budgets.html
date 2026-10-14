@@ -1,0 +1,86 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Budgets {{ year }}{% endblock %}
+{% block head %}
+<style>
+  .budget-table td input { width: 5.25rem; }
+  @media (max-width: 1023px) {
+    .budget-table thead { display: none; }
+    .budget-table tbody tr, .budget-table tfoot tr { display: block; border: 1px solid #e2e8f0; border-radius: .75rem; margin: 0 0 .75rem; padding: .5rem .75rem; background: #fff; }
+    .budget-table tbody td, .budget-table tfoot td { display: flex; justify-content: space-between; align-items: center; gap: .75rem; border: 0 !important; padding: .3rem 0 !important; text-align: right; }
+    .budget-table td::before { content: attr(data-label); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #64748b; font-weight: 600; text-align: left; }
+    .budget-table td.cat { position: static !important; font-size: 1rem; }
+    .budget-table td.cat::before { content: none; }
+    .budget-table tbody tr:hover { background: #fff; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+  <h1 class="page-title">Budgets {{ year }}</h1>
+  <div class="flex flex-wrap gap-1 text-sm">
+    {% for y in years %}<a href="?year={{ y }}" class="px-3 py-1.5 rounded-lg {% if y == year %}bg-slate-900 text-white{% else %}bg-white border border-slate-200 text-slate-700 hover:bg-slate-50{% endif %}">{{ y }}</a>{% endfor %}
+  </div>
+</div>
+<p class="text-sm text-slate-500 mb-4">Type a planned amount per month and press Save all. The small number under each box is what you actually spent (by bill date);
+  <span class="text-red-600 font-semibold">red</span> = over budget, <span class="text-emerald-600 font-semibold">green</span> = under. Leave a box blank for no budget.</p>
+
+<div class="grid grid-cols-3 gap-3 mb-4">
+  <div class="stat"><div class="lbl">Budgeted</div><div class="val">${{ grid.budget_total|floatformat:2|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">Spent</div><div class="val">${{ grid.actual_total|floatformat:2|intcomma }}</div></div>
+  <div class="stat"><div class="lbl">{% if grid.variance_total < 0 %}Over budget{% else %}Left to spend{% endif %}</div>
+    <div class="val {% if grid.variance_total < 0 %}text-red-600{% else %}text-emerald-600{% endif %}">{% if grid.variance_total < 0 %}-${{ grid.variance_total|floatformat:2|intcomma|slice:"1:" }}{% else %}${{ grid.variance_total|floatformat:2|intcomma }}{% endif %}</div></div>
+</div>
+
+<form method="post">
+  {% csrf_token %}<input type="hidden" name="year" value="{{ year }}">
+  <div class="card lg:overflow-x-auto">
+    <table class="tbl budget-table">
+      <thead><tr><th class="sticky left-0 bg-white z-10">Category</th>{% for m in grid.months %}<th class="num">{{ m }}</th>{% endfor %}
+        <th class="num">Budget</th><th class="num">Actual</th><th class="num">Variance</th></tr></thead>
+      <tbody>
+      {% for r in grid.rows %}
+        <tr>
+          <td class="cat font-medium sticky left-0 bg-white z-10 whitespace-nowrap" data-label="Category">{{ r.category.name }}
+            {% if r.default_monthly %}<div class="text-[11px] text-slate-400 font-normal">default ${{ r.default_monthly|floatformat:2 }}/mo</div>{% endif %}</td>
+          {% for c in r.cells %}
+          <td class="num align-top" data-label="{{ c.label }}">
+            <div>
+              <input type="text" inputmode="decimal" name="{{ c.name }}" value="{% if c.budget is not None %}{{ c.budget|floatformat:2 }}{% endif %}" placeholder="—"
+                     class="text-right rounded border-slate-300 text-xs py-1 px-1.5">
+              <div class="text-[11px] mt-0.5 tabular-nums {% if c.state == 'over' %}text-red-600 font-semibold{% elif c.state == 'under' %}text-emerald-600{% else %}text-slate-400{% endif %}">{% if c.actual %}{{ c.actual|floatformat:2|intcomma }}{% else %}·{% endif %}</div>
+            </div>
+          </td>
+          {% endfor %}
+          <td class="num font-medium" data-label="Budget">${{ r.budget_total|floatformat:2|intcomma }}</td>
+          <td class="num" data-label="Actual">${{ r.actual_total|floatformat:2|intcomma }}</td>
+          <td class="num font-semibold {% if r.variance < 0 %}text-red-600{% elif r.budget_total %}text-emerald-600{% else %}text-slate-400{% endif %}" data-label="Variance">{% if r.variance < 0 %}-{% endif %}${% if r.variance < 0 %}{{ r.variance|floatformat:2|intcomma|slice:"1:" }}{% else %}{{ r.variance|floatformat:2|intcomma }}{% endif %}</td>
+        </tr>
+      {% empty %}
+        <tr><td colspan="16" class="text-center text-slate-400 py-10">No categories yet. <a href="{% url 'expense_categories' %}" class="text-indigo-600 hover:underline">Add categories</a> first.</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if grid.rows %}
+      <tfoot>
+        <tr class="!bg-slate-100 font-bold border-t-2 border-slate-300">
+          <td class="cat sticky left-0 bg-slate-100 z-10" data-label="Totals">TOTAL</td>
+          {% for t in grid.month_totals %}<td class="num text-xs" data-label="{{ t.label }}">{{ t.budget|floatformat:2|intcomma }}<div class="text-[11px] font-normal {% if t.actual > t.budget and t.budget %}text-red-600{% else %}text-slate-500{% endif %}">{{ t.actual|floatformat:2|intcomma }}</div></td>{% endfor %}
+          <td class="num" data-label="Budget">${{ grid.budget_total|floatformat:2|intcomma }}</td>
+          <td class="num" data-label="Actual">${{ grid.actual_total|floatformat:2|intcomma }}</td>
+          <td class="num" data-label="Variance"></td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+  <div class="flex flex-wrap gap-2 mt-4 items-center">
+    <button class="btn-primary">Save all</button>
+    <a href="{% url 'expense_report_by_month' %}?year={{ year }}&basis=accrual" class="btn-secondary">Budget vs actual report</a>
+    <span class="text-xs text-slate-400">Saving writes every box on this page for {{ year }}.</span>
+  </div>
+</form>
+{% if has_defaults %}
+<form method="post" class="mt-3">{% csrf_token %}<input type="hidden" name="year" value="{{ year }}"><input type="hidden" name="action" value="fill_defaults">
+  <button class="text-sm text-indigo-600 hover:underline">Fill empty rows from each category's default monthly budget</button></form>
+{% endif %}
+{% endblock %}

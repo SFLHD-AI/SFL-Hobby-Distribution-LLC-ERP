@@ -5,15 +5,14 @@ Every page here reveals costs and profit, so each view carries both
 ``@module_required("accounting")`` and ``@costs_required``. Reports accept
 ``?basis=cash|accrual`` plus ``?export=csv|pdf`` where an export exists.
 """
+import calendar
 from datetime import timedelta
 from decimal import Decimal
 
 from django.contrib import messages
-from django.http import Http404, HttpResponse
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
-from django.urls import reverse
 from django.utils import timezone
-from django.views.decorators.http import require_POST
 
 from accounting import reports as rp
 from accounting.forms import (AccountForm, CODE_RANGES, PeriodLockForm, SystemAccountForm,
@@ -79,7 +78,9 @@ def index(request):
                   snap=pick, snap_other=other, snap_cash=snapshots[CASH],
                   snap_accrual=snapshots[ACCRUAL], trend=trend,
                   equity_gap=snapshots[ACCRUAL]["total_equity"] - snapshots[CASH]["total_equity"],
+                  equity_gap_abs=abs(snapshots[ACCRUAL]["total_equity"] - snapshots[CASH]["total_equity"]),
                   ytd_gap=snapshots[ACCRUAL]["net_income_ytd"] - snapshots[CASH]["net_income_ytd"],
+                  mtd_gap=snapshots[ACCRUAL]["net_income_mtd"] - snapshots[CASH]["net_income_mtd"],
                   fy_start=fy_start, settings_row=settings_row,
                   month_start=today.replace(day=1),
                   account_count=Account.objects.count())
@@ -451,6 +452,7 @@ def year_end(request):
     ctx = _common(request, rp.basis_from_request(request), title="Year-end package",
                   years=years, months=months, default_year=default_year,
                   files=rp.PACKAGE_FILES, start_month=start_month,
+                  start_month_name=calendar.month_name[start_month],
                   hide_period=True, hide_basis=True,
                   this_month=today.strftime("%Y-%m"))
     return render(request, "accounting/year_end.html", ctx)

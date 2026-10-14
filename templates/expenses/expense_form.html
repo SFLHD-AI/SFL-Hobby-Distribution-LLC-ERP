@@ -1,0 +1,77 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{% if expense %}Edit expense{% else %}New expense{% endif %}{% endblock %}
+{% block content %}
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5 max-w-3xl">
+  <h1 class="page-title">{% if expense %}Edit expense{% else %}New expense{% endif %}</h1>
+  {% if expense %}<span class="text-sm text-slate-500">#{{ expense.pk }} · {{ expense.get_source_display }} · added {{ expense.created_at|date:"M j, Y" }}</span>{% endif %}
+</div>
+
+{% if txn %}
+<div class="rounded-lg bg-sky-50 border border-sky-200 text-sky-900 text-sm px-4 py-3 mb-4 max-w-3xl">
+  <strong>Linked to a bank transaction.</strong> {{ txn.date|date:"M j, Y" }} · {{ txn.account.name }} · {{ txn.description }} · ${{ txn.abs_amount|floatformat:2|intcomma }}.
+  The amount, date and paid-from account come from the bank, so they can't be edited here —
+  <a href="{% url 'bank_transaction_detail' txn.pk %}" class="underline font-medium">open the transaction</a> to change them.
+  You can still fix the category, vendor, note and receipt.
+</div>
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" class="max-w-3xl space-y-6">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.non_field_errors }}</div>{% endif %}
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">What</h2>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.date %}
+      {% include "expenses/_field.html" with f=form.amount %}
+      {% include "expenses/_field.html" with f=form.reference %}
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.category %}
+      {% include "expenses/_field.html" with f=form.new_category %}
+    </div>
+    <div class="grid md:grid-cols-2 gap-4">
+      {% include "expenses/_field.html" with f=form.vendor_link %}
+      {% include "expenses/_field.html" with f=form.vendor %}
+    </div>
+    {% include "expenses/_field.html" with f=form.note %}
+    <div>
+      {% include "expenses/_field.html" with f=form.receipt_file %}
+      {% if expense.receipt_file %}<p class="text-xs mt-1"><a href="{{ expense.receipt_file.url }}" target="_blank" class="text-indigo-600 hover:underline">📎 View current receipt</a></p>
+      {% elif txn and txn.receipt_file %}<p class="text-xs mt-1"><a href="{{ txn.receipt_file.url }}" target="_blank" class="text-indigo-600 hover:underline">📎 Receipt is on the bank transaction</a></p>
+      {% elif expense %}<p class="text-xs text-amber-700 mt-1">No receipt on file yet.</p>{% endif %}
+    </div>
+  </div>
+
+  <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Payment</h2>
+    <p class="text-xs text-slate-500">Leave the paid date blank for a bill you haven't paid yet — it stays in Unpaid bills until you mark it paid.
+      Cash-basis reports count an expense on its paid date; accrual reports count it on the bill date.</p>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.paid_date %}
+      {% include "expenses/_field.html" with f=form.paid_from %}
+      {% include "expenses/_field.html" with f=form.payment_method %}
+    </div>
+    <div class="grid md:grid-cols-3 gap-4">
+      {% include "expenses/_field.html" with f=form.due_date %}
+    </div>
+  </div>
+
+  <div class="flex flex-wrap gap-2 items-center">
+    <button class="btn-primary" name="then" value="list">Save</button>
+    {% if not expense %}<button class="btn-secondary" name="then" value="another">Save &amp; add another</button>{% endif %}
+    <a href="{% url 'expense_list' %}" class="btn-secondary">Cancel</a>
+    {% if expense and expense.vendor_link %}<a href="{% url 'expense_vendor_detail' expense.vendor_link.pk %}" class="ml-auto text-sm text-indigo-600 hover:underline">Vendor: {{ expense.vendor_link.name }} →</a>{% endif %}
+  </div>
+</form>
+
+{% if expense and not txn %}
+<form method="post" class="mt-6 max-w-3xl flex items-center gap-3"
+      onsubmit="return confirm('Delete this expense? It can be restored from the activity log.')">
+  {% csrf_token %}<input type="hidden" name="action" value="delete">
+  <button class="btn-danger">Delete expense</button>
+  <span class="text-xs text-slate-500">Nothing is erased for good — deleted rows can be restored.</span>
+</form>
+{% endif %}
+<datalist id="vendor-list">{% for n in vendor_names %}<option value="{{ n }}">{% endfor %}</datalist>
+{% endblock %}

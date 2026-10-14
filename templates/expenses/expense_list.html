@@ -1,59 +1,224 @@
 {% extends "base.html" %}{% load humanize %}
 {% block title %}Expenses{% endblock %}
+{% block header_actions %}
+<a href="{% url 'expense_quick' %}" class="btn-primary">📷 Quick add</a>
+{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-5">
+{% include "expenses/_subnav.html" %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
   <h1 class="page-title">Expenses</h1>
-  <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
+  <div class="flex gap-2">
+    <a href="{% url 'expense_create' %}" class="btn-secondary">+ Full form</a>
+    <a href="?{{ base_qs }}&export=csv" class="btn-secondary">⬇ CSV</a>
+  </div>
 </div>
 
-<form method="post" enctype="multipart/form-data" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+{# ---------- quick add ---------- #}
+<form method="post" enctype="multipart/form-data" class="card-pad mb-4">
   {% csrf_token %}<input type="hidden" name="action" value="add">
-  <div><label class="text-xs text-slate-500 block mb-1">Date</label>
-    <input type="date" name="date" value="{% now 'Y-m-d' %}" required></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Category</label>
-    <select name="category"><option value="">—</option>
-      {% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select></div>
-  <div><label class="text-xs text-slate-500 block mb-1">…or new</label>
-    <input type="text" name="new_category" placeholder="Shipping supplies" class="w-36"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Vendor</label>
-    <input type="text" name="vendor" class="w-36"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Amount $ *</label>
-    <input type="number" step="0.01" min="0.01" name="amount" required class="w-28"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Note</label>
-    <input type="text" name="note" class="w-44"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Receipt</label>
-    <input type="file" name="receipt_file" class="text-xs w-40"></div>
-  <button class="btn-primary">Add expense</button>
+  <div class="flex flex-wrap gap-3 items-end field-inline">
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.date.id_for_label }}">Date</label>{{ quick_form.date }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.category.id_for_label }}">Category *</label>{{ quick_form.category }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.new_category.id_for_label }}">…or new</label>{{ quick_form.new_category }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.vendor.id_for_label }}">Vendor</label>{{ quick_form.vendor }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.amount.id_for_label }}">Amount $ *</label>{{ quick_form.amount }}</div>
+    <label class="flex items-center gap-2 text-sm pb-2">{{ quick_form.paid }} Paid</label>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.paid_from.id_for_label }}">Paid from</label>{{ quick_form.paid_from }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.note.id_for_label }}">Note</label>{{ quick_form.note }}</div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="{{ quick_form.receipt_file.id_for_label }}">Receipt</label>{{ quick_form.receipt_file }}</div>
+    <button class="btn-primary">Add expense</button>
+  </div>
+  {% if quick_form.errors %}
+  <div class="mt-2 text-xs text-red-600 space-y-0.5">
+    {% for field in quick_form %}{% for e in field.errors %}<div>{{ field.label }}: {{ e }}</div>{% endfor %}{% endfor %}
+    {% for e in quick_form.non_field_errors %}<div>{{ e }}</div>{% endfor %}
+  </div>
+  {% endif %}
+  <p class="text-xs text-slate-400 mt-2">Untick "Paid" for a bill you'll pay later — it shows in Unpaid bills until you mark it paid.</p>
 </form>
 
-<form method="get" class="mb-4 flex flex-wrap gap-3 items-end field-inline text-sm">
-  <div><label class="text-xs text-slate-500 block mb-1">From</label><input type="date" name="start" value="{{ request.GET.start }}"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">To</label><input type="date" name="end" value="{{ request.GET.end }}"></div>
-  <div><label class="text-xs text-slate-500 block mb-1">Category</label>
-    <select name="category"><option value="">All</option>
-      {% for c in categories %}<option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select></div>
-  <button class="btn-secondary">Filter</button>
-  <span class="ml-auto text-base">Total shown: <b>${{ total|floatformat:2|intcomma }}</b></span>
-</form>
-
-<div class="card overflow-x-auto">
-  <table class="tbl">
-    <thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th class="num">Amount</th><th>Note</th><th>Receipt</th><th></th></tr></thead>
-    <tbody>
-    {% for e in expenses %}
-      <tr>
-        <td>{{ e.date|date:"M j, Y" }}</td>
-        <td>{{ e.category|default:"—" }}</td>
-        <td>{{ e.vendor }}</td>
-        <td class="num font-semibold">${{ e.amount|floatformat:2|intcomma }}</td>
-        <td class="text-xs text-slate-500">{{ e.note }}</td>
-        <td>{% if e.receipt_file %}<a href="{{ e.receipt_file.url }}" target="_blank" class="text-indigo-600 text-xs hover:underline">view</a>{% endif %}</td>
-        <td><form method="post" onsubmit="return confirm('Delete expense?')">{% csrf_token %}
-          <input type="hidden" name="action" value="del"><input type="hidden" name="id" value="{{ e.pk }}">
-          <button class="text-red-500 text-lg leading-none">×</button></form></td>
-      </tr>
-    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No expenses in range.</td></tr>{% endfor %}
-    </tbody>
-  </table>
+{# ---------- tiles ---------- #}
+<div class="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+  <div class="stat"><div class="lbl">Total shown</div>
+    <div class="val {% if tiles.total < 0 %}text-red-600{% endif %}">${{ tiles.total|floatformat:2|intcomma }}</div>
+    <div class="text-xs text-slate-500">{{ tiles.count }} expense{{ tiles.count|pluralize }}</div></div>
+  <a href="?{{ base_qs }}&status=unpaid" class="stat hover:border-indigo-300"><div class="lbl">Unpaid</div>
+    <div class="val">${{ tiles.unpaid|floatformat:2|intcomma }}</div>
+    <div class="text-xs text-slate-500">{{ tiles.unpaid_count }} open{% if tiles.overdue_count %} · <span class="text-red-600 font-semibold">{{ tiles.overdue_count }} overdue</span>{% endif %}</div></a>
+  <a href="?{{ base_qs }}&receipt=no" class="stat hover:border-indigo-300"><div class="lbl">Missing receipts</div>
+    <div class="val {% if tiles.missing_receipts %}text-amber-600{% endif %}">{{ tiles.missing_receipts }}</div>
+    <div class="text-xs text-slate-500">in this view</div></a>
+  <a href="?{{ base_qs }}&review=yes" class="stat hover:border-indigo-300"><div class="lbl">Needs review</div>
+    <div class="val {% if tiles.needs_review %}text-amber-600{% endif %}">{{ tiles.needs_review }}</div>
+    <div class="text-xs text-slate-500">auto-created, not checked yet</div></a>
 </div>
+
+{# ---------- filters ---------- #}
+<form method="get" class="card-pad mb-4 space-y-3">
+  <div class="flex flex-wrap gap-1.5 text-xs">
+    <span class="text-slate-500 self-center mr-1">Quick picks:</span>
+    {% for key, label in presets %}
+    <a href="?preset={{ key }}{% if filters.category %}&category={{ filters.category }}{% endif %}{% if filters.status %}&status={{ filters.status }}{% endif %}{% if filters.vendor %}&vendor={{ filters.vendor|urlencode }}{% endif %}{% if filters.source %}&source={{ filters.source }}{% endif %}{% if filters.receipt %}&receipt={{ filters.receipt }}{% endif %}{% if filters.review %}&review={{ filters.review }}{% endif %}"
+       class="badge {% if filters.preset == key %}bg-indigo-600 text-white{% else %}bg-slate-100 text-slate-700 hover:bg-slate-200{% endif %}">{{ label }}</a>
+    {% endfor %}
+  </div>
+  <div class="flex flex-wrap gap-3 items-end field-inline text-sm">
+    <input type="hidden" name="preset" value="custom">
+    <div><label class="text-xs text-slate-500 block mb-1">From</label><input type="date" name="start" value="{{ filters.start|date:'Y-m-d' }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">To</label><input type="date" name="end" value="{{ filters.end|date:'Y-m-d' }}"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Category</label>
+      <select name="category"><option value="">All</option>
+        <option value="none" {% if filters.category == 'none' %}selected{% endif %}>Uncategorized</option>
+        {% for c in categories %}<option value="{{ c.pk }}" {% if filters.category == c.pk|stringformat:'s' %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
+      </select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Vendor</label><input type="text" name="vendor" list="vendor-list" value="{{ filters.vendor }}" class="w-36" placeholder="contains…"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Status</label>
+      <select name="status"><option value="">Any</option>
+        <option value="paid" {% if filters.status == 'paid' %}selected{% endif %}>Paid</option>
+        <option value="unpaid" {% if filters.status == 'unpaid' %}selected{% endif %}>Unpaid</option>
+        <option value="overdue" {% if filters.status == 'overdue' %}selected{% endif %}>Overdue</option>
+      </select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Source</label>
+      <select name="source"><option value="">Any</option>
+        {% for v, l in sources %}<option value="{{ v }}" {% if filters.source == v %}selected{% endif %}>{{ l }}</option>{% endfor %}
+      </select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Receipt</label>
+      <select name="receipt"><option value="">Any</option>
+        <option value="yes" {% if filters.receipt == 'yes' %}selected{% endif %}>Has receipt</option>
+        <option value="no" {% if filters.receipt == 'no' %}selected{% endif %}>No receipt</option>
+      </select></div>
+    <label class="flex items-center gap-2 pb-2"><input type="checkbox" name="review" value="yes" {% if filters.review == 'yes' %}checked{% endif %} class="rounded"> Needs review</label>
+    <div><label class="text-xs text-slate-500 block mb-1">Sort</label>
+      <select name="sort">
+        <option value="" {% if not filters.sort %}selected{% endif %}>Newest first</option>
+        <option value="date" {% if filters.sort == 'date' %}selected{% endif %}>Oldest first</option>
+        <option value="-amount" {% if filters.sort == '-amount' %}selected{% endif %}>Biggest first</option>
+        <option value="amount" {% if filters.sort == 'amount' %}selected{% endif %}>Smallest first</option>
+        <option value="vendor" {% if filters.sort == 'vendor' %}selected{% endif %}>Vendor A–Z</option>
+      </select></div>
+    <button class="btn-secondary">Apply</button>
+    <a href="{% url 'expense_list' %}" class="text-slate-500 hover:underline pb-2">Clear</a>
+  </div>
+</form>
+
+{# ---------- table + bulk actions ---------- #}
+<form method="post" id="bulk-form">
+  {% csrf_token %}<input type="hidden" name="action" value="bulk">
+  <div class="card">
+    <div class="flex flex-wrap items-center gap-2 px-4 py-2 border-b border-slate-200 text-sm field-inline">
+      <span class="text-slate-500">With selected:</span>
+      <select name="bulk_action" id="bulk-action" onchange="bulkFields()">
+        <option value="reviewed">Mark reviewed</option>
+        <option value="paid">Mark paid</option>
+        <option value="category">Set category</option>
+      </select>
+      <span id="bulk-paid" class="hidden flex flex-wrap gap-2">{{ bulk_paid_form.paid_date }}{{ bulk_paid_form.paid_from }}{{ bulk_paid_form.payment_method }}</span>
+      <span id="bulk-cat" class="hidden flex flex-wrap gap-2">
+        <select name="category"><option value="">— category —</option>{% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select>
+        <input type="text" name="new_category" placeholder="…or new" class="w-32">
+      </span>
+      <button class="btn-secondary">Apply</button>
+      <span class="ml-auto text-xs text-slate-400">{{ page.paginator.count }} row{{ page.paginator.count|pluralize }}</span>
+    </div>
+    <div class="overflow-x-auto">
+      <table class="tbl">
+        <thead><tr>
+          <th><input type="checkbox" onclick="toggleAll(this)" class="rounded" title="Select all on this page"></th>
+          <th>Date</th><th>Vendor</th><th>Category</th><th>Flags</th><th class="num">Amount</th>
+          <th class="hidden md:table-cell">Paid</th><th class="text-center">📎</th><th class="text-right">Actions</th>
+        </tr></thead>
+        <tbody>
+        {% for e in expenses %}
+          <tr class="{% if not e.is_reviewed %}!bg-amber-50/60{% endif %}">
+            <td><input type="checkbox" name="ids" value="{{ e.pk }}" class="rowcheck rounded"></td>
+            <td class="whitespace-nowrap">{{ e.date|date:"M j, Y" }}</td>
+            <td class="max-w-[16rem]">
+              <a href="{% url 'expense_edit' e.pk %}" class="font-medium text-slate-900 hover:underline">{{ e.vendor|default:"—" }}</a>
+              {% if e.note %}<div class="text-xs text-slate-500 truncate">{{ e.note }}</div>{% endif %}
+              {% if e.reference %}<div class="text-xs text-slate-400">#{{ e.reference }}</div>{% endif %}
+            </td>
+            <td>{% if e.category %}{{ e.category.name }}{% else %}<span class="text-amber-700">Uncategorized</span>{% endif %}</td>
+            <td><div class="flex flex-wrap gap-1">
+              {% if e.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue</span>
+              {% elif not e.is_paid %}<span class="badge bg-amber-100 text-amber-700">Unpaid</span>{% endif %}
+              {% if e.has_receipt %}{% elif e.bank_transaction and e.bank_transaction.receipt_file %}{% else %}<span class="badge bg-rose-50 text-rose-600 border border-rose-200">No receipt</span>{% endif %}
+              {% if e.source == 'bank' %}<span class="badge bg-sky-100 text-sky-700">From bank</span>{% elif e.bank_transaction %}<span class="badge bg-sky-100 text-sky-700">Matched to bank</span>{% endif %}
+              {% if e.source == 'recurring' %}<span class="badge bg-violet-100 text-violet-700">Recurring</span>{% endif %}
+              {% if e.source == 'quick' %}<span class="badge bg-slate-100 text-slate-600">Quick</span>{% endif %}
+              {% if not e.is_reviewed %}<span class="badge bg-amber-500 text-white">Needs review</span>{% endif %}
+            </div></td>
+            <td class="num {% if e.amount < 0 %}text-red-600{% endif %}">${{ e.amount|floatformat:2|intcomma }}</td>
+            <td class="hidden md:table-cell text-xs text-slate-500 whitespace-nowrap">
+              {% if e.is_paid %}{{ e.effective_paid_date|date:"M j" }}{% if e.paid_from %} · {{ e.paid_from.name }}{% elif e.paid_personally %} · paid personally{% endif %}
+              {% else %}{% if e.due_date %}due {{ e.due_date|date:"M j" }}{% else %}open bill{% endif %}{% endif %}
+            </td>
+            <td class="text-center">
+              {% if e.has_receipt %}<a href="{{ e.receipt_file.url }}" target="_blank" title="View receipt">📎</a>
+              {% elif e.bank_transaction and e.bank_transaction.receipt_file %}<a href="{{ e.bank_transaction.receipt_file.url }}" target="_blank" title="View receipt (on bank transaction)">📎</a>
+              {% else %}<a href="{% url 'expense_edit' e.pk %}" class="text-slate-300 hover:text-indigo-600 text-lg leading-none" title="Add receipt">+</a>{% endif %}
+            </td>
+            <td class="whitespace-nowrap text-right text-xs">
+              <a href="{% url 'expense_edit' e.pk %}" class="text-indigo-600 hover:underline">Edit</a>
+              {% if not e.is_paid %} · <button type="button" onclick="openPaid({{ e.pk }})" class="text-emerald-700 hover:underline">Mark paid</button>{% endif %}
+              {% if not e.is_reviewed %} · <button type="button" onclick="rowAction('review', {{ e.pk }}, false)" class="text-amber-700 hover:underline">Reviewed</button>{% endif %}
+              {% if not e.bank_transaction %} · <button type="button" onclick="rowAction('del', {{ e.pk }}, true)" class="text-red-600 hover:underline">Delete</button>{% endif %}
+            </td>
+          </tr>
+        {% empty %}
+          <tr><td colspan="9" class="text-center text-slate-400 py-10">No expenses match these filters.
+            <a href="{% url 'expense_list' %}" class="text-indigo-600 hover:underline">Clear filters</a></td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</form>
+
+{% if page.has_other_pages %}
+<div class="flex items-center justify-between mt-3 text-sm">
+  {% if page.has_previous %}<a href="?{{ base_qs }}&page={{ page.previous_page_number }}" class="btn-secondary">← Prev</a>{% else %}<span></span>{% endif %}
+  <span class="text-slate-500">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+  {% if page.has_next %}<a href="?{{ base_qs }}&page={{ page.next_page_number }}" class="btn-secondary">Next →</a>{% else %}<span></span>{% endif %}
+</div>
+{% endif %}
+
+{# row-level actions live outside the bulk form (no nested forms) #}
+<form method="post" id="rowact" class="hidden">{% csrf_token %}
+  <input type="hidden" name="action" id="rowact-action"><input type="hidden" name="id" id="rowact-id"></form>
+<dialog id="paid-dialog" class="rounded-xl p-0 w-[22rem] max-w-full backdrop:bg-black/40">
+  <form method="post" class="card-pad space-y-3">{% csrf_token %}
+    <input type="hidden" name="action" value="mark_paid"><input type="hidden" name="id" id="paid-id">
+    <h2 class="font-semibold">Mark paid</h2>
+    <div class="field"><label for="{{ mark_paid_form.paid_date.id_for_label }}">Paid on</label>{{ mark_paid_form.paid_date }}</div>
+    <div class="field"><label for="{{ mark_paid_form.paid_from.id_for_label }}">Paid from</label>{{ mark_paid_form.paid_from }}</div>
+    <div class="field"><label for="{{ mark_paid_form.payment_method.id_for_label }}">How</label>{{ mark_paid_form.payment_method }}</div>
+    <div class="flex gap-2 justify-end">
+      <button type="button" onclick="document.getElementById('paid-dialog').close()" class="btn-secondary">Cancel</button>
+      <button class="btn-success">Mark paid</button>
+    </div>
+  </form>
+</dialog>
+<datalist id="vendor-list">{% for n in vendor_names %}<option value="{{ n }}">{% endfor %}</datalist>
+{% endblock %}
+{% block scripts %}
+<script>
+function rowAction(action, id, confirmIt) {
+  if (confirmIt && !confirm('Delete this expense? It can be restored from the activity log.')) return;
+  document.getElementById('rowact-action').value = action;
+  document.getElementById('rowact-id').value = id;
+  document.getElementById('rowact').submit();
+}
+function openPaid(id) {
+  document.getElementById('paid-id').value = id;
+  document.getElementById('paid-dialog').showModal();
+}
+function bulkFields() {
+  var v = document.getElementById('bulk-action').value;
+  document.getElementById('bulk-paid').classList.toggle('hidden', v !== 'paid');
+  document.getElementById('bulk-cat').classList.toggle('hidden', v !== 'category');
+}
+function toggleAll(cb) {
+  document.querySelectorAll('.rowcheck').forEach(function (c) { c.checked = cb.checked; });
+}
+</script>
 {% endblock %}

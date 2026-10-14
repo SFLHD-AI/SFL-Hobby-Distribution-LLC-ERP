@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Add a transaction{% endblock %}
+{% block content %}
+<h1 class="page-title mb-1">Add a transaction by hand</h1>
+<p class="text-sm text-slate-500 mb-4">For cash purchases, a check you wrote, or anything the bank feed missed. It goes to the review inbox like any other transaction.</p>
+{% include "banking/_subnav.html" %}
+<form method="post" class="card-pad max-w-xl space-y-4">
+  {% csrf_token %}
+  {% include "banking/_field.html" with f=form.account %}
+  <div class="grid sm:grid-cols-2 gap-4">
+    {% include "banking/_field.html" with f=form.date %}
+    {% include "banking/_field.html" with f=form.amount %}
+  </div>
+  {% include "banking/_field.html" with f=form.direction %}
+  {% include "banking/_field.html" with f=form.description %}
+  <div class="grid sm:grid-cols-2 gap-4">
+    {% include "banking/_field.html" with f=form.merchant_name %}
+    {% include "banking/_field.html" with f=form.check_number %}
+  </div>
+  {% include "banking/_field.html" with f=form.notes %}
+  {% if form.non_field_errors %}<p class="text-sm text-red-600">{{ form.non_field_errors|join:" " }}</p>{% endif %}
+  <div class="flex gap-2"><button class="btn-primary">Add transaction</button><a href="{% url 'bank_inbox' %}" class="btn-secondary">Cancel</a></div>
+</form>
+{% endblock %}

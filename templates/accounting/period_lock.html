@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Close the books{% endblock %}
+{% block content %}
+<h1 class="page-title mb-1">Close the books</h1>
+<p class="text-sm text-slate-500 mb-5">Once a month or year is filed, close it. Anyone editing a document dated on or before the closed date gets a warning, so last year's numbers stop moving under you.</p>
+
+<div class="max-w-xl space-y-4">
+  <div class="card-pad flex items-center justify-between gap-3">
+    <div>
+      <p class="text-xs font-semibold uppercase tracking-wide text-slate-500">Current status</p>
+      {% if lock.locked_through %}
+        <p class="font-semibold text-lg">Closed through {{ lock.locked_through|date:"M j, Y" }}</p>
+        {% if lock.note %}<p class="text-sm text-slate-500">{{ lock.note }}</p>{% endif %}
+        <p class="text-xs text-slate-400 mt-1">Last changed {{ lock.updated_at|date:"M j, Y g:i A" }}</p>
+      {% else %}
+        <p class="font-semibold text-lg">Open</p>
+        <p class="text-sm text-slate-500">No period is closed. Every date can be edited.</p>
+      {% endif %}
+    </div>
+    {% if lock.locked_through %}<span class="badge bg-amber-100 text-amber-800">Locked</span>{% else %}<span class="badge bg-emerald-100 text-emerald-700">Open</span>{% endif %}
+  </div>
+
+  <form method="post" class="card-pad space-y-4">
+    {% csrf_token %}
+    {% if form.non_field_errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.non_field_errors }}</div>{% endif %}
+    <div class="field">
+      <label for="{{ form.locked_through.id_for_label }}">Books closed through</label>
+      {{ form.locked_through }}
+      {% for e in form.locked_through.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+      <div class="flex flex-wrap gap-1.5 mt-2 text-xs">
+        <button type="button" class="badge bg-slate-100 text-slate-700 hover:bg-slate-200" onclick="setLock('{{ suggest_month|date:'Y-m-d' }}')">End of last month ({{ suggest_month|date:"M j, Y" }})</button>
+        <button type="button" class="badge bg-slate-100 text-slate-700 hover:bg-slate-200" onclick="setLock('{{ suggest_year|date:'Y-m-d' }}')">End of last fiscal year ({{ suggest_year|date:"M j, Y" }})</button>
+      </div>
+    </div>
+    <div class="field">
+      <label for="{{ form.note.id_for_label }}">Note</label>
+      {{ form.note }}
+      {% for e in form.note.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+      <p class="text-xs text-slate-400 mt-1">Optional. Why it was closed, e.g. "Return filed with CPA".</p>
+    </div>
+    <div class="flex flex-wrap gap-2 pt-1">
+      <button class="btn-primary">Save</button>
+      {% if lock.locked_through %}
+      <button name="action" value="clear" class="btn-secondary" onclick="return confirm('Reopen every period? Edits to old documents will no longer warn.')">Reopen all periods</button>
+      {% endif %}
+      <a href="{% url 'accounting_index' %}" class="btn-secondary ml-auto">Cancel</a>
+    </div>
+  </form>
+  <p class="text-xs text-slate-400">Closing is a soft lock: administrators can still fix a document in a closed period, but they are warned first and the change is logged.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+function setLock(v) { var el = document.getElementById('{{ form.locked_through.id_for_label }}'); if (el) el.value = v; }
+</script>
+{% endblock %}

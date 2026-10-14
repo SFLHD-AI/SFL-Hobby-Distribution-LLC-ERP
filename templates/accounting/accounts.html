@@ -1,0 +1,70 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Chart of accounts{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Chart of accounts</h1>
+    <p class="text-sm text-slate-500">Balances on an accrual basis as of {{ as_of|date:"M j, Y" }}</p>
+  </div>
+  <div class="flex flex-wrap items-center gap-2">
+    {% if inactive_count %}
+      {% if show_inactive %}<a href="{% url 'accounting_accounts' %}" class="btn-secondary">Hide inactive</a>
+      {% else %}<a href="?inactive=1" class="btn-secondary">Show {{ inactive_count }} inactive</a>{% endif %}
+    {% endif %}
+    <a href="{% url 'accounting_account_create' %}" class="btn-primary">+ New account</a>
+    <a href="{% url 'accounting_index' %}" class="text-sm text-indigo-600 hover:underline ml-1">← Accounting</a>
+  </div>
+</div>
+
+<div class="rounded-xl border border-slate-200 bg-white text-slate-700 text-sm px-4 py-3 mb-4">
+  Most accounts are created for you: one per expense category (Expenses → Categories) and one per bank or card
+  (<a href="{% url 'bank_accounts' %}" class="text-indigo-600 hover:underline">Banking → Accounts</a>). System accounts are what the
+  ledger posts to and cannot be turned off. Add a custom account only when your accountant asks for a specific line.
+</div>
+
+{% for g in groups %}
+<div class="card overflow-x-auto mb-4">
+  <div class="flex items-center justify-between px-4 pt-3">
+    <h2 class="font-semibold">{{ g.label }} <span class="text-slate-400 font-normal text-sm">({{ g.accounts|length }})</span></h2>
+    <a href="{% url 'accounting_account_create' %}?type={{ g.type }}" class="text-xs text-indigo-600 hover:underline">+ add {{ g.label|lower }} account</a>
+  </div>
+  <table class="tbl mt-1">
+    <thead><tr><th class="w-16">Code</th><th>Name</th><th class="hidden md:table-cell">Subtype</th><th class="hidden sm:table-cell">Source</th><th class="num">Balance</th><th></th></tr></thead>
+    <tbody>
+    {% for a in g.accounts %}
+      <tr class="{% if not a.active %}opacity-60{% endif %}">
+        <td class="text-slate-400 text-xs">{{ a.code }}</td>
+        <td>
+          <a href="{% url 'accounting_account_edit' a.pk %}" class="font-medium hover:underline">{{ a.name }}</a>
+          {% if not a.active %}<span class="badge bg-slate-100 text-slate-500 ml-1">inactive</span>{% endif %}
+          {% if a.description %}<span class="block text-xs text-slate-400 max-w-md truncate">{{ a.description }}</span>{% endif %}
+        </td>
+        <td class="hidden md:table-cell text-xs text-slate-500">{{ a.get_subtype_display }}</td>
+        <td class="hidden sm:table-cell">
+          {% if a.is_system %}<span class="badge bg-indigo-100 text-indigo-700">System</span>
+          {% elif a.linked == 'Expense category' %}<span class="badge bg-emerald-100 text-emerald-700">Expense category</span>
+          {% elif a.linked == 'Bank / card account' %}<span class="badge bg-sky-100 text-sky-700">Bank / card</span>
+          {% else %}<span class="badge bg-slate-100 text-slate-600">Custom</span>{% endif %}
+        </td>
+        <td class="num">{% include "accounting/_money.html" with v=a.current_balance %}</td>
+        <td class="whitespace-nowrap text-right">
+          <a href="{% url 'accounting_general_ledger' %}?basis=accrual&account={{ a.pk }}&start={{ as_of|date:'Y-01-01' }}&end={{ as_of|date:'Y-m-d' }}" class="text-xs text-indigo-600 hover:underline">Ledger</a>
+          <a href="{% url 'accounting_account_edit' a.pk %}" class="text-xs text-indigo-600 hover:underline ml-2">Edit</a>
+          {% if not a.is_system %}
+          <form method="post" class="inline ml-2">{% csrf_token %}
+            <input type="hidden" name="action" value="toggle"><input type="hidden" name="pk" value="{{ a.pk }}">
+            <button class="text-xs {% if a.active %}text-slate-500 hover:text-red-600{% else %}text-emerald-700{% endif %} hover:underline">{% if a.active %}Turn off{% else %}Turn on{% endif %}</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+      <tr class="font-semibold bg-slate-50"><td></td><td>Total {{ g.label|lower }}</td><td class="hidden md:table-cell"></td><td class="hidden sm:table-cell"></td>
+        <td class="num">{% include "accounting/_money.html" with v=g.total %}</td><td></td></tr>
+    </tbody>
+  </table>
+</div>
+{% empty %}
+<div class="card-pad text-center text-slate-500 py-10">No accounts yet. They are created automatically the first time you add a bank account, an expense category or run a statement.</div>
+{% endfor %}
+{% endblock %}

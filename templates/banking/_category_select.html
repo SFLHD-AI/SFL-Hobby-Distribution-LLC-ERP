@@ -1,0 +1,9 @@
+{# usage: {% include "banking/_category_select.html" with name="category" selected=txn.suggested_account_id groups=category_groups required=True %} #}
+<select name="{{ name }}" class="w-full rounded-lg border-slate-300 text-sm{% if extra_class %} {{ extra_class }}{% endif %}" {% if required %}required{% endif %}{% if select_id %} id="{{ select_id }}"{% endif %}>
+  <option value="">{{ blank_label|default:"— pick a category —" }}</option>
+  {% for label, accounts in groups %}
+  <optgroup label="{{ label }}">
+    {% for a in accounts %}<option value="{{ a.pk }}" {% if a.pk == selected %}selected{% endif %}>{{ a.name }}</option>{% endfor %}
+  </optgroup>
+  {% endfor %}
+</select>

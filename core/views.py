@@ -1,6 +1,8 @@
+import logging
 from datetime import timedelta
 from decimal import Decimal
 
+from django.conf import settings as django_settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.db import models
@@ -9,11 +11,69 @@ from django.utils import timezone
 
 from core.forms import CompanySettingsForm, NumberSequenceForm
 from core.models import ActivityLog, CompanySettings, NumberSequence, log_activity
-from core.roles import admin_required, module_required
+from core.roles import admin_required, can_see_costs, module_required
+from core.tasks import money_attention
 from customers.models import Customer, ResaleCertificate
 from inventory.models import Product, Receipt
 from invoicing.models import Invoice
 from orders.models import PurchaseOrder
+
+log = logging.getLogger(__name__)
+
+
+def _money_widgets(user, today):
+    """Everything the dashboard's Money section needs.
+
+    Counts come from ``core.tasks.money_attention`` and are safe for every
+    role. Dollar figures (cash position, profit, equity) are only computed
+    for users who may see costs — one journal build per basis via
+    ``accounting.ledger.dashboard_snapshot`` plus a two-month equity trend.
+    """
+    from accounting.models import ACCRUAL, CASH
+    from banking.models import BankAccount
+
+    ctx = {"attention": money_attention(today), "money": None, "money_error": False}
+    ctx["has_bank_accounts"] = BankAccount.objects.filter(active=True).exists()
+    if not can_see_costs(user):
+        return ctx
+
+    settings_row = CompanySettings.get()
+    default_basis = settings_row.accounting_basis_default or CASH
+    other_basis = ACCRUAL if default_basis == CASH else CASH
+    try:
+        from accounting.ledger import dashboard_snapshot, equity_trend
+
+        rows, cash, cards = [], Decimal("0.00"), Decimal("0.00")
+        for acct in BankAccount.objects.filter(active=True):
+            bal = acct.current_balance
+            rows.append({"account": acct, "balance": bal, "unreviewed": acct.unreviewed_count})
+            if acct.is_liability:
+                cards += bal
+            else:
+                cash += bal
+
+        snaps = {CASH: dashboard_snapshot(CASH, today),
+                 ACCRUAL: dashboard_snapshot(ACCRUAL, today)}
+        trend = equity_trend(ACCRUAL, 2, as_of=today)
+        prev = trend[-2] if len(trend) >= 2 else None
+        ctx["money"] = {
+            "accounts": rows, "cash": cash, "cards": cards, "net": cash - cards,
+            "basis": default_basis, "other_basis": other_basis,
+            "basis_label": "cash" if default_basis == CASH else "accrual",
+            "other_label": "cash" if other_basis == CASH else "accrual",
+            "snap": snaps[default_basis], "snap_other": snaps[other_basis],
+            "equity": snaps[ACCRUAL]["total_equity"],
+            "equity_prev": prev["equity"] if prev else None,
+            "equity_prev_label": prev["label"] if prev else "",
+            "equity_change": trend[-1]["equity_change"] if trend else None,
+            "fy_start": None,
+        }
+        from accounting.ledger import fiscal_year_start
+        ctx["money"]["fy_start"] = fiscal_year_start(today, settings_row.fiscal_year_start_month)
+    except Exception:          # the dashboard must never go down over a ledger edge case
+        log.exception("dashboard money widgets failed")
+        ctx["money_error"] = True
+    return ctx
 
 
 @login_required
@@ -53,14 +113,29 @@ def dashboard(request):
     inbound = Receipt.objects.filter(is_deleted=False, posted=False)[:8]
     recent_pos = PurchaseOrder.objects.filter(is_deleted=False).select_related("customer")[:8]
 
-    return render(request, "core/dashboard.html", {
+    ctx = {
         "today_revenue": today_revenue, "mtd_revenue": mtd_revenue,
         "status_counts": status_counts, "pick_queue": pick_queue,
         "low_stock": low_stock, "ar_total": ar_total, "overdue": overdue,
         "top_debtors": top_debtors, "expiring_certs": expiring_certs,
         "inbound": inbound, "recent_pos": recent_pos,
         "statuses": PurchaseOrder.STATUS_CHOICES,
-    })
+        "today": today, "month_start": month_start,
+    }
+    ctx.update(_money_widgets(request.user, today))
+    if ctx["money_error"]:
+        messages.warning(request, "The money numbers could not be calculated right now. "
+                                  "Everything else on this page is current.")
+    return render(request, "core/dashboard.html", ctx)
+
+
+def plaid_configured(settings_row=None):
+    """True when a Plaid client id AND secret are present, either on the
+    Settings row or in the environment."""
+    settings_row = settings_row or CompanySettings.get()
+    client_id = settings_row.plaid_client_id or getattr(django_settings, "PLAID_CLIENT_ID", "")
+    secret = settings_row.plaid_secret or getattr(django_settings, "PLAID_SECRET", "")
+    return bool(client_id and secret)
 
 
 @admin_required
@@ -82,16 +157,22 @@ def settings_edit(request):
             log_activity(request.user, "settings_updated", obj)
             messages.success(request, "Settings saved.")
             return redirect("settings_edit")
+        messages.error(request, "Settings were not saved — please fix the highlighted fields.")
     else:
         form = CompanySettingsForm(instance=obj)
         seq_forms = [(label, NumberSequenceForm(instance=seq, prefix=f"seq_{seq.key}"))
                      for label, seq in seqs]
     from shipping.providers import get_provider
+    env_plaid = bool(getattr(django_settings, "PLAID_CLIENT_ID", "")
+                     and getattr(django_settings, "PLAID_SECRET", ""))
     return render(request, "core/settings.html", {
         "form": form, "seq_forms": seq_forms,
         "shipstation_configured": get_provider("shipstation").is_configured(),
         "uship_configured": get_provider("uship").is_configured(),
         "shippo_configured": get_provider("shippo").is_configured(),
+        "plaid_configured": plaid_configured(obj),
+        "plaid_from_env": env_plaid and not (obj.plaid_client_id and obj.plaid_secret),
+        "public_base_url": getattr(django_settings, "PUBLIC_BASE_URL", ""),
     })
 
 

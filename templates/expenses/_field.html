@@ -1,0 +1,17 @@
+{# usage: {% include "expenses/_field.html" with f=form.name %} #}
+{% if f.field.widget.input_type == "checkbox" %}
+<div class="flex items-start gap-2 py-1">
+  {{ f }}
+  <div><label for="{{ f.id_for_label }}" class="text-sm font-medium text-slate-800">{{ f.label }}</label>
+    {% if f.help_text %}<p class="text-xs text-slate-500">{{ f.help_text }}</p>{% endif %}
+    {% for e in f.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}</div>
+</div>
+{% else %}
+<div class="field">
+  <label for="{{ f.id_for_label }}">{{ f.label }}{% if f.field.required %} *{% endif %}</label>
+  {{ f }}
+  {% if f.field.disabled %}<p class="text-xs text-slate-400 mt-1">Set by the bank transaction.</p>{% endif %}
+  {% if f.help_text %}<p class="text-xs text-slate-500 mt-1">{{ f.help_text }}</p>{% endif %}
+  {% for e in f.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+</div>
+{% endif %}

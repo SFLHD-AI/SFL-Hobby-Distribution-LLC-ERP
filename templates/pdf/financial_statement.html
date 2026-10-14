@@ -1,0 +1,89 @@
+{% load humanize %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 16mm 16mm 18mm;
+          @bottom-left { content: "{{ company.company_name }} · {{ title }} · {{ subtitle }}"; font-size: 7pt; color: #94a3b8; }
+          @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #94a3b8; } }
+  body { font-family: Helvetica, Arial, sans-serif; color: #1e293b; font-size: 9.5pt; margin: 0; }
+  .top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .company { font-size: 13pt; font-weight: 700; }
+  .muted { color: #64748b; font-size: 8pt; white-space: pre-line; line-height: 1.45; }
+  h1 { font-size: 18pt; font-weight: 300; letter-spacing: 2px; color: #4f46e5; margin: 0; text-align: right; }
+  .subtitle { text-align: right; font-size: 9.5pt; color: #334155; margin-top: 2px; }
+  .badge { display: inline-block; margin-top: 6px; padding: 2px 8px; border-radius: 10px; font-size: 7.5pt; font-weight: 700;
+           letter-spacing: .5px; text-transform: uppercase; }
+  .badge.ok { background: #d1fae5; color: #047857; }
+  .badge.bad { background: #fee2e2; color: #b91c1c; }
+  table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+  thead th { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1px; color: #64748b; text-align: left;
+             padding: 5px 8px; border-bottom: 2px solid #4f46e5; }
+  td { padding: 4.5px 8px; border-bottom: 0.4pt solid #e2e8f0; vertical-align: top; }
+  .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .code { color: #94a3b8; font-size: 8pt; width: 34pt; }
+  tr.section td { padding-top: 12px; font-size: 8pt; font-weight: 700; text-transform: uppercase; letter-spacing: 1px;
+                  color: #475569; border-bottom: 1px solid #cbd5e1; }
+  tr.total td { font-weight: 700; border-top: 1px solid #94a3b8; border-bottom: none; }
+  tr.emph td { font-size: 11pt; border-top: 2px solid #4f46e5; border-bottom: 2px double #4f46e5; padding: 7px 8px; background: #f8fafc; }
+  tr.computed td.label { font-style: italic; color: #475569; }
+  .neg { color: #b91c1c; }
+  .note { color: #64748b; font-size: 8pt; font-weight: 400; margin-left: 6px; }
+  .footnote { margin-top: 18px; color: #64748b; font-size: 8pt; line-height: 1.45; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div>
+    <div class="company">{{ company.company_name }}</div>
+    <div class="muted">{{ company.full_address }}
+{% if company.phone %}{{ company.phone }}{% endif %}{% if company.phone and company.email %} · {% endif %}{{ company.email }}</div>
+  </div>
+  <div>
+    <h1>{{ title|upper }}</h1>
+    <div class="subtitle">{{ subtitle }}</div>
+    <div class="subtitle muted">Generated {{ generated|date:"M j, Y g:i A" }}</div>
+    {% if badge %}<div style="text-align:right"><span class="badge {% if badge_ok %}ok{% else %}bad{% endif %}">{{ badge }}</span></div>{% endif %}
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th class="code"></th>
+      <th>Account</th>
+      {% for c in columns %}<th class="r">{{ c }}</th>{% endfor %}
+    </tr>
+  </thead>
+  <tbody>
+  {% for sec in sections %}
+    {% if sec.heading %}
+    <tr class="section"><td class="code"></td><td colspan="{{ columns|length|add:1 }}">{{ sec.heading }}</td></tr>
+    {% endif %}
+    {% for row in sec.rows %}
+    <tr {% if row.computed %}class="computed"{% endif %}>
+      <td class="code">{{ row.code }}</td>
+      <td class="label">{{ row.label }}{% if row.computed %} <span class="note">(computed)</span>{% endif %}</td>
+      {% for v in row.amounts %}
+      <td class="r">{% include "accounting/_money.html" with v=v %}</td>
+      {% endfor %}
+    </tr>
+    {% empty %}
+      {% if sec.heading %}<tr><td class="code"></td><td colspan="{{ columns|length|add:1 }}" class="muted">Nothing recorded in this section.</td></tr>{% endif %}
+    {% endfor %}
+    <tr class="total {% if sec.emphasis %}emph{% endif %}">
+      <td class="code"></td>
+      <td>{{ sec.total_label }}{% if sec.note %}<span class="note">{{ sec.note }}</span>{% endif %}</td>
+      {% for v in sec.totals %}
+      <td class="r">{% include "accounting/_money.html" with v=v %}</td>
+      {% endfor %}
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+
+{% if footnote %}<p class="footnote">{{ footnote }}</p>{% endif %}
+<p class="footnote">Every figure is rebuilt from the underlying documents (invoices, payments, supplier receipts,
+bank and card transactions, expenses and stock movements). Negative amounts are shown with a leading minus sign.</p>
+</body>
+</html>

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<h1 class="page-title mb-1">{{ title }}</h1>
+<p class="text-sm text-slate-500 mb-5">{% if account and account.is_system %}This is a system account the ledger posts to. You can rename it or change the note; the code, type and subtype are fixed.{% elif account %}Changing the type or subtype moves the account to a different section of the statements.{% else %}Add an account for something the system does not create automatically, such as a loan or equipment.{% endif %}</p>
+
+<form method="post" class="max-w-xl card-pad space-y-5">
+  {% csrf_token %}
+  {% if form.non_field_errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.non_field_errors }}</div>{% endif %}
+
+  {% if account and account.is_system %}
+  <div class="grid grid-cols-3 gap-3 text-sm">
+    <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Code</p><p class="font-medium">{{ account.code }}</p></div>
+    <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Type</p><p class="font-medium">{{ account.get_type_display }}</p></div>
+    <div><p class="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-1">Subtype</p><p class="font-medium">{{ account.get_subtype_display }}</p></div>
+  </div>
+  {% else %}
+  <div class="grid sm:grid-cols-3 gap-4">
+    <div class="field"><label for="{{ form.code.id_for_label }}">Code *</label>{{ form.code }}
+      {% for e in form.code.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+      <p class="text-xs text-slate-400 mt-1">{{ form.code.help_text }}</p></div>
+    <div class="field sm:col-span-2"><label for="{{ form.type.id_for_label }}">Type *</label>{{ form.type }}
+      {% for e in form.type.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  <div class="field"><label for="{{ form.name.id_for_label }}">Name *</label>{{ form.name }}
+    {% for e in form.name.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}</div>
+
+  {% if not account or not account.is_system %}
+  <div class="field"><label for="{{ form.subtype.id_for_label }}">Subtype *</label>{{ form.subtype }}
+    {% for e in form.subtype.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}
+    <p class="text-xs text-slate-400 mt-1">{{ form.subtype.help_text }} Only subtypes that belong to the chosen type are allowed.</p></div>
+  {% endif %}
+
+  <div class="field"><label for="{{ form.description.id_for_label }}">Note</label>{{ form.description }}
+    {% for e in form.description.errors %}<p class="text-xs text-red-600 mt-1">{{ e }}</p>{% endfor %}</div>
+
+  {% if not account or not account.is_system %}
+  <label class="flex items-center gap-2 text-sm font-medium">{{ form.active }} Active
+    <span class="text-xs text-slate-400 font-normal">(inactive accounts are hidden from pickers but keep their history)</span></label>
+  {% endif %}
+
+  <div class="flex gap-2 pt-2">
+    <button class="btn-primary">Save account</button>
+    <a href="{% url 'accounting_accounts' %}" class="btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}
+{% block scripts %}
+{% if not account or not account.is_system %}
+<script>
+(function () {
+  var map = {{ subtypes_by_type|safe }};
+  var typeEl = document.getElementById('{{ form.type.id_for_label }}');
+  var subEl = document.getElementById('{{ form.subtype.id_for_label }}');
+  if (!typeEl || !subEl) return;
+  function refresh(keepValue) {
+    var allowed = map[typeEl.value] || [];
+    var current = subEl.value;
+    Array.prototype.forEach.call(subEl.querySelectorAll('option'), function (o) {
+      var ok = allowed.indexOf(o.value) !== -1;
+      o.hidden = !ok; o.disabled = !ok;
+    });
+    Array.prototype.forEach.call(subEl.querySelectorAll('optgroup'), function (g) {
+      var any = Array.prototype.some.call(g.querySelectorAll('option'), function (o) { return !o.disabled; });
+      g.hidden = !any;
+    });
+    if (!keepValue || allowed.indexOf(current) === -1) {
+      subEl.value = allowed.length ? allowed[allowed.length - 1] : '';
+    }
+  }
+  typeEl.addEventListener('change', function () { refresh(false); });
+  refresh(true);
+})();
+</script>
+{% endif %}
+{% endblock %}
