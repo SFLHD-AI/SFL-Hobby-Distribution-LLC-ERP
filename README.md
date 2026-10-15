@@ -111,6 +111,7 @@ python manage.py test core            # dashboard, settings, digest, seed_demo s
 - `docs/BANK_CONNECTIONS.md` — Plaid setup, CSV export from each major bank, troubleshooting
 - `docs/ADMIN_GUIDE.md` — owner's user guide (daily flow, review inbox, month-end, year-end)
 - `docs/SCHEMA.md` — data model
+- `docs/RAILWAY.md` — one-click style deploy on Railway (web + worker + Postgres + Redis)
 - `docs/DEPLOYMENT.md` — Ubuntu VPS + nginx + gunicorn (Docker and bare-metal)
 - `.env.example` — every environment variable documented
 

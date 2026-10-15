@@ -24,6 +24,13 @@ SECRET_KEY = env("DJANGO_SECRET_KEY", "dev-insecure-key-change-me-in-production"
 DEBUG = env_bool("DJANGO_DEBUG", True)
 ALLOWED_HOSTS = [h.strip() for h in env("DJANGO_ALLOWED_HOSTS", "*").split(",") if h.strip()]
 CSRF_TRUSTED_ORIGINS = [o.strip() for o in env("DJANGO_CSRF_TRUSTED_ORIGINS", "").split(",") if o.strip()]
+# Railway injects the public hostname; trust it without extra configuration.
+if env("RAILWAY_PUBLIC_DOMAIN"):
+    _rd = env("RAILWAY_PUBLIC_DOMAIN")
+    if _rd not in ALLOWED_HOSTS and "*" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_rd)
+    if f"https://{_rd}" not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append(f"https://{_rd}")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -84,7 +91,22 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 # --- Database -----------------------------------------------------------
 # Postgres in docker / production; SQLite fallback for bare-metal dev.
-if env("POSTGRES_HOST"):
+if env("DATABASE_URL"):
+    # Railway / Heroku-style single URL: postgres://user:pass@host:port/name
+    from urllib.parse import urlparse
+    _db = urlparse(env("DATABASE_URL"))
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": _db.path.lstrip("/"),
+            "USER": _db.username or "",
+            "PASSWORD": _db.password or "",
+            "HOST": _db.hostname or "",
+            "PORT": str(_db.port or 5432),
+            "CONN_MAX_AGE": 60,
+        }
+    }
+elif env("POSTGRES_HOST"):
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -154,7 +176,18 @@ Q_CLUSTER = {
     "bulk": 10,
     "orm": "default",  # ORM broker fallback when Redis is not configured
 }
-if env("REDIS_HOST"):
+if env("REDIS_URL"):
+    # Railway-style single URL: redis://default:pass@host:port
+    from urllib.parse import urlparse
+    _r = urlparse(env("REDIS_URL"))
+    Q_CLUSTER.pop("orm", None)
+    Q_CLUSTER["redis"] = {
+        "host": _r.hostname or "redis", "port": int(_r.port or 6379),
+        "db": int((_r.path or "/0").lstrip("/") or 0),
+        "password": _r.password or None,
+        "ssl": _r.scheme == "rediss",
+    }
+elif env("REDIS_HOST"):
     Q_CLUSTER.pop("orm", None)
     Q_CLUSTER["redis"] = {
         "host": env("REDIS_HOST", "redis"),
