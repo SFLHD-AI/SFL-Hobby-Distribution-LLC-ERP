@@ -22,3 +22,6 @@ db.sqlite3-journal
 .vscode/
 /tailwindcss
 node_modules/
+
+# Source archives built for download
+/*.zip
