@@ -28,6 +28,8 @@ Open the service Railway created from the repo and set these **Variables**
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | `https://sfl-erp.up.railway.app` |
 | `PUBLIC_BASE_URL` | `https://sfl-erp.up.railway.app` |
 | `MEDIA_ROOT` | `/app/media` |
+| `DJANGO_SUPERUSER_USERNAME` | the username you want to log in with, e.g. `admin` |
+| `DJANGO_SUPERUSER_PASSWORD` | a strong password for that user |
 
 Optional: SMTP (`EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_HOST_USER`,
 `EMAIL_HOST_PASSWORD`, `DEFAULT_FROM_EMAIL`) and `PLAID_CLIENT_ID` /
@@ -59,12 +61,17 @@ tracking) run in a second service from the same repo:
 
 ## 4. First login
 
-Open the web service's **Deploy Logs** until you see gunicorn listening, then:
+Open the web service's **Deploy Logs** until you see gunicorn listening. The
+start script creates the admin user from `DJANGO_SUPERUSER_USERNAME` /
+`DJANGO_SUPERUSER_PASSWORD` on the first boot (the log shows
+`superuser admin: created`) and gives it the Admin role, so you can sign in
+at `https://<your-domain>/accounts/login/` right away. Once logged in you may
+remove the two variables; the user stays in the database.
+
+Optional demo data to explore first:
 
 ```bash
 # Railway → web service → ⋯ → "Run a command" (or `railway run` with the CLI)
-python manage.py createsuperuser
-# optional demo data to explore first:
 python manage.py seed_demo
 ```
 
