@@ -31,6 +31,9 @@ if env("RAILWAY_PUBLIC_DOMAIN"):
         ALLOWED_HOSTS.append(_rd)
     if f"https://{_rd}" not in CSRF_TRUSTED_ORIGINS:
         CSRF_TRUSTED_ORIGINS.append(f"https://{_rd}")
+    # Railway's deploy health check sends this Host header.
+    if "healthcheck.railway.app" not in ALLOWED_HOSTS and "*" not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append("healthcheck.railway.app")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
