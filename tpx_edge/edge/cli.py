@@ -22,6 +22,7 @@ from . import __version__
 from .config import Settings, load_settings
 from .dealernet.base import DealernetSource
 from .dealernet.csv_source import CSVSource
+from .dealernet import live_source as live_dealernet_source
 from .dealernet.manual import ManualSource
 from .edge import rank
 from .matching import best_match, score
@@ -154,9 +155,8 @@ def _dn_source(ctx: typer.Context, dn_bid, dn_ask, dn_qty, dn_bid_qty, dn_ask_qt
         return CSVSource(dn_csv, matcher=lambda q, cands: (best_match(q, cands) or (None,))[0])
     if dn_bid is not None or dn_ask is not None:
         return ManualSource(dn_bid, dn_ask, dn_bid_qty, dn_ask_qty, dn_qty, interactive=False, console=console)
-    if s.dealernet_access == "scrape":
-        from .dealernet.scrape import ScrapeSource  # raises NotImplementedError with guidance
-        return ScrapeSource()
+    if s.dealernet_access in ("scrape", "api"):
+        return live_dealernet_source(s)
     if s.dealernet_access == "csv" and not dn_csv:
         err.print("[yellow]DEALERNET_ACCESS=csv but no --dn-csv given; falling back to manual prompt.[/yellow]")
     return ManualSource(interactive=interactive, console=console) if interactive else None
@@ -264,6 +264,13 @@ def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Opt
         if errors is not None:
             errors.append(msg)
 
+    live_src: Optional[DealernetSource] = None
+    if csv_src is None:
+        try:
+            live_src = live_dealernet_source(svc.settings)
+        except (RuntimeError, NotImplementedError) as exc:
+            fail(f"Dealernet ({svc.settings.dealernet_access}): {exc}")
+
     try:
         for item in _watchlist_items(path):
             name = item["name"]
@@ -272,7 +279,7 @@ def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Opt
             except (TPXError, LookupError) as exc:
                 fail(f"{name}: {exc}")
                 continue
-            src: Optional[DealernetSource] = csv_src
+            src: Optional[DealernetSource] = csv_src or live_src
             if item.get("dn_bid") is not None or item.get("dn_ask") is not None:
                 src = ManualSource(item.get("dn_bid"), item.get("dn_ask"), item.get("dn_bid_qty"), item.get("dn_ask_qty"),
                                    item.get("dn_qty"), interactive=False)
@@ -281,7 +288,7 @@ def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Opt
                 _, assessments = svc.compare(prod, src, margin=m, shipping_cents=_usd_cents(ship) if ship is not None else None,
                                              dn_name=item.get("dn_name"), dn_candidates=csv_src.products() if csv_src else None,
                                              with_candles=with_candles)
-            except TPXError as exc:
+            except (TPXError, NotImplementedError) as exc:
                 fail(f"{name}: {exc}")
                 continue
             all_assessments.extend(assessments)

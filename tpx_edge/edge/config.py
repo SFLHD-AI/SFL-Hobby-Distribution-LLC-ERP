@@ -13,7 +13,7 @@ from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 Vertical = Literal["sealed_wax", "sealed_tcg", "both"]
-DealernetAccess = Literal["manual", "csv", "scrape"]
+DealernetAccess = Literal["manual", "csv", "scrape", "api"]
 DealernetPlan = Literal["basic", "vendor"]
 
 
@@ -32,6 +32,12 @@ class Settings(BaseSettings):
     vertical: Vertical = "both"
     dealernet_access: DealernetAccess = "manual"
     dealernet_plan: DealernetPlan = "vendor"
+    # DEALERNET_ACCESS=scrape logs in with these (read-only page reads).
+    dealernet_username: Optional[str] = None
+    dealernet_password: Optional[SecretStr] = None
+    # DEALERNET_ACCESS=api uses an API key instead, once Dealernet issues one.
+    dealernet_api_key: Optional[SecretStr] = None
+    dealernet_api_url: str = "https://www.dealernetx.com/api"
 
     # Dealernet fee schedule: listed-price trades are free; name-your-price /
     # counter offers cost 3% on the Vendor plan. We model the *taker* (hit a
