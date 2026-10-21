@@ -229,21 +229,38 @@ def watchlist(
     json_out: Optional[Path] = typer.Option(None, "--json"),
 ):
     """Batch compare every product in a YAML watchlist; ranked table + CSV export."""
-    data = yaml.safe_load(Path(path).read_text()) or {}
-    items = data.get("products") or data if isinstance(data, list) else data.get("products") or []
-    svc = _service(ctx)
     m = Decimal(str(margin)) if margin is not None else None
+    ranked = rank(_run_watchlist(ctx, path, dn_csv, m, with_candles=False))
+    console.print(summary_table(ranked))
+    _exports(ranked, json_out, csv_out, None, meta={"watchlist": str(path)})
+
+
+def _watchlist_items(path: Path) -> list[dict]:
+    data = yaml.safe_load(Path(path).read_text()) or {}
+    items = data if isinstance(data, list) else data.get("products") or []
+    return [{"name": i} if isinstance(i, str) else i for i in items]
+
+
+def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Optional[Decimal], *,
+                   with_candles: bool, errors: Optional[list[str]] = None):
+    """Compare every watchlist product; returns the unranked assessments. Per-product
+    failures are printed (and collected into `errors`) and skipped."""
+    svc = _service(ctx)
     csv_src = CSVSource(dn_csv, matcher=lambda q, c: (best_match(q, c) or (None,))[0]) if dn_csv else None
     all_assessments = []
+
+    def fail(msg: str) -> None:
+        err.print(f"[red]{msg}[/red]")
+        if errors is not None:
+            errors.append(msg)
+
     try:
-        for item in items:
-            if isinstance(item, str):
-                item = {"name": item}
+        for item in _watchlist_items(path):
             name = item["name"]
             try:
                 prod = svc.resolve_product(name, exact_id=item.get("tpx_id"))
             except (TPXError, LookupError) as exc:
-                err.print(f"[red]{name}: {exc}[/red]")
+                fail(f"{name}: {exc}")
                 continue
             src: Optional[DealernetSource] = csv_src
             if item.get("dn_bid") is not None or item.get("dn_ask") is not None:
@@ -253,17 +270,56 @@ def watchlist(
             try:
                 _, assessments = svc.compare(prod, src, margin=m, shipping_cents=_usd_cents(ship) if ship is not None else None,
                                              dn_name=item.get("dn_name"), dn_candidates=csv_src.products() if csv_src else None,
-                                             with_candles=False)
+                                             with_candles=with_candles)
             except TPXError as exc:
-                err.print(f"[red]{name}: {exc}[/red]")
+                fail(f"{name}: {exc}")
                 continue
             all_assessments.extend(assessments)
             console.print(f"[dim]{prod.name}: {len(assessments)} TPX market(s)[/dim]")
     finally:
         svc.close()
-    ranked = rank(all_assessments)
-    console.print(summary_table(ranked))
-    _exports(ranked, json_out, csv_out, None, meta={"watchlist": str(path)})
+    return all_assessments
+
+
+# ---------------------------------------------------------------------------
+@app.command()
+def dashboard(
+    ctx: typer.Context,
+    path: Path = typer.Argument(..., help="watchlist.yaml (see README)"),
+    dn_csv: Optional[str] = typer.Option(None, "--dn-csv", help="Dealernet CSV covering the watchlist"),
+    margin: Optional[float] = typer.Option(None, "--margin"),
+    out: Path = typer.Option(Path("dashboard.html"), "--out", "-o", help="HTML file to write"),
+    history_path: Path = typer.Option(Path(".cache/history.jsonl"), "--history", help="Snapshot log used for edge trends"),
+    refresh: Optional[int] = typer.Option(None, "--refresh", help="Re-run every N seconds and rewrite the page (it reloads itself)"),
+    open_browser: bool = typer.Option(False, "--open", help="Open the page in your browser"),
+    iterations: Optional[int] = typer.Option(None, "--iterations", hidden=True),
+):
+    """Write a view-only HTML dashboard: ranked edges, TPX price trends, Dealernet levels, fair value."""
+    from . import dashboard as dash
+    from . import history as hist
+
+    s = _settings(ctx)
+    source = "demo" if ctx.obj["demo"] is not None else "live"
+    m = Decimal(str(margin)) if margin is not None else s.target_margin
+    i = 0
+    try:
+        while True:
+            i += 1
+            errors: list[str] = []
+            ranked = rank(_run_watchlist(ctx, path, dn_csv, m, with_candles=True, errors=errors))
+            hist.append(history_path, ranked, source)
+            page = dash.render(ranked, source=source, actions_enabled=s.actions_enabled, margin=m,
+                               history=hist.load(history_path, source), refresh_s=refresh, warnings=errors)
+            out.write_text(page, encoding="utf-8")
+            console.print(f"wrote {out} ({len(ranked)} product/market rows, {source} data)")
+            if open_browser and i == 1:
+                import webbrowser
+                webbrowser.open(out.resolve().as_uri())
+            if not refresh or (iterations is not None and i >= iterations):
+                break
+            time.sleep(refresh)
+    except KeyboardInterrupt:
+        pass
 
 
 # ---------------------------------------------------------------------------

@@ -208,6 +208,7 @@ class MarketData:
         if with_candles:
             try:
                 bars = self.candles(product, market_id, "D1", 30)
+                q.raw["candles_d1"] = daily_closes(bars)
                 q.candles_30d = summarise_candles(bars, "D1")
                 q.candles_7d = summarise_candles(bars[-7:], "D1")
             except (TPXDomainError, TPXGraphQLError) as exc:
@@ -249,3 +250,15 @@ def summarise_candles(bars: list[dict], interval: str) -> Optional[CandleSummary
         volume=total_vol,
         vwap_cents=vwap,
     )
+
+
+def daily_closes(bars: list[dict]) -> list[dict]:
+    """Compact daily series for trend charts: [{t, close, vwap, volume}] oldest first."""
+    out = []
+    for b in sorted((b for b in bars if b), key=lambda b: str(b.get("openTime", ""))):
+        close = _int(b.get("closeCents"))
+        if close is None:
+            continue
+        out.append({"t": str(b.get("openTime", ""))[:10], "close": close,
+                    "vwap": _int(b.get("vwapCents")), "volume": _int(b.get("volume")) or 0})
+    return out

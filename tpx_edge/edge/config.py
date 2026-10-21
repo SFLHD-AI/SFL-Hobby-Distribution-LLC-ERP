@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     shipping_case_usd: Decimal = Decimal("45")
     handling_usd: Decimal = Decimal("0")
 
+    # Master switch for anything that would act on a marketplace (list, buy,
+    # offer, auto-alerts that trade). Off by default; no such feature exists
+    # yet, and any future one must check this AND ask for confirmation.
+    actions_enabled: bool = False
+
     target_margin: Decimal = Decimal("0.08")
     stale_days: int = 7
     thin_book_units: int = 3

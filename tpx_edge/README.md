@@ -266,3 +266,21 @@ edge/
   cli.py                 typer: search, compare, watchlist, map, watch, doctor
 tests/                   pytest + fixtures
 ```
+
+
+## Dashboard (view only)
+
+```
+edge dashboard watchlist.yaml --dn-csv dealernet.csv -o dashboard.html --open
+edge dashboard watchlist.yaml --dn-csv dealernet.csv --refresh 300   # re-run every 5 min; the page reloads itself
+edge --demo dashboard watchlist.example.yaml --dn-csv dealernet.example.csv   # offline sample
+```
+
+Writes one self-contained HTML file: KPI tiles, the ranked edge table (filter, "edges only", sortable
+columns), a 30-day TPX price chart per product with Dealernet bid/ask and fair value as reference lines,
+and an edge-over-time sparkline built from `.cache/history.jsonl` (one snapshot per run; demo and live
+snapshots are kept apart). Demo output carries a "Sample data" banner.
+
+The page has no buttons, forms or network calls. `ACTIONS_ENABLED` (default `false`) is the master
+switch for any future feature that would act on a marketplace; the dashboard shows its state, and no
+such feature exists yet.
