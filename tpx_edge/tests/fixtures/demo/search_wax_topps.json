@@ -1,0 +1,95 @@
+{
+  "operation": "EdgeSearch",
+  "variables": {
+    "input": {
+      "assetTypeId": "at_sealed_wax",
+      "query": "2024 topps chrome baseball hobby"
+    }
+  },
+  "response": {
+    "data": {
+      "getFilterBuilderData": {
+        "error": null,
+        "totalProducts": 3,
+        "availableFacetFields": [
+          "sport",
+          "manufacturer",
+          "brand",
+          "year",
+          "format"
+        ],
+        "preview": [
+          {
+            "assetConfigurationId": "cfg_24tc_hobby",
+            "name": "2024 Topps Chrome Baseball Hobby Box",
+            "assetTypeId": "at_sealed_wax",
+            "attributes": [
+              {
+                "name": "year",
+                "value": "2024"
+              },
+              {
+                "name": "manufacturer",
+                "value": "Topps"
+              },
+              {
+                "name": "brand",
+                "value": "Chrome"
+              },
+              {
+                "name": "sport",
+                "value": "Baseball"
+              },
+              {
+                "name": "format",
+                "value": "Hobby"
+              }
+            ]
+          },
+          {
+            "assetConfigurationId": "cfg_24tc_jumbo",
+            "name": "2024 Topps Chrome Baseball Hobby Jumbo Box",
+            "assetTypeId": "at_sealed_wax",
+            "attributes": [
+              {
+                "name": "year",
+                "value": "2024"
+              },
+              {
+                "name": "manufacturer",
+                "value": "Topps"
+              },
+              {
+                "name": "brand",
+                "value": "Chrome"
+              },
+              {
+                "name": "sport",
+                "value": "Baseball"
+              },
+              {
+                "name": "format",
+                "value": "Jumbo"
+              }
+            ]
+          },
+          {
+            "assetConfigurationId": "cfg_24tc_case",
+            "name": "2024 Topps Chrome Baseball Hobby 12-Box Case",
+            "assetTypeId": "at_sealed_wax",
+            "attributes": [
+              {
+                "name": "year",
+                "value": "2024"
+              },
+              {
+                "name": "format",
+                "value": "Hobby Case"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

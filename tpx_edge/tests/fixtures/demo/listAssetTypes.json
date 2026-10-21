@@ -1,0 +1,28 @@
+{
+  "operation": "EdgeListAssetTypes",
+  "variables": {},
+  "response": {
+    "data": {
+      "listAssetTypes": {
+        "error": null,
+        "assetTypes": [
+          {
+            "id": "at_sealed_wax",
+            "name": "Sealed Wax",
+            "slug": "sealed-wax"
+          },
+          {
+            "id": "at_sealed_tcg",
+            "name": "Sealed TCG",
+            "slug": "sealed-tcg"
+          },
+          {
+            "id": "at_graded",
+            "name": "Graded Cards",
+            "slug": "graded"
+          }
+        ]
+      }
+    }
+  }
+}

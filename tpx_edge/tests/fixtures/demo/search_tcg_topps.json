@@ -1,0 +1,19 @@
+{
+  "operation": "EdgeSearch",
+  "variables": {
+    "input": {
+      "assetTypeId": "at_sealed_tcg",
+      "query": "2024 topps chrome baseball hobby"
+    }
+  },
+  "response": {
+    "data": {
+      "getFilterBuilderData": {
+        "error": null,
+        "totalProducts": 0,
+        "availableFacetFields": [],
+        "preview": []
+      }
+    }
+  }
+}

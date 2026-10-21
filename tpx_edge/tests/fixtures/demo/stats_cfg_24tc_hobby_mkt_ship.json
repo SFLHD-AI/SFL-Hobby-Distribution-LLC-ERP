@@ -1,0 +1,42 @@
+{
+  "operation": "EdgeProductMarketStats",
+  "variables": {
+    "input": {
+      "assetConfigurationId": "cfg_24tc_hobby",
+      "marketId": "mkt_ship",
+      "periodDays": 30
+    }
+  },
+  "response": {
+    "data": {
+      "getProductMarket": {
+        "error": null,
+        "stats": {
+          "periodDays": 30,
+          "vwapCents": 26900,
+          "unitVolume": "6",
+          "tradeCount": 5,
+          "priceChangePercent": 1.1,
+          "holderCount": 212,
+          "lastTradeAt": "2026-10-19T15:00:00Z"
+        },
+        "depth": {
+          "bidUnits": 0,
+          "askUnits": 0
+        },
+        "priceSeries": [
+          {
+            "date": "2026-10-01",
+            "closeCents": 26400,
+            "volume": 2
+          },
+          {
+            "date": "2026-10-20",
+            "closeCents": 26900,
+            "volume": 3
+          }
+        ]
+      }
+    }
+  }
+}

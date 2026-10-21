@@ -1,0 +1,35 @@
+{
+  "operation": "EdgeListKeyConfigurations",
+  "variables": {
+    "input": {
+      "assetTypeId": "at_sealed_tcg"
+    }
+  },
+  "response": {
+    "data": {
+      "listKeyConfigurations": {
+        "error": null,
+        "keyConfigurations": [
+          {
+            "id": "key_tcg_mint",
+            "keyType": "SEALED_CONDITION",
+            "value": "MINT",
+            "label": "Factory Sealed (Mint)"
+          },
+          {
+            "id": "key_tcg_nm",
+            "keyType": "SEALED_CONDITION",
+            "value": "NEAR_MINT",
+            "label": "Near Mint"
+          },
+          {
+            "id": "key_tcg_dmg",
+            "keyType": "SEALED_CONDITION",
+            "value": "DAMAGED",
+            "label": "Damaged"
+          }
+        ]
+      }
+    }
+  }
+}

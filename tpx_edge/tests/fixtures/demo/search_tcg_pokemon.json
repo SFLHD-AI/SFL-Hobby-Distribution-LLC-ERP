@@ -1,0 +1,35 @@
+{
+  "operation": "EdgeSearch",
+  "variables": {
+    "input": {
+      "assetTypeId": "at_sealed_tcg",
+      "query": "pokemon 151 booster bundle"
+    }
+  },
+  "response": {
+    "data": {
+      "getFilterBuilderData": {
+        "error": null,
+        "totalProducts": 1,
+        "availableFacetFields": [],
+        "preview": [
+          {
+            "assetConfigurationId": "cfg_sv151_bundle",
+            "name": "Pokemon Scarlet & Violet 151 Booster Bundle",
+            "assetTypeId": "at_sealed_tcg",
+            "attributes": [
+              {
+                "name": "game",
+                "value": "Pokemon"
+              },
+              {
+                "name": "format",
+                "value": "Booster Bundle"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
