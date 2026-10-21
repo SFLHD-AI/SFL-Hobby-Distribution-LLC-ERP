@@ -11,24 +11,38 @@
         "error": null,
         "markets": [
           {
-            "id": "mkt_vault",
-            "displayName": "Vault",
-            "isVaulted": true,
+            "market": {
+              "id": "mkt_vault",
+              "displayName": "Vault",
+              "isVaulted": true,
+              "visibility": "PUBLIC"
+            },
             "canBuy": true,
             "canSell": true,
             "canBid": true,
             "canAsk": true,
-            "tradingState": "OPEN"
+            "associations": [
+              {
+                "tradingState": "ACTIVE"
+              }
+            ]
           },
           {
-            "id": "mkt_ship",
-            "displayName": "Ship",
-            "isVaulted": false,
+            "market": {
+              "id": "mkt_ship",
+              "displayName": "Ship",
+              "isVaulted": false,
+              "visibility": "PUBLIC"
+            },
             "canBuy": true,
             "canSell": true,
             "canBid": true,
             "canAsk": true,
-            "tradingState": "OPEN"
+            "associations": [
+              {
+                "tradingState": "ACTIVE"
+              }
+            ]
           }
         ]
       }

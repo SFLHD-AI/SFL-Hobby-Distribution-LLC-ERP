@@ -59,7 +59,7 @@ class Catalog:
         if cached:
             return cached
         try:
-            payload = self.client.execute(Q.LIST_ASSET_TYPES, {}, cache_ttl=3600)
+            payload = self.client.execute(Q.LIST_ASSET_TYPES, {"input": {}}, cache_ttl=3600)
             types = payload.get("assetTypes") or []
         except (TPXGraphQLError, TPXDomainError) as exc:
             log.warning("listAssetTypes unavailable (%s); relying on pinned IDs", exc)
@@ -78,7 +78,7 @@ class Catalog:
         missing = [v for v in wanted if v not in out]
         if missing:
             for t in self.list_asset_types():
-                label = f"{t.get('name', '')} {t.get('slug', '')}".lower()
+                label = f"{t.get('type', '')} {t.get('displayName', '')} {t.get('slug', '')}".lower()
                 for v in missing:
                     if any(a in label for a in VERTICAL_ALIASES[v]):
                         out[v] = str(t["id"])
@@ -97,10 +97,11 @@ class Catalog:
         if hit:
             return hit
         payload = self.client.execute(Q.LIST_KEY_CONFIGURATIONS, {"input": {"assetTypeId": asset_type_id}}, cache_ttl=3600)
-        for k in payload.get("keyConfigurations") or []:
-            if str(k.get("keyType", "")).upper() == "SEALED_CONDITION" and str(k.get("value", "")).upper() == value.upper():
-                self.ids.set(ck, str(k["id"]))
-                return str(k["id"])
+        for cfg in payload.get("keyConfigurations") or []:
+            for k in (cfg.get("keyData") or {}).get("keys") or []:
+                if str(k.get("keyType", "")).upper() == "SEALED_CONDITION" and str(k.get("value", "")).upper() == value.upper():
+                    self.ids.set(ck, str(k["keyId"]))
+                    return str(k["keyId"])
         raise RuntimeError(f"No SEALED_CONDITION={value} key for asset type {asset_type_id}")
 
     # --- search -----------------------------------------------------------
@@ -118,16 +119,20 @@ class Catalog:
 
     @staticmethod
     def _to_product(p: dict, asset_type_id: str, asset_type_name: str) -> Product:
-        attrs = {a.get("name", "").lower(): a.get("value") for a in (p.get("attributes") or []) if isinstance(a, dict)}
+        # `data` is a free-form JSON blob per asset type (format, format_type,
+        # product_type, release_date, ...); asset-level fields are not in it.
+        attrs = {str(k).lower(): v for k, v in (p.get("data") or {}).items() if not isinstance(v, (dict, list))}
         name = p.get("name") or ""
         fmt = attrs.get("format") or _guess_format(name)
-        year = attrs.get("year")
+        if str(attrs.get("format_type", "")).lower() == "case" and not CASE_RE.search(fmt or ""):
+            fmt = f"{fmt} case" if fmt else "case"
+        year = attrs.get("year") or attrs.get("release_year") or attrs.get("release_date")
         try:
             year = int(str(year)[:4]) if year else _guess_year(name)
         except ValueError:
             year = _guess_year(name)
         return Product(
-            asset_configuration_id=str(p.get("assetConfigurationId")),
+            asset_configuration_id=str(p.get("id")),
             name=name,
             asset_type_id=asset_type_id,
             asset_type_name=asset_type_name,

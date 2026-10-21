@@ -1,7 +1,9 @@
 {
   "operation": "EdgeMarket",
   "variables": {
-    "id": "mkt_ship"
+    "input": {
+      "marketId": "mkt_ship"
+    }
   },
   "response": {
     "data": {
@@ -11,22 +13,23 @@
           "id": "mkt_ship",
           "displayName": "Ship",
           "isVaulted": false,
-          "tradingState": "OPEN",
           "configuration": {
             "data": {
-              "feeModel": {
-                "__typename": "MakerTakerFeeModel",
-                "makerFeeBps": 100,
-                "takerFeeBps": 400
-              },
+              "feeModel": "MAKER_TAKER",
+              "buyerFeeBps": null,
+              "sellerFeeBps": null,
+              "makerFeeBps": 100,
+              "takerFeeBps": 400,
               "tickSizeCents": 100,
               "lotSize": 1,
-              "minQuantity": 1,
-              "maxQuantity": 500,
-              "minPriceCents": 100,
-              "maxPriceCents": 100000000
+              "minOrderQuantity": 1,
+              "maxOrderQuantity": 500,
+              "minUnitPriceCents": 100,
+              "maxUnitPriceCents": 100000000
             }
-          }
+          },
+          "startAt": null,
+          "endAt": null
         }
       }
     }

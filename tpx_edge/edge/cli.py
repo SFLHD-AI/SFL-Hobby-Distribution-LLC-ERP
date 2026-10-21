@@ -29,7 +29,7 @@ from .realtime import BookSync, PollingFeed
 from .report import (export_csv, export_json, export_markdown, print_assessment, quote_table, summary_table, usd)
 from .service import EdgeService
 from .tpx.client import TPXAuthError, TPXError
-from .tpx.schema_check import validate_schema
+from .tpx.schema_check import probe_queries, validate_schema
 
 app = typer.Typer(help="TPX <-> Dealernet edge finder for sealed wax / sealed TCG. Read-only.", no_args_is_help=True)
 console = Console(emoji=False)
@@ -80,27 +80,37 @@ def version():
 def doctor(ctx: typer.Context):
     """Introspect the live TPX schema and validate every query/field this tool uses."""
     svc = _service(ctx)
+    hard: list[str] = []
     try:
         schema = svc.client.introspect()
     except TPXAuthError as exc:
         err.print(f"[red]Auth failed:[/red] {exc}")
         raise typer.Exit(2)
-    except TPXError as exc:
-        err.print(f"[red]Introspection failed:[/red] {exc}  (if introspection is disabled, run `edge search` and read the errors)")
-        raise typer.Exit(1)
-    problems = validate_schema(schema)
-    hard = [p for p in problems if not p.startswith("note")]
-    for p in problems:
-        console.print(("[red]" if not p.startswith("note") else "[dim]") + p + "[/]")
-    if not hard:
-        console.print("[green]All queries and fields in edge/tpx/queries.py exist in the live schema.[/green]")
+    except TPXError:
+        schema = None
+    if schema is not None:
+        problems = validate_schema(schema)
+        hard = [p for p in problems if not p.startswith("note")]
+        for p in problems:
+            console.print(("[red]" if not p.startswith("note") else "[dim]") + p + "[/]")
+        if not hard:
+            console.print("[green]All queries and fields in edge/tpx/queries.py exist in the live schema.[/green]")
+    else:
+        console.print("[dim]Introspection is disabled; running every query against a live product instead.[/dim]")
+        t = Table(title="Live query probe")
+        t.add_column("query"); t.add_column("ok"); t.add_column("detail")
+        for name, ok, detail in probe_queries(svc):
+            t.add_row(name, "[green]ok[/green]" if ok else "[red]FAIL[/red]", detail[:100])
+            if not ok:
+                hard.append(name)
+        console.print(t)
     try:
         types = svc.catalog.list_asset_types()
         if types:
             t = Table(title="Asset types (pin the sealed ones in .env)")
-            t.add_column("id"); t.add_column("name"); t.add_column("slug")
+            t.add_column("id"); t.add_column("type"); t.add_column("name")
             for a in types:
-                t.add_row(str(a.get("id")), str(a.get("name")), str(a.get("slug", "")))
+                t.add_row(str(a.get("id")), str(a.get("type", "")), str(a.get("displayName", "")))
             console.print(t)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[dim]asset type listing unavailable: {exc}[/dim]")

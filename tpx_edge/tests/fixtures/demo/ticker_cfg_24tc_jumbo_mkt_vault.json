@@ -2,8 +2,7 @@
   "operation": "EdgeTicker",
   "variables": {
     "input": {
-      "assetConfigurationId": "cfg_24tc_jumbo",
-      "marketId": "mkt_vault"
+      "assetConfigurationId": "cfg_24tc_jumbo"
     }
   },
   "response": {

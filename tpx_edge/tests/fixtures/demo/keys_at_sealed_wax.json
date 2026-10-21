@@ -11,22 +11,33 @@
         "error": null,
         "keyConfigurations": [
           {
-            "id": "key_wax_mint",
-            "keyType": "SEALED_CONDITION",
-            "value": "MINT",
-            "label": "Factory Sealed (Mint)"
-          },
-          {
-            "id": "key_wax_nm",
-            "keyType": "SEALED_CONDITION",
-            "value": "NEAR_MINT",
-            "label": "Near Mint"
-          },
-          {
-            "id": "key_wax_dmg",
-            "keyType": "SEALED_CONDITION",
-            "value": "DAMAGED",
-            "label": "Damaged"
+            "id": "kc_at_sealed_wax",
+            "assetTypeId": "at_sealed_wax",
+            "keyData": {
+              "keys": [
+                {
+                  "keyId": "key_wax_mint",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "MINT",
+                  "displayName": "Factory Sealed (Mint)",
+                  "ancestors": []
+                },
+                {
+                  "keyId": "key_wax_nm",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "NEAR_MINT",
+                  "displayName": "Near Mint",
+                  "ancestors": []
+                },
+                {
+                  "keyId": "key_wax_dmg",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "DAMAGED",
+                  "displayName": "Damaged",
+                  "ancestors": []
+                }
+              ]
+            }
           }
         ]
       }

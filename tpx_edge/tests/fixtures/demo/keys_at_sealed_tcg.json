@@ -11,22 +11,33 @@
         "error": null,
         "keyConfigurations": [
           {
-            "id": "key_tcg_mint",
-            "keyType": "SEALED_CONDITION",
-            "value": "MINT",
-            "label": "Factory Sealed (Mint)"
-          },
-          {
-            "id": "key_tcg_nm",
-            "keyType": "SEALED_CONDITION",
-            "value": "NEAR_MINT",
-            "label": "Near Mint"
-          },
-          {
-            "id": "key_tcg_dmg",
-            "keyType": "SEALED_CONDITION",
-            "value": "DAMAGED",
-            "label": "Damaged"
+            "id": "kc_at_sealed_tcg",
+            "assetTypeId": "at_sealed_tcg",
+            "keyData": {
+              "keys": [
+                {
+                  "keyId": "key_tcg_mint",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "MINT",
+                  "displayName": "Factory Sealed (Mint)",
+                  "ancestors": []
+                },
+                {
+                  "keyId": "key_tcg_nm",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "NEAR_MINT",
+                  "displayName": "Near Mint",
+                  "ancestors": []
+                },
+                {
+                  "keyId": "key_tcg_dmg",
+                  "keyType": "SEALED_CONDITION",
+                  "value": "DAMAGED",
+                  "displayName": "Damaged",
+                  "ancestors": []
+                }
+              ]
+            }
           }
         ]
       }

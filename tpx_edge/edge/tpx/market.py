@@ -6,7 +6,7 @@ BigInt fields arrive as strings; _int() normalises them.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Optional
 
@@ -51,6 +51,14 @@ def _dt(v: Any) -> Optional[datetime]:
         return None
 
 
+def _iso(d: datetime) -> str:
+    return d.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _bar_time(b: dict) -> str:
+    return str(b.get("bucket") or b.get("openTime") or "")
+
+
 class MarketData:
     def __init__(self, client: TPXClient):
         self.client = client
@@ -62,15 +70,25 @@ class MarketData:
             {"input": {"assetConfigurationId": product.asset_configuration_id, "keyId": product.key_id}},
             cache_ttl=300,
         )
-        return payload.get("markets") or []
+        # Live shape: [{market {id displayName isVaulted}, canBuy.., associations [{tradingState}]}].
+        # Flattened so callers see one dict per venue.
+        out = []
+        for entry in payload.get("markets") or []:
+            m = dict(entry.get("market") or {})
+            for perm in ("canBuy", "canSell", "canBid", "canAsk"):
+                m[perm] = entry.get(perm)
+            states = [a.get("tradingState") for a in entry.get("associations") or [] if a.get("tradingState")]
+            m["tradingState"] = states[0] if states else None
+            out.append(m)
+        return out
 
     def market_cost_model(self, market_id: str, display_name: str, shipping_in: int, shipping_out: int,
                           is_vaulted: bool) -> CostModel:
-        payload = self.client.execute(Q.GET_MARKET, {"id": market_id}, cache_ttl=3600)
+        payload = self.client.execute(Q.GET_MARKET, {"input": {"marketId": market_id}}, cache_ttl=3600)
         m = payload.get("market") or {}
-        data = ((m.get("configuration") or {}).get("data")) or {}
-        fm = data.get("feeModel") or {}
-        kind = FeeModelKind.MAKER_TAKER if "makerFeeBps" in fm or fm.get("__typename", "").startswith("MakerTaker") else FeeModelKind.BUYER_SELLER
+        # Fee fields sit directly on configuration.data; feeModel is an enum string.
+        data = fm = ((m.get("configuration") or {}).get("data")) or {}
+        kind = FeeModelKind.MAKER_TAKER if str(fm.get("feeModel") or "").upper() == "MAKER_TAKER" else FeeModelKind.BUYER_SELLER
         # Vaulted markets settle inside the vault: no shipping on that leg. You
         # still need vaulted units to sell there (flagged in the report).
         return CostModel(
@@ -97,9 +115,8 @@ class MarketData:
         return self.client.execute(Q.GET_ORDER_BOOK, {"input": inp}, cache_ttl=5)
 
     def ticker(self, product: Product, market_id: Optional[str]) -> dict:
+        # GetTickerInput has no marketId: the ticker is per leaf, across venues.
         inp = {"assetConfigurationId": product.asset_configuration_id, "keyId": product.key_id}
-        if market_id:
-            inp["marketId"] = market_id
         return (self.client.execute(Q.GET_TICKER, {"input": inp}, cache_ttl=15) or {}).get("keyTicker") or {}
 
     def product_market_stats(self, product: Product, market_id: Optional[str], period_days: int = 30) -> dict:
@@ -109,14 +126,17 @@ class MarketData:
         return self.client.execute(Q.GET_PRODUCT_MARKET, {"input": inp}, cache_ttl=60) or {}
 
     def recent_trades(self, product: Product, market_id: Optional[str], limit: int = 50) -> list[dict]:
+        # GetRecentTradesInput has no marketId: the tape is per leaf, across venues.
         inp = {"assetConfigurationId": product.asset_configuration_id, "keyId": product.key_id, "limit": limit}
-        if market_id:
-            inp["marketId"] = market_id
         return (self.client.execute(Q.GET_RECENT_TRADES, {"input": inp}, cache_ttl=15) or {}).get("trades") or []
 
     def candles(self, product: Product, market_id: Optional[str], interval: str = "D1", limit: int = 30) -> list[dict]:
+        # GetCandlesInput takes a time range, not a bar count.
+        now = utcnow()
+        span = {"M1": timedelta(minutes=limit), "M5": timedelta(minutes=5 * limit),
+                "H1": timedelta(hours=limit)}.get(interval, timedelta(days=limit))
         inp = {"assetConfigurationId": product.asset_configuration_id, "keyId": product.key_id,
-               "interval": interval, "limit": limit}
+               "interval": interval, "fromTime": _iso(now - span), "toTime": _iso(now)}
         if market_id:
             inp["marketId"] = market_id
         return (self.client.execute(Q.GET_CANDLES, {"input": inp}, cache_ttl=300) or {}).get("candles") or []
@@ -139,7 +159,9 @@ class MarketData:
     def order_quote(self, product: Product, market_id: str, side: str, price_cents: int, quantity: int) -> dict:
         """Read-only all-in quote for a hypothetical order. Never submits anything."""
         inp = {"assetConfigurationId": product.asset_configuration_id, "keyId": product.key_id,
-               "marketId": market_id, "side": side, "priceCents": price_cents, "quantity": quantity}
+               "marketId": market_id, "side": side, "quantity": quantity}
+        if price_cents:
+            inp["allInPrice"] = price_cents
         return (self.client.execute(Q.GET_ORDER_QUOTE, {"input": inp}, use_cache=False) or {}).get("quote") or {}
 
     # --- assemble a VenueQuote --------------------------------------------
@@ -231,7 +253,7 @@ def summarise_candles(bars: list[dict], interval: str) -> Optional[CandleSummary
     bars = [b for b in bars if b]
     if not bars:
         return None
-    bars = sorted(bars, key=lambda b: str(b.get("openTime", "")))
+    bars = sorted(bars, key=_bar_time)
     highs = [_int(b.get("highCents")) for b in bars if _int(b.get("highCents")) is not None]
     lows = [_int(b.get("lowCents")) for b in bars if _int(b.get("lowCents")) is not None]
     vols = [(_int(b.get("volume")) or 0, _int(b.get("vwapCents"))) for b in bars]
@@ -255,10 +277,10 @@ def summarise_candles(bars: list[dict], interval: str) -> Optional[CandleSummary
 def daily_closes(bars: list[dict]) -> list[dict]:
     """Compact daily series for trend charts: [{t, close, vwap, volume}] oldest first."""
     out = []
-    for b in sorted((b for b in bars if b), key=lambda b: str(b.get("openTime", ""))):
+    for b in sorted((b for b in bars if b), key=_bar_time):
         close = _int(b.get("closeCents"))
         if close is None:
             continue
-        out.append({"t": str(b.get("openTime", ""))[:10], "close": close,
+        out.append({"t": _bar_time(b)[:10], "close": close,
                     "vwap": _int(b.get("vwapCents")), "volume": _int(b.get("volume")) or 0})
     return out

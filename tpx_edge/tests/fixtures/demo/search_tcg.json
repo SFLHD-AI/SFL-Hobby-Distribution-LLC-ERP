@@ -10,27 +10,18 @@
       "getFilterBuilderData": {
         "error": null,
         "totalProducts": 1,
-        "availableFacetFields": [
-          "game",
-          "set",
-          "year",
-          "format"
-        ],
         "preview": [
           {
-            "assetConfigurationId": "cfg_sv151_bundle",
+            "id": "cfg_sv151_bundle",
             "name": "Pokemon Scarlet & Violet 151 Booster Bundle",
-            "assetTypeId": "at_sealed_tcg",
-            "attributes": [
-              {
-                "name": "game",
-                "value": "Pokemon"
-              },
-              {
-                "name": "format",
-                "value": "Booster Bundle"
-              }
-            ]
+            "assetId": null,
+            "assetName": null,
+            "slug": null,
+            "fairValueCents": null,
+            "data": {
+              "game": "Pokemon",
+              "format": "Booster Bundle"
+            }
           }
         ]
       }

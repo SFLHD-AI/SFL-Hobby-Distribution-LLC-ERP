@@ -2,8 +2,7 @@
   "operation": "EdgeTicker",
   "variables": {
     "input": {
-      "assetConfigurationId": "cfg_sv151_bundle",
-      "marketId": "mkt_vault"
+      "assetConfigurationId": "cfg_sv151_bundle"
     }
   },
   "response": {

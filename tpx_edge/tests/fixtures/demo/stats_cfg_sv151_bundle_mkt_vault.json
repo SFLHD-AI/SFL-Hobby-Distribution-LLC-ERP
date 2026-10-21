@@ -12,7 +12,6 @@
       "getProductMarket": {
         "error": null,
         "stats": {
-          "periodDays": 30,
           "vwapCents": 4010,
           "unitVolume": "1180",
           "tradeCount": 410,
@@ -27,13 +26,17 @@
         "priceSeries": [
           {
             "date": "2026-10-01",
-            "closeCents": 3510,
-            "volume": 2
+            "volumeCents": null,
+            "unitsSold": 2,
+            "tradeCount": null,
+            "averageSalePriceCents": 3510
           },
           {
             "date": "2026-10-20",
-            "closeCents": 4010,
-            "volume": 3
+            "volumeCents": null,
+            "unitsSold": 3,
+            "tradeCount": null,
+            "averageSalePriceCents": 4010
           }
         ]
       }

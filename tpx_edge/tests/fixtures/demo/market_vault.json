@@ -1,7 +1,9 @@
 {
   "operation": "EdgeMarket",
   "variables": {
-    "id": "mkt_vault"
+    "input": {
+      "marketId": "mkt_vault"
+    }
   },
   "response": {
     "data": {
@@ -11,22 +13,23 @@
           "id": "mkt_vault",
           "displayName": "Vault",
           "isVaulted": true,
-          "tradingState": "OPEN",
           "configuration": {
             "data": {
-              "feeModel": {
-                "__typename": "BuyerSellerFeeModel",
-                "buyerFeeBps": 0,
-                "sellerFeeBps": 500
-              },
+              "feeModel": "BUYER_SELLER",
+              "buyerFeeBps": 0,
+              "sellerFeeBps": 500,
+              "makerFeeBps": null,
+              "takerFeeBps": null,
               "tickSizeCents": 100,
               "lotSize": 1,
-              "minQuantity": 1,
-              "maxQuantity": 500,
-              "minPriceCents": 100,
-              "maxPriceCents": 100000000
+              "minOrderQuantity": 1,
+              "maxOrderQuantity": 500,
+              "minUnitPriceCents": 100,
+              "maxUnitPriceCents": 100000000
             }
-          }
+          },
+          "startAt": null,
+          "endAt": null
         }
       }
     }

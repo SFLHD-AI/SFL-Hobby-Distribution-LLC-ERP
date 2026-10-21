@@ -1,11 +1,9 @@
 """Every GraphQL document the tool sends, in one place.
 
-STATUS: field and query names below follow the TPX v2 docs as summarised in the
-project brief (Oct 2026). They could NOT be verified against the live schema
-from the build environment (tpx.tradepost.co / platform-api.tradepost.co were
-blocked). Run `edge doctor` with your key: it introspects the live schema and
-reports any query, input or field below that does not exist, so fixes land here
-and nowhere else.
+STATUS: verified against the live API on 2026-10-21 (tpx.tradepost.co/v2 docs
+plus live probes). The live API has introspection disabled and masks validation
+errors as INVALID_REQUEST, so `edge doctor` runs each query below against a real
+product instead of reading the schema. Fixes land here and nowhere else.
 
 Only queries are defined. No mutation (createOrderSubmission etc.) is, or may
 be, added here - the tool is read-only.
@@ -36,14 +34,12 @@ fragment TypeRef on __Type {
 
 # --- Catalog -------------------------------------------------------------
 
-# Asset types: the docs list the IDs under Verticals -> Sealed Wax / Sealed TCG.
-# `listAssetTypes` is our best guess at the discovery query; `edge doctor`
-# will tell you if it doesn't exist, in which case pin the IDs in .env.
+# Asset types (open query, no auth needed).
 LIST_ASSET_TYPES = """
-query EdgeListAssetTypes {
-  listAssetTypes {
+query EdgeListAssetTypes($input: ListAssetTypesInput!) {
+  assetTypes(input: $input) {
     %s
-    assetTypes { id name slug }
+    assetTypes { id type slug displayName tpxEnabled }
   }
 }
 """ % ERROR_FRAGMENT
@@ -54,25 +50,26 @@ query EdgeListKeyConfigurations($input: ListKeyConfigurationsInput!) {
     %s
     keyConfigurations {
       id
-      keyType
-      value
-      label
+      assetTypeId
+      keyData { keys { keyId keyType value displayName ancestors } }
     }
   }
 }
 """ % ERROR_FRAGMENT
 
 FILTER_BUILDER_SEARCH = """
-query EdgeSearch($input: GetFilterBuilderDataInput!) {
+query EdgeSearch($input: FilterBuilderInput!) {
   getFilterBuilderData(input: $input) {
     %s
     totalProducts
-    availableFacetFields
     preview {
-      assetConfigurationId
+      id
       name
-      assetTypeId
-      attributes { name value }
+      assetId
+      assetName
+      slug
+      fairValueCents
+      data
     }
   }
 }
@@ -85,41 +82,40 @@ query EdgeProductMarkets($input: GetProductMarketsInput!) {
   getProductMarkets(input: $input) {
     %s
     markets {
-      id
-      displayName
-      isVaulted
+      market { id displayName isVaulted visibility }
       canBuy
       canSell
       canBid
       canAsk
-      tradingState
+      associations { tradingState }
     }
   }
 }
 """ % ERROR_FRAGMENT
 
 GET_MARKET = """
-query EdgeMarket($id: ID!) {
-  getMarket(id: $id) {
+query EdgeMarket($input: GetMarketInput!) {
+  getMarket(input: $input) {
     %s
     market {
       id
       displayName
       isVaulted
-      tradingState
+      startAt
+      endAt
       configuration {
         data {
-          feeModel {
-            __typename
-            ... on BuyerSellerFeeModel { buyerFeeBps sellerFeeBps }
-            ... on MakerTakerFeeModel { makerFeeBps takerFeeBps }
-          }
+          feeModel
+          buyerFeeBps
+          sellerFeeBps
+          makerFeeBps
+          takerFeeBps
           tickSizeCents
           lotSize
-          minQuantity
-          maxQuantity
-          minPriceCents
-          maxPriceCents
+          minOrderQuantity
+          maxOrderQuantity
+          minUnitPriceCents
+          maxUnitPriceCents
         }
       }
     }
@@ -169,7 +165,7 @@ GET_CANDLES = """
 query EdgeCandles($input: GetCandlesInput!) {
   getCandles(input: $input) {
     %s
-    candles { openTime openCents highCents lowCents closeCents volume vwapCents }
+    candles { bucket openCents highCents lowCents closeCents volume vwapCents trades }
   }
 }
 """ % ERROR_FRAGMENT
@@ -179,10 +175,11 @@ query EdgeProductMarketStats($input: GetProductMarketInput!) {
   getProductMarket(input: $input) {
     %s
     stats {
-      periodDays vwapCents unitVolume tradeCount priceChangePercent holderCount lastTradeAt
+      lastPriceCents volumeCents unitVolume tradeCount vwapCents highCents lowCents
+      priceChangeCents priceChangePercent lastTradeAt holderCount
     }
-    depth { bidUnits askUnits }
-    priceSeries { date closeCents volume }
+    depth { topBidCents topAskCents midCents spreadCents bidUnits askUnits }
+    priceSeries { date volumeCents unitsSold tradeCount averageSalePriceCents }
   }
 }
 """ % ERROR_FRAGMENT
@@ -195,6 +192,8 @@ query EdgeFairValues($input: GetKeyFairValuesByAssetConfigInput!) {
     %s
     keys {
       keyId
+      keyType
+      value
       fairValues { valueCents modelVersion }
     }
   }
@@ -208,7 +207,10 @@ query EdgeOrderQuote($input: GetOrderQuoteInput!) {
   getOrderQuote(input: $input) {
     %s
     quote {
-      side quantity cleanPriceCents allInPriceCents feeCents totalCents
+      side requestedQuantity fillableQuantity subtotalCents feeTotalCents totalCents
+      effectiveUnitPriceCents worstPriceCents worstAllInPriceCents
+      levels { priceCents quantity allInPriceCents }
+      marketId
     }
   }
 }
@@ -218,9 +220,9 @@ query EdgeOrderQuote($input: GetOrderQuoteInput!) {
 # (query field, input type name or None, payload sub-field -> selected fields)
 EXPECTED_QUERIES: dict[str, dict] = {
     "listKeyConfigurations": {"input": "ListKeyConfigurationsInput", "fields": ["keyConfigurations"]},
-    "getFilterBuilderData": {"input": "GetFilterBuilderDataInput", "fields": ["preview", "totalProducts", "availableFacetFields"]},
+    "getFilterBuilderData": {"input": "FilterBuilderInput", "fields": ["preview", "totalProducts"]},
     "getProductMarkets": {"input": "GetProductMarketsInput", "fields": ["markets"]},
-    "getMarket": {"input": None, "fields": ["market"]},
+    "getMarket": {"input": "GetMarketInput", "fields": ["market"]},
     "getOrderBook": {"input": "GetOrderBookInput", "fields": ["bids", "asks", "summary", "sequence", "serverNow"]},
     "getTicker": {"input": "GetTickerInput", "fields": ["keyTicker"]},
     "getRecentTrades": {"input": "GetRecentTradesInput", "fields": ["trades"]},
@@ -228,7 +230,7 @@ EXPECTED_QUERIES: dict[str, dict] = {
     "getProductMarket": {"input": "GetProductMarketInput", "fields": ["stats", "depth", "priceSeries"]},
     "getKeyFairValuesByAssetConfig": {"input": "GetKeyFairValuesByAssetConfigInput", "fields": ["keys"]},
     "getOrderQuote": {"input": "GetOrderQuoteInput", "fields": ["quote"]},
-    "listAssetTypes": {"input": None, "fields": ["assetTypes"], "optional": True},
+    "assetTypes": {"input": "ListAssetTypesInput", "fields": ["assetTypes"], "optional": True},
 }
 
 # Mutations the tool must never call. `edge doctor` asserts none are referenced.

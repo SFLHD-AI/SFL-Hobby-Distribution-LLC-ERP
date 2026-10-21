@@ -1,25 +1,33 @@
 {
   "operation": "EdgeListAssetTypes",
-  "variables": {},
+  "variables": {
+    "input": {}
+  },
   "response": {
     "data": {
-      "listAssetTypes": {
+      "assetTypes": {
         "error": null,
         "assetTypes": [
           {
             "id": "at_sealed_wax",
-            "name": "Sealed Wax",
-            "slug": "sealed-wax"
+            "type": "SEALED_WAX",
+            "slug": "sealed-wax",
+            "displayName": "Sealed Wax",
+            "tpxEnabled": true
           },
           {
             "id": "at_sealed_tcg",
-            "name": "Sealed TCG",
-            "slug": "sealed-tcg"
+            "type": "SEALED_TCG",
+            "slug": "sealed-tcg",
+            "displayName": "Sealed TCG",
+            "tpxEnabled": true
           },
           {
             "id": "at_graded",
-            "name": "Graded Cards",
-            "slug": "graded"
+            "type": "GRADED",
+            "slug": "graded",
+            "displayName": "Graded Cards",
+            "tpxEnabled": true
           }
         ]
       }
