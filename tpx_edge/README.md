@@ -30,13 +30,13 @@ No order placement. No mutation is implemented anywhere (see
 | (d) Playwright scraper | **Not built** — gated on you confirming `DEALERNET_ACCESS=scrape` and Dealernet's terms. `edge/dealernet/scrape.py` is a stub. |
 | (e) `edge watch` | Built with a polling transport. The socket transport needs the URL + message framing from *Integration → Realtime Socket*; the sequence/RESYNC state machine (`edge/realtime.py`) is done and tested. |
 
-### Decisions made for the blanks you left
+### Confirmed settings (2026-10-21)
 
-| Setting | Default used | Change in |
+| Setting | Value | Change in |
 |---|---|---|
 | `VERTICAL` | `both` | `.env` or `--vertical` |
 | `DEALERNET_ACCESS` | `manual` (CSV also works; scrape not built) | `.env` |
-| `DEALERNET_PLAN` | `vendor` (0% at a listed price, 3% name-your-price/counter). The same fee schedule is applied to `basic` until you tell me otherwise. | `.env`, `DEALERNET_*_FEE_BPS` |
+| `DEALERNET_PLAN` | `vendor` (0% at a listed price, 3% name-your-price/counter). The same fee schedule is applied to `basic`. | `.env`, `DEALERNET_*_FEE_BPS` |
 | `SHIPPING_USD` | $15 per box, $45 per case, $0 handling, **per physical move** | `.env` or `--shipping` |
 | `TARGET_MARGIN` | 8% on capital deployed | `.env` or `--margin` |
 
