@@ -235,6 +235,16 @@ class MarketData:
                 q.candles_7d = summarise_candles(bars[-7:], "D1")
             except (TPXDomainError, TPXGraphQLError) as exc:
                 log.info("candles unavailable for %s: %s", name, exc)
+            try:  # hourly bars for the last 7 days: the intraday view of the detail chart
+                q.raw["candles_h1"] = daily_closes(self.candles(product, market_id, "H1", 7 * 24), 16)
+            except (TPXDomainError, TPXGraphQLError) as exc:
+                log.info("hourly candles unavailable for %s: %s", name, exc)
+            try:  # the tape: last trades, newest first
+                q.raw["tape"] = [{"t": str(t.get("executedAt") or "")[:19], "p": _int(t.get("priceCents")),
+                                  "q": _int(t.get("quantity")) or 0, "s": (t.get("takerSide") or "").upper()[:1]}
+                                 for t in self.recent_trades(product, market_id, 40) if t.get("priceCents")]
+            except (TPXDomainError, TPXGraphQLError) as exc:
+                log.info("recent trades unavailable for %s: %s", name, exc)
 
         return q
 
@@ -274,13 +284,15 @@ def summarise_candles(bars: list[dict], interval: str) -> Optional[CandleSummary
     )
 
 
-def daily_closes(bars: list[dict]) -> list[dict]:
-    """Compact daily series for trend charts: [{t, close, vwap, volume}] oldest first."""
+def daily_closes(bars: list[dict], time_chars: int = 10) -> list[dict]:
+    """Compact OHLC series for charts: [{t, open, high, low, close, vwap, volume, trades}]
+    oldest first. `time_chars` keeps the date (10) for daily bars or date+hour (16) for intraday."""
     out = []
     for b in sorted((b for b in bars if b), key=_bar_time):
         close = _int(b.get("closeCents"))
         if close is None:
             continue
-        out.append({"t": _bar_time(b)[:10], "close": close,
-                    "vwap": _int(b.get("vwapCents")), "volume": _int(b.get("volume")) or 0})
+        out.append({"t": _bar_time(b)[:time_chars], "open": _int(b.get("openCents")), "high": _int(b.get("highCents")),
+                    "low": _int(b.get("lowCents")), "close": close, "vwap": _int(b.get("vwapCents")),
+                    "volume": _int(b.get("volume")) or 0, "trades": _int(b.get("trades")) or 0})
     return out

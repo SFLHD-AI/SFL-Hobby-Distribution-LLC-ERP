@@ -206,6 +206,8 @@ class ProductView:
         self.flags = list(dict.fromkeys(f for a in items for f in (a.tpx_liq.flags + (a.dn_liq.flags if a.dn_liq else []) + a.fv.flags)))
         self.hist = history.get((self.primary.tpx.product_id, self.primary.tpx_market), [])
         self.closes = self.primary.tpx.raw.get("candles_d1") or traded.tpx.raw.get("candles_d1") or []
+        self.hourly = self.primary.tpx.raw.get("candles_h1") or traded.tpx.raw.get("candles_h1") or []
+        self.tape = self.primary.tpx.raw.get("tape") or traded.tpx.raw.get("tape") or []
         # A post level only counts when it is near where TPX actually trades; a
         # $19 ask on a $9 pack "clears the margin" but will never fill.
         dn_mid = ((self.dn_bid + self.dn_ask) // 2) if self.dn_bid and self.dn_ask else (self.dn_bid or self.dn_ask)
@@ -498,7 +500,11 @@ def product_payload(st: Story) -> dict:
     m = _meta(v)
     dn = v.dn
     dn_raw = dn.raw if dn else {}
-    closes = [{"t": c.get("t"), "close": c.get("close"), "vwap": c.get("vwap"), "volume": c.get("volume") or 0} for c in v.closes]
+    def bar(c):
+        return {"t": c.get("t"), "o": c.get("open"), "h": c.get("high"), "l": c.get("low"), "close": c.get("close"),
+                "vwap": c.get("vwap"), "volume": c.get("volume") or 0, "n": c.get("trades") or 0}
+    closes = [bar(c) for c in v.closes]
+    hourly = [bar(c) for c in v.hourly]
     notional = sum((c.get("vwap") or c.get("close") or 0) * (c.get("volume") or 0) for c in v.closes) or ((v.vwap30 or v.last or 0) * v.vol30)
     out = analyze(closes, tpx_bid_units=v.primary.tpx.bid_depth_units, tpx_ask_units=v.primary.tpx.ask_depth_units,
                   dn_bid_cents=v.dn_bid, dn_ask_cents=v.dn_ask, last_cents=v.last)
@@ -507,7 +513,7 @@ def product_payload(st: Story) -> dict:
         "image": m.get("image"), "initials": _initials(v.name), "unit": st.unit, "is_case": bool(m.get("is_case")),
         "price": v.last or v.fv or v.tpx_bid or v.dn_bid, "last": v.last, "last_at": v.last_at.isoformat() if v.last_at else None,
         "chg30": _num(v.chg30), "vol30": v.vol30, "trades30": v.trades30, "notional": int(notional), "vwap30": v.vwap30,
-        "hi24": v.hi24, "lo24": v.lo24, "fv": v.fv, "closes": closes,
+        "hi24": v.hi24, "lo24": v.lo24, "vol24": v.vol24, "fv": v.fv, "closes": closes, "hourly": hourly, "tape": v.tape[:40],
         "tpx": {"bid": v.tpx_bid, "ask": v.tpx_ask, "bid_units": v.primary.tpx.bid_depth_units, "ask_units": v.primary.tpx.ask_depth_units,
                 "markets": [{"name": a.tpx_market.replace("TPX:", ""), "vaulted": bool(a.tpx_is_vaulted),
                              "bid": a.tpx.best_bid, "ask": a.tpx.best_ask, "bid_units": a.tpx.bid_depth_units, "ask_units": a.tpx.ask_depth_units}
@@ -646,7 +652,7 @@ select{{padding:5px 8px;border:1px solid var(--line);border-radius:5px;backgroun
 .dchart{{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px;min-width:0}}.dchart svg{{width:100%;height:auto;display:block}}
 .dchart .axis{{fill:var(--muted);font-size:10px}}.dchart .grid{{stroke:var(--line)}}.dchart .vol rect{{fill:var(--ink);opacity:.12}}.dchart .line{{fill:none;stroke-width:2}}
 .dchart .ref{{stroke-dasharray:5 4;stroke-width:1.3}}.dchart .ref.dn{{stroke:var(--accent)}}.dchart .ref.tcg{{stroke:#bc8cff}}.dchart .ref.fv{{stroke:var(--muted)}}
-.legend{{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:4px}}.legend i{{display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}}
+.ctool{{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px}}.ctool .tb{{padding:3px 9px;font-size:11px}}.tm{{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;margin:2px 0 6px}}.tm span i{{font-style:normal;color:var(--muted);margin-right:5px;font-size:10px;text-transform:uppercase;letter-spacing:.04em}}.tm b.up{{color:var(--up)}}.tm b.down{{color:var(--down)}}.dchart svg .wick{{stroke-width:1}}.dchart svg .wick.up,.dchart svg .body.up{{stroke:#3ddc84;fill:#3ddc84}}.dchart svg .wick.down,.dchart svg .body.down{{stroke:#ff4d6a;fill:#ff4d6a}}.dchart svg .vol rect.up{{fill:#3ddc84;opacity:.28}}.dchart svg .vol rect.down{{fill:#ff4d6a;opacity:.28}}.dchart svg .ind{{fill:none;stroke-width:1.4}}.dchart svg .ind.vwap{{stroke:#bc8cff}}.dchart svg .ind.sma7{{stroke:#4cc9f0}}.dchart svg .ind.sma20{{stroke:#f7f7a1}}.dchart svg .ref.bid{{stroke:#3ddc84}}.dchart svg .ref.ask{{stroke:#ff4d6a}}.dchart svg .xh{{stroke:var(--muted);stroke-dasharray:3 3;stroke-width:1}}.readout{{font:12px/1.5 var(--mono,ui-monospace,monospace);color:var(--muted);margin-top:4px;min-height:18px}}.readout b{{color:var(--ink)}}.readout .up,.readout b.up{{color:var(--up)}}.readout .down,.readout b.down{{color:var(--down)}}.tape{{margin-top:12px}}.tape h4{{margin:0 0 4px;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}}.tape table{{width:100%;border-collapse:collapse;font:12px/1.4 var(--mono,ui-monospace,monospace)}}.tape th{{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:2px 4px}}.tape td{{padding:1px 4px;border-bottom:1px solid var(--line)}}.tape tr.up td:nth-child(2){{color:var(--up)}}.tape tr.down td:nth-child(2){{color:var(--down)}}.tape tbody{{display:block;max-height:220px;overflow:auto}}.tape thead,.tape tbody tr{{display:table;width:100%;table-layout:fixed}}.legend{{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:4px}}.legend i{{display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}}
 .metrics{{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}}
 .m{{background:var(--tile);padding:8px 10px;min-width:0}}.m i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}}.m b{{font-size:15px}}.m .sub{{font-size:11px;color:var(--muted)}}
 .outlook{{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px}}
@@ -758,19 +764,53 @@ var W=b.clientWidth||1400,H=b.clientHeight||700;var rects=layout(list,W,H);
 list.forEach(function(x){{var r=rects[x.id];if(!r)return;var pr=[r[0]/W*100,r[1]/H*100,r[2]/W*100,r[3]/H*100];b.appendChild(x.p?tile(x.p,pr,W,H):pendingTile(x.u,pr));}});}}
 window.addEventListener('resize',function(){{clearTimeout(window.__rt);window.__rt=setTimeout(renderBoard,150);}});
 /* ---- detail ---- */
-function bigChart(p){{var pts=p.closes.filter(function(c){{return c.close!=null;}});if(pts.length<2)return '<div class="muted" style="padding:30px;text-align:center">No price history in the last 30 days</div>';
-var W=640,H=240,L=46,R=10,T=12,B=28;var pr=pts.map(function(c){{return c.close;}}),vo=pts.map(function(c){{return c.volume||0;}});
+var chart={{style:'candle',tf:'1D',vwap:true,sma7:true,sma20:false}};try{{var cs=JSON.parse(localStorage.getItem('radar.chart')||'null');if(cs)chart=Object.assign(chart,cs);}}catch(e){{}}
+function saveChart(){{try{{localStorage.setItem('radar.chart',JSON.stringify(chart));}}catch(e){{}}}}
+function sma(arr,n){{return arr.map(function(_,i){{if(i<n-1)return null;var s=0;for(var k=i-n+1;k<=i;k++)s+=arr[k];return s/n;}});}}
+function bars(p){{var src=chart.tf==='1H'?(p.hourly||[]):(p.closes||[]);return src.filter(function(c){{return c.close!=null;}});}}
+function bigChart(p){{var pts=bars(p);if(pts.length<2)return '<div class="muted" style="padding:30px;text-align:center">'+(chart.tf==='1H'?'No hourly trades in the last 7 days. Switch to 1D.':'No price history in the last 30 days')+'</div>';
+var W=640,H=260,L=46,R=10,T=12,B=28,VH=50;var cl=pts.map(function(c){{return c.close;}}),vo=pts.map(function(c){{return c.volume||0;}});
+var hi_=pts.map(function(c){{return c.h!=null?c.h:c.close;}}),lo_=pts.map(function(c){{return c.l!=null?c.l:c.close;}});
 var refs=[];if(p.dn&&p.dn.bid)refs.push({{v:p.dn.bid,c:'dn',l:'DN pays'}});if(p.dn&&p.dn.ask)refs.push({{v:p.dn.ask,c:'dn',l:'DN sells'}});if(p.tcg&&p.tcg.market)refs.push({{v:p.tcg.market,c:'tcg',l:'TCGplayer market'}});if(p.fv)refs.push({{v:p.fv,c:'fv',l:'Tradepost fair value'}});
-var all=pr.concat(refs.map(function(r){{return r.v;}}));var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);var pad=(hi-lo)*0.08||1;lo-=pad;hi+=pad;
-var x=function(i){{return L+i/(pts.length-1)*(W-L-R);}},y=function(v){{return T+(hi-v)/(hi-lo)*(H-T-B);}};
-var vmax=Math.max.apply(null,vo)||1,bw=Math.max((W-L-R)/pts.length*0.6,2);
-var s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="30-day Tradepost price and volume">';
-for(var g=0;g<4;g++){{var v=lo+(hi-lo)*g/3;s+='<line class="grid" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'"/><text class="axis" x="'+(L-4)+'" y="'+(y(v)+3).toFixed(1)+'" text-anchor="end">'+usd(v,0)+'</text>';}}
-s+='<g class="vol">'+vo.map(function(v,i){{return v?'<rect x="'+(x(i)-bw/2).toFixed(1)+'" y="'+(H-B-v/vmax*60).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*60).toFixed(1)+'"/>':'';}}).join('')+'</g>';
+if(p.tpx.bid)refs.push({{v:p.tpx.bid,c:'bid',l:'Tradepost bid'}});if(p.tpx.ask)refs.push({{v:p.tpx.ask,c:'ask',l:'Tradepost ask'}});
+var s7=sma(cl,7),s20=sma(cl,20),vw=pts.map(function(c){{return c.vwap;}});
+var all=(chart.style==='candle'?hi_.concat(lo_):cl).concat(refs.map(function(r){{return r.v;}}));var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);var pad=(hi-lo)*0.08||1;lo-=pad;hi+=pad;
+var n=pts.length,slot=(W-L-R)/n,x=function(i){{return L+(i+0.5)*slot;}},y=function(v){{return T+(hi-v)/(hi-lo)*(H-T-B-VH);}};
+var vmax=Math.max.apply(null,vo)||1,bw=Math.max(slot*0.62,1.5);
+var s='<svg id="bigsvg" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="Tradepost '+(chart.tf==='1H'?'hourly':'daily')+' '+chart.style+' chart">';
+for(var g=0;g<5;g++){{var v=lo+(hi-lo)*g/4;s+='<line class="grid" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'"/><text class="axis" x="'+(L-4)+'" y="'+(y(v)+3).toFixed(1)+'" text-anchor="end">'+usd(v,v>=10000?0:2)+'</text>';}}
+s+='<g class="vol">'+vo.map(function(v,i){{var upb=(pts[i].o==null)?(i?cl[i]>=cl[i-1]:true):cl[i]>=pts[i].o;return v?'<rect class="'+(upb?'up':'down')+'" x="'+(x(i)-bw/2).toFixed(1)+'" y="'+(H-B-v/vmax*VH).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*VH).toFixed(1)+'"/>':'';}}).join('')+'</g>';
 refs.forEach(function(r){{s+='<line class="ref '+r.c+'" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(r.v).toFixed(1)+'" y2="'+y(r.v).toFixed(1)+'"/>';}});
-var up=(p.chg30||0)>=0;s+='<path class="line" stroke="'+(up?'#3ddc84':'#ff4d6a')+'" d="'+pr.map(function(v,i){{return (i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1);}}).join(' ')+'"/>';
-[0,Math.floor((pts.length-1)/2),pts.length-1].forEach(function(i){{s+='<text class="axis" x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+(i===0?'start':i===pts.length-1?'end':'middle')+'">'+esc((pts[i].t||'').slice(5))+'</text>';}});
-s+='</svg><div class="legend"><span><i style="background:'+(up?'#3ddc84':'#ff4d6a')+'"></i>Tradepost daily close</span>'+refs.map(function(r){{return '<span><i style="background:'+(r.c==='dn'?'#f5b63a':r.c==='tcg'?'#bc8cff':'#8c8c95')+'"></i>'+r.l+' '+usd(r.v)+'</span>';}}).join('')+'<span><i style="background:#8c8c95;opacity:.5"></i>units sold</span></div>';return s;}}
+var path=function(arr,cls){{var d='',pen=false;arr.forEach(function(v,i){{if(v==null){{pen=false;return;}}d+=(pen?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1);pen=true;}});return d?'<path class="ind '+cls+'" d="'+d+'"/>':'';}};
+if(chart.style==='candle'){{pts.forEach(function(c,i){{var o=c.o!=null?c.o:(i?cl[i-1]:c.close),h=c.h!=null?c.h:Math.max(o,c.close),l=c.l!=null?c.l:Math.min(o,c.close),upb=c.close>=o;
+s+='<line class="wick '+(upb?'up':'down')+'" x1="'+x(i).toFixed(1)+'" x2="'+x(i).toFixed(1)+'" y1="'+y(h).toFixed(1)+'" y2="'+y(l).toFixed(1)+'"/>';
+var top=y(Math.max(o,c.close)),hh=Math.max(Math.abs(y(o)-y(c.close)),1);s+='<rect class="body '+(upb?'up':'down')+'" x="'+(x(i)-bw/2).toFixed(1)+'" y="'+top.toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+hh.toFixed(1)+'"/>';}});}}
+else{{var up=(cl[n-1]>=cl[0]);s+='<path class="line" stroke="'+(up?'#3ddc84':'#ff4d6a')+'" d="'+cl.map(function(v,i){{return (i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1);}}).join(' ')+'"/>';}}
+if(chart.vwap)s+=path(vw,'vwap');if(chart.sma7)s+=path(s7,'sma7');if(chart.sma20)s+=path(s20,'sma20');
+var lab=function(t){{t=t||'';return chart.tf==='1H'?t.slice(5,10)+' '+t.slice(11,16):t.slice(5);}};
+[0,Math.floor((n-1)/3),Math.floor(2*(n-1)/3),n-1].forEach(function(i){{s+='<text class="axis" x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+(i===0?'start':i===n-1?'end':'middle')+'">'+esc(lab(pts[i].t))+'</text>';}});
+s+='<g id="xh" hidden><line class="xh" y1="'+T+'" y2="'+(H-B)+'"/><line class="xh" id="xhY" x1="'+L+'" x2="'+(W-R)+'"/></g><rect id="hit" x="'+L+'" y="'+T+'" width="'+(W-L-R)+'" height="'+(H-T-B)+'" fill="transparent"/></svg>';
+s+='<div class="legend"><span><i style="background:'+(chart.style==='candle'?'#3ddc84':'#8c8c95')+'"></i>'+(chart.style==='candle'?'candles: green closes up, red closes down':'close')+'</span>'+(chart.vwap?'<span><i style="background:#bc8cff"></i>VWAP</span>':'')+(chart.sma7?'<span><i style="background:#4cc9f0"></i>SMA 7</span>':'')+(chart.sma20?'<span><i style="background:#f7f7a1"></i>SMA 20</span>':'')+refs.map(function(r){{return '<span><i style="background:'+(r.c==='dn'?'#f5b63a':r.c==='tcg'?'#bc8cff':r.c==='bid'?'#3ddc84':r.c==='ask'?'#ff4d6a':'#8c8c95')+'"></i>'+r.l+' '+usd(r.v)+'</span>';}}).join('')+'</div>';
+s+='<div class="readout" id="readout">Hover the chart for open / high / low / close / volume.</div>';
+chartState={{pts:pts,W:W,L:L,R:R,slot:slot,y:y,s7:s7,s20:s20}};return s;}}
+var chartState=null;
+function wireChart(p){{var svg=$('bigsvg');if(!svg||!chartState)return;var st=chartState,ro=$('readout'),xh=$('xh');
+svg.addEventListener('mousemove',function(ev){{var r=svg.getBoundingClientRect();var px=(ev.clientX-r.left)/r.width*st.W;var i=Math.max(0,Math.min(st.pts.length-1,Math.floor((px-st.L)/st.slot)));var c=st.pts[i];if(!c)return;
+var o=c.o!=null?c.o:c.close,h=c.h!=null?c.h:c.close,l=c.l!=null?c.l:c.close,prev=i?st.pts[i-1].close:o,chg=prev?((c.close/prev-1)*100):0;
+ro.innerHTML='<b>'+esc(c.t||'')+'</b> O <b>'+usd(o)+'</b> H <b>'+usd(h)+'</b> L <b>'+usd(l)+'</b> C <b class="'+(c.close>=o?'up':'down')+'">'+usd(c.close)+'</b> <span class="'+(chg>=0?'up':'down')+'">'+(chg>=0?'+':'')+chg.toFixed(2)+'%</span> · Vol <b>'+(c.volume||0).toLocaleString()+'</b>'+(c.n?' · '+c.n+' trades':'')+(c.vwap?' · VWAP '+usd(c.vwap):'')+(st.s7[i]!=null?' · SMA7 '+usd(st.s7[i]):'');
+xh.hidden=false;var cx=st.L+(i+0.5)*st.slot;xh.children[0].setAttribute('x1',cx);xh.children[0].setAttribute('x2',cx);var cy=st.y(c.close);xh.children[1].setAttribute('y1',cy);xh.children[1].setAttribute('y2',cy);}});
+svg.addEventListener('mouseleave',function(){{xh.hidden=true;}});
+Array.prototype.forEach.call(document.querySelectorAll('#ctool [data-style],#ctool [data-tf],#ctool [data-ind]'),function(b){{b.addEventListener('click',function(){{
+if(b.dataset.style)chart.style=b.dataset.style;if(b.dataset.tf)chart.tf=b.dataset.tf;if(b.dataset.ind)chart[b.dataset.ind]=!chart[b.dataset.ind];saveChart();$('dchart').innerHTML=bigChart(p);renderTool();wireChart(p);}});}});}}
+function renderTool(){{var t=$('ctool');if(!t)return;Array.prototype.forEach.call(t.querySelectorAll('button'),function(b){{var on=(b.dataset.style&&b.dataset.style===chart.style)||(b.dataset.tf&&b.dataset.tf===chart.tf)||(b.dataset.ind&&chart[b.dataset.ind]);b.classList.toggle('on',!!on);}});}}
+function tradeMetrics(p){{var d=p.closes||[],last=p.last||p.price,c=d.filter(function(x){{return x.close!=null;}}),n=c.length;
+var pc=function(a,b){{return (a&&b)?((a/b-1)*100):null;}},f=function(v){{return v==null?'—':(v>=0?'+':'')+v.toFixed(2)+'%';}},cls=function(v){{return v==null?'':v>=0?'up':'down';}};
+var d1=n>1?pc(c[n-1].close,c[n-2].close):null,d7=n>7?pc(c[n-1].close,c[n-8].close):null,hi30=n?Math.max.apply(null,c.map(function(x){{return x.h!=null?x.h:x.close;}})):null,lo30=n?Math.min.apply(null,c.map(function(x){{return x.l!=null?x.l:x.close;}})):null;
+var spread=(p.tpx.bid&&p.tpx.ask)?p.tpx.ask-p.tpx.bid:null,spp=(spread!=null&&p.tpx.ask)?spread/p.tpx.ask*100:null,imb=(p.tpx.bid_units+p.tpx.ask_units)?((p.tpx.bid_units-p.tpx.ask_units)/(p.tpx.bid_units+p.tpx.ask_units)*100):null;
+var avgv=n?c.reduce(function(a,x){{return a+(x.volume||0);}},0)/n:null,rng=n?c.reduce(function(a,x){{return a+((x.h!=null&&x.l!=null&&x.close)?(x.h-x.l)/x.close*100:0);}},0)/n:null;
+var items=[['Day',f(d1),cls(d1)],['7D',f(d7),cls(d7)],['30D',f(p.chg30),cls(p.chg30)],['Spread',spread!=null?usd(spread)+' ('+spp.toFixed(1)+'%)':'—',''],['Book',imb==null?'—':(imb>=0?'+':'')+imb.toFixed(0)+'% '+(imb>=0?'bid':'ask'),imb==null?'':imb>=0?'up':'down'],['30D hi / lo',hi30?usd(hi30)+' / '+usd(lo30):'—',''],['Avg vol/day',avgv!=null?avgv.toFixed(1):'—',''],['Avg range/day',rng!=null?rng.toFixed(1)+'%':'—',''],['24h vol',(p.vol24||0).toLocaleString(),'']];
+return '<div class="tm">'+items.map(function(it){{return '<span><i>'+it[0]+'</i><b class="'+it[2]+'">'+it[1]+'</b></span>';}}).join('')+'</div>';}}
+function tapeHtml(p){{var t=p.tape||[];if(!t.length)return '';return '<div class="tape"><h4>Tape · last trades</h4><table><thead><tr><th>Time</th><th>Price</th><th>Qty</th><th>Side</th></tr></thead><tbody>'+t.slice(0,25).map(function(x){{var d=x.t?new Date(x.t+'Z'):null;return '<tr class="'+(x.s==='B'?'up':x.s==='S'?'down':'')+'"><td>'+(d&&!isNaN(d)?d.toLocaleString([],{{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}}):esc(x.t||''))+'</td><td>'+usd(x.p)+'</td><td>'+x.q+'</td><td>'+(x.s==='B'?'buy':x.s==='S'?'sell':'—')+'</td></tr>';}}).join('')+'</tbody></table></div>';}}
 function openDetail(p){{var o=p.outlook||{{}},dn=p.dn,st=p.story||{{}};var up=(p.chg30||0)>=0;
 var img=p.image?'<img class="thumb" src="'+p.image+'" alt="">':'<span class="thumb ph">'+esc(p.initials)+'</span>';
 var ms=[['Last Tradepost sale',usd(p.last),p.last_at?new Date(p.last_at).toLocaleString():'no trades in 30d'],['30-day change',pct(p.chg30,2),''],['30-day volume',compact(p.notional,true),(p.vol30||0).toLocaleString()+' units · '+(p.trades30||0).toLocaleString()+' trades'],['30-day avg price',usd(p.vwap30),'volume-weighted'],
@@ -779,11 +819,11 @@ var ms=[['Last Tradepost sale',usd(p.last),p.last_at?new Date(p.last_at).toLocal
 ['TCGplayer market',p.tcg?usd(p.tcg.market):'—',p.tcg?('Tradepost '+(p.tpx.bid?(p.tpx.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' · DN '+(dn&&dn.bid?(dn.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' of market'):'keys not set'],
 ['UPC',p.upc||'—',dn?(dn.upc_match===false?'⚠ Dealernet listing is '+dn.upc+' (different product, not compared)':dn.upc_match===true?'Dealernet '+dn.upc+' · same product ✓':dn.upc?'Dealernet '+dn.upc:'Dealernet shows no UPC; matched by name'):'no Dealernet listing'],['Tradepost fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
 var h='<div class="ph"><div class="dhead">'+img+'<div><div class="series">'+esc(p.series)+'</div><h3 style="margin:0">'+esc(p.name)+'</h3></div><div class="dprice"><b>'+usd(p.price)+'</b><span class="chg '+(up?'up':'down')+'">'+(up?'↗':'↘')+' '+Math.abs(p.chg30||0).toFixed(2)+'% · 30d</span></div></div><div><button type="button" class="tb x" id="btnRemove">Remove from board</button> <button type="button" class="tb" data-close="detail">Close</button></div></div>';
-h+='<div class="dgrid"><div><div class="dchart">'+bigChart(p)+'</div>';
+h+='<div class="dgrid"><div><div class="ctool" id="ctool"><span class="seg"><button type="button" class="tb" data-style="line">Line</button><button type="button" class="tb" data-style="candle">Candles</button></span><span class="seg"><button type="button" class="tb" data-tf="1D">1D · 30 days</button><button type="button" class="tb" data-tf="1H">1H · 7 days</button></span><span class="seg"><button type="button" class="tb" data-ind="vwap">VWAP</button><button type="button" class="tb" data-ind="sma7">SMA 7</button><button type="button" class="tb" data-ind="sma20">SMA 20</button></span></div>'+tradeMetrics(p)+'<div class="dchart" id="dchart">'+bigChart(p)+'</div>';
 h+='<div class="callbox '+p.cls+'"><b>'+esc(st.badge||'')+'</b>'+(st.headline?' · '+esc(st.headline):'')+(st.steps&&st.steps.length?'<ol>'+st.steps.map(function(x){{return '<li>'+esc(x)+'</li>';}}).join('')+'</ol>':'')+(st.profit?'<div class="profit">'+esc(st.profit)+'</div>':'')+'<div class="muted small">'+esc(st.why||'')+'</div></div></div>';
 h+='<div><div class="metrics">'+ms.map(function(m){{return '<div class="m"><i>'+m[0]+'</i><b>'+m[1]+'</b><div class="sub">'+esc(m[2])+'</div></div>';}}).join('')+'</div>';
-h+='<div class="outlook"><h4>Outlook · next 7 days</h4><div class="olabel '+esc(o.label||'')+'">'+esc(o.label||'—')+'</div><div class="small muted">'+esc(o.confidence||'')+' confidence'+(o.range_low_cents?' · likely range '+usd(o.range_low_cents)+' – '+usd(o.range_high_cents):'')+'</div><ul>'+(o.reasons||[]).map(function(r){{return '<li>'+esc(r)+'</li>';}}).join('')+'</ul><div class="fine">Based only on the last 30 days of Tradepost trades and today\\'s order books. A description of the past, not advice.</div></div></div></div>';
-$('detailBody').innerHTML=h;$('detail').hidden=false;
+h+=tapeHtml(p);h+='<div class="outlook"><h4>Outlook · next 7 days</h4><div class="olabel '+esc(o.label||'')+'">'+esc(o.label||'—')+'</div><div class="small muted">'+esc(o.confidence||'')+' confidence'+(o.range_low_cents?' · likely range '+usd(o.range_low_cents)+' – '+usd(o.range_high_cents):'')+'</div><ul>'+(o.reasons||[]).map(function(r){{return '<li>'+esc(r)+'</li>';}}).join('')+'</ul><div class="fine">Based only on the last 30 days of Tradepost trades and today\\'s order books. A description of the past, not advice.</div></div></div></div>';
+$('detailBody').innerHTML=h;$('detail').hidden=false;renderTool();wireChart(p);
 $('btnRemove').addEventListener('click',function(){{removeProduct(p.id,p.name);$('detail').hidden=true;}});
 Array.prototype.forEach.call($('detailBody').querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{$('detail').hidden=true;}});}});}}
 /* ---- add panel ---- */
