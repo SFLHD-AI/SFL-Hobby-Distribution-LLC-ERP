@@ -45,5 +45,5 @@ def test_dashboard_shows_pct_of_tcgplayer(service):
     for a in assessments:
         a.tpx.tcg_market = 20000
     page = render(assessments, source="demo")
-    assert "vs TCGplayer mkt" in page
+    assert "TCGplayer market price" in page
     assert "$200.00" in page and "TPX " in page and "%" in page

@@ -47,7 +47,7 @@ def test_history_accumulates_into_edge_trend(tmp_path):
     _run(tmp_path)
     page, hist = _run(tmp_path)
     assert len(hist.read_text().splitlines()) == 12  # 6 product/market rows x 2 runs
-    assert 'aria-label="edge trend"' in page
+    assert 'aria-label="price trend"' in page  # the page keeps its per-product trend; the edge log only accumulates
 
 
 def test_chart_helpers_handle_empty_and_flat():

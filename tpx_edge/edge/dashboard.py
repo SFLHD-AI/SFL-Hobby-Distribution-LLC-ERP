@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -324,7 +325,8 @@ def _best_maker(items: list[Assessment], margin: Decimal) -> Optional[MakerLevel
 
 
 # ---------------------------------------------------------------------------
-# page pieces
+# plain-English page pieces. Ross is not a trader: every row says in words what
+# to buy, where, at what price, and what he makes.
 def _ticker(views: list[ProductView]) -> str:
     chips = []
     for v in views:
@@ -336,149 +338,158 @@ def _ticker(views: list[ProductView]) -> str:
     return f'<div class="tape" aria-label="ticker"><div class="tape-track">{strip}{strip}</div></div>'
 
 
-def _metrics(views: list[ProductView], margin: Optional[Decimal], generated_at: datetime) -> str:
-    edges = [v for v in views if v.edge is not None and v.edge > 0]
-    rests = [v for v in views if v.signal[0] == "post"]
-    best = max(edges, key=lambda v: v.edge, default=None)
-    with_dn = [v for v in views if v.dn]
-    prem = sorted(v.dn_prem_bid for v in with_dn if v.dn_prem_bid is not None and abs(v.dn_prem_bid) < 300)
-    avg_prem = prem[len(prem) // 2] if prem else None
-    notional = sum((v.vwap30 or v.last or 0) * v.vol30 for v in views)
-    movers = sorted((v for v in views if v.chg30 is not None), key=lambda v: v.chg30)
-    up = movers[-1] if movers else None
-    down = movers[0] if movers else None
-
-    def tile(label, value, sub, cls="", hero=False):
-        return (f'<div class="m {"hero" if hero else ""}"><div class="m-l">{label}</div>'
-                f'<div class="m-v {cls}">{value}</div><div class="m-s">{sub}</div></div>')
-
-    return "".join([
-        tile("Live edges", str(len(edges)), f"of {len(with_dn)} products with both prices" if with_dn else "no Dealernet prices yet",
-             "pos" if edges else "", hero=True),
-        tile("Best edge", _usd_signed(best.edge) if best else "—",
-             f"{_e(best.short)} · {_pct(best.edge_pct)}" if best else f"none clears $0 at {Decimal(margin or 0) * 100:.0f}% target"),
-        tile("Postable now", str(len(rests)), "TPX bids/asks you could post at top of book" if rests else "no top-of-book level clears the margin",
-             "pos" if rests else ""),
-        tile("DN bid vs TPX bid", _pct(avg_prem), "median across matched products", _cls(avg_prem)),
-        tile("TPX 30d volume", _usd(notional, 0), f"{sum(v.vol30 for v in views):,} units · {sum(v.trades30 for v in views):,} trades"),
-        tile("Top mover 30d", f'{_pct(up.chg30)}' if up else "—", _e(up.short) if up else "", _cls(up.chg30) if up else ""),
-        tile("Worst mover 30d", f'{_pct(down.chg30)}' if down else "—", _e(down.short) if down else "", _cls(down.chg30) if down else ""),
-    ])
+def _unit(name: str) -> str:
+    words = set(re.findall(r"[a-z]+", name.lower()))
+    for word in ("case", "pack", "tin", "display", "collection", "bundle", "box"):
+        if word in words:
+            return "box" if word == "collection" else word
+    return "unit"
 
 
-def _ladder(levels, side: str, n: int = 5, unit_mult: int = 1) -> str:
-    rows = []
-    for lv in levels[:n]:
-        rows.append(f'<tr><td class="num">{_usd(lv.price_cents)}</td><td class="num muted">{lv.quantity:,}</td></tr>')
-    if not rows:
-        rows.append('<tr><td colspan="2" class="muted">empty</td></tr>')
-    return (f'<table class="ladder {side}"><thead><tr><th>{"Bid" if side == "bid" else "Ask"}</th><th class="num">Qty</th></tr></thead>'
-            f'<tbody>{"".join(rows)}</tbody></table>')
+def _venue_word(venue: str) -> str:
+    return "Dealernet" if venue.startswith("Dealernet") else "TPX"
 
 
-def _desk(v: ProductView) -> str:
-    """The expanded trade desk for one product."""
-    series = {a.tpx_market.replace("TPX:", ""): a.tpx.raw.get("candles_d1") or [] for a in v.items}
-    chart = price_chart(series, {"DN bid": v.dn_bid, "DN ask": v.dn_ask, "Fair value": v.fv, "TCG market": v.tcg})
-    sig_cls, sig_label, plan = v.signal
-
-    # Price levels that matter.
-    levels = [
-        ("TPX bid / ask", f'{_usd(v.tpx_bid)} / {_usd(v.tpx_ask)}', f"spread {_pct(v.primary.tpx.spread_pct, False)}" if v.primary.tpx.spread_pct is not None else "one-sided"),
-        ("Dealernet bid / ask", f'{_usd(v.dn_bid)} / {_usd(v.dn_ask)}', f"spread {_pct(v.dn.spread_pct, False)}" if v.dn and v.dn.spread_pct is not None else ("no Dealernet price" if not v.dn else "one-sided")),
-        ("Last TPX trade", _usd(v.last), v.last_at.strftime("%b %d %H:%M UTC") if v.last_at else "no trades in 30d"),
-        ("30d VWAP", _usd(v.vwap30), f"{v.vol30:,} units · {v.trades30:,} trades"),
-        ("TPX fair value", _usd(v.fv) if v.fv else "no FV", (f"TPX bid {_pct(v.primary.fv.tpx_bid_gap_pct)} · DN bid {_pct(v.primary.fv.dn_bid_gap_pct)} vs FV") if v.fv else "TPX has not priced this product"),
-        ("TCGplayer market", _usd(v.tcg) if v.tcg else "—",
-         (f"TPX bid {pct_of(v.tpx_bid, v.tcg) or '—'}% · DN bid {pct_of(v.dn_bid, v.tcg) or '—'}% of market") if v.tcg else "needs TCGplayer keys"),
-    ]
-    levels_html = "".join(f'<div class="lv"><div class="lv-l">{l}</div><div class="lv-v">{val}</div><div class="lv-s">{sub}</div></div>'
-                          for l, val, sub in levels)
-
-    # Both directions, all markets.
-    moves = []
-    for a in v.items:
-        for arb in (a.arb_a, a.arb_b):
-            if arb and arb.edge_per_unit_cents is not None:
-                moves.append(arb)
-    moves.sort(key=lambda x: x.edge_per_unit_cents, reverse=True)
-    move_rows = "".join(
-        f'<tr><td>{_e(m.label)}</td><td class="num">{_usd(m.buy_clean_cents)}</td><td class="num">{_usd(m.sell_clean_cents)}</td>'
-        f'<td class="num {_cls(m.edge_per_unit_cents)}">{_usd_signed(m.edge_per_unit_cents)}</td>'
-        f'<td class="num {_cls(m.edge_pct)}">{_pct(m.edge_pct)}</td><td class="num">{m.max_size}</td></tr>' for m in moves
-    ) or '<tr><td colspan="6" class="muted">Needs a Dealernet price and a TPX book on the other side.</td></tr>'
-
-    makers = sorted((m for a in v.items for m in a.makers if m.rest_clean_cents), key=lambda m: -(m.expected_edge_pct or -999))
-    maker_rows = "".join(
-        f'<tr><td>{_e(m.label)}</td><td class="num">{_usd(m.rest_clean_cents)}</td><td class="num">{_usd(m.current_top_cents)}</td>'
-        f'<td>{"best in book" if m.would_be_best else ("behind" if m.would_be_best is not None else "—")}</td>'
-        f'<td class="num {_cls(m.expected_edge_pct)}">{_pct(m.expected_edge_pct)}</td></tr>' for m in makers[:4]
-    ) or '<tr><td colspan="5" class="muted">No resting level clears the margin.</td></tr>'
-
-    dn_ladders = (f'<div class="ladders"><div><div class="lad-t">Dealernet · buyers ({len(v.dn.bids)})</div>{_ladder(v.dn.bids, "bid")}</div>'
-                  f'<div><div class="lad-t">Dealernet · sellers ({len(v.dn.asks)})</div>{_ladder(v.dn.asks, "ask")}</div></div>') if v.dn else ""
-    tpx_lad = []
-    for a in v.items:
-        tpx_lad.append(f'<div><div class="lad-t">{_e(a.tpx_market.replace("TPX:", ""))} · bids ({a.tpx.bid_depth_units:,})</div>{_ladder(a.tpx.bids, "bid")}</div>'
-                       f'<div><div class="lad-t">{_e(a.tpx_market.replace("TPX:", ""))} · asks ({a.tpx.ask_depth_units:,})</div>{_ladder(a.tpx.asks, "ask")}</div>')
-    tpx_ladders = f'<div class="ladders">{"".join(tpx_lad)}</div>'
-    flags = f'<p class="small muted flags">{_e(" · ".join(v.flags))}</p>' if v.flags else ""
-    edge_hist = sparkline([r.get("edge_per_unit") for r in v.hist][-40:])
-    hist_html = f'<div class="hist"><span class="small muted">Edge over past runs</span>{edge_hist}</div>' if edge_hist else ""
-
-    return (f'<div class="desk">'
-            f'<div class="desk-top"><div class="plan"><span class="sig {sig_cls}">{sig_label}</span> <span>{plan}</span></div>{hist_html}</div>'
-            f'<div class="desk-grid"><div class="desk-chart">{chart}</div><div class="levels">{levels_html}</div></div>'
-            f'<div class="desk-cols"><section><h4>Take now (both directions, all markets)</h4><div class="tw"><table class="mini"><thead><tr>'
-            f'<th>Move</th><th class="num">Buy at</th><th class="num">Sell at</th><th class="num">Edge/unit</th><th class="num">Edge %</th><th class="num">Size</th></tr></thead>'
-            f'<tbody>{move_rows}</tbody></table></div>'
-            f'<h4>Post and wait</h4><div class="tw"><table class="mini"><thead><tr><th>Level</th><th class="num">Post at</th><th class="num">Current top</th><th>Queue</th><th class="num">Edge %</th></tr></thead>'
-            f'<tbody>{maker_rows}</tbody></table></div></section>'
-            f'<section><h4>Order books</h4>{dn_ladders}{tpx_ladders}</section></div>{flags}</div>')
+def _market_word(venue: str) -> str:
+    return "TPX vault market" if "[Vaulted]" in venue else "TPX shipped market"
 
 
-def _row(v: ProductView) -> str:
-    sig_cls, sig_label, _ = v.signal
+class Story:
+    """What the page says about one product."""
+
+    def __init__(self, v: ProductView):
+        self.v = v
+        self.unit = _unit(v.name)
+        self.cls, self.badge, self.headline, self.steps, self.profit, self.why = self._build()
+
+    @property
+    def is_opportunity(self) -> bool:
+        return self.cls in ("edge", "thin", "post", "behind")
+
+    def _build(self):
+        v = self.v
+        sig = v.signal[0]
+        u = self.unit
+        if sig in ("edge", "thin"):
+            a = v.arb
+            buy, sell = _venue_word(a.buy_venue), _venue_word(a.sell_venue)
+            steps = [f"Buy on {buy} at {_usd(a.buy_clean_cents)}", f"Sell on {sell} at {_usd(a.sell_clean_cents)}"]
+            profit = (f"You make about {_usd(a.edge_per_unit_cents)} per {u} ({_pct(a.edge_pct, False)}) after fees and shipping, "
+                      f"on up to {a.max_size} {u}{'' if a.max_size == 1 else 's'} at these prices.")
+            why = (f"{sell} is paying more than {buy} is asking right now, so both sides of the trade are already there. "
+                   "These prices can move fast.")
+            return sig, ("Ready now" if sig == "edge" else "Small profit now"), f"Buy on {buy}, sell on {sell}", steps, profit, why
+        best = max((d for d in (v.buy_tpx, v.buy_dn) if d.post), key=lambda d: d.post_rank, default=None)
+        if sig == "post":
+            m = best.post
+            where = _market_word(m.venue)
+            if m.side == "bid":
+                steps = [f"Post a buy order on TPX at {_usd(m.rest_clean_cents)} ({where})",
+                         f"When it fills, sell to Dealernet at {_usd(m.counter_clean_cents)} (their current buying price)"]
+                headline = "Buy on TPX, sell to Dealernet"
+                top = (f"Your {_usd(m.rest_clean_cents)} would be the highest buy order on TPX "
+                       + (f"(the next best is {_usd(m.current_top_cents)})" if m.current_top_cents else "(nobody else is bidding there yet)")
+                       + ", so you are first in line when someone sells.")
+                why = f"Dealernet is paying {_usd(m.counter_clean_cents)} per {u}, more than TPX sellers are getting. {top}"
+            else:
+                steps = [f"Post a sell order on TPX at {_usd(m.rest_clean_cents)} ({where})",
+                         f"When it fills, buy from Dealernet at {_usd(m.counter_clean_cents)} (their current selling price) to cover it"]
+                headline = "Sell on TPX, buy from Dealernet"
+                top = (f"Your {_usd(m.rest_clean_cents)} would be the lowest sell order on TPX "
+                       + (f"(the next best is {_usd(m.current_top_cents)})" if m.current_top_cents else "(nobody else is selling there yet)")
+                       + ", so you are first in line when someone buys.")
+                why = f"Dealernet sells this for {_usd(m.counter_clean_cents)} per {u}, less than TPX buyers will pay. {top}"
+            profit = f"You make about {_usd(m.expected_edge_cents)} per {u} ({_pct(m.expected_edge_pct, False)}) after fees and shipping, once your order fills."
+            return "post", "Post and wait", headline, steps, profit, why
+        if sig == "behind":
+            m = best.post
+            verb = "buy" if m.side == "bid" else "sell"
+            steps = [f"A TPX {verb} order at {_usd(m.rest_clean_cents)} would make {_pct(v.margin * 100, False)}",
+                     f"But someone is already at {_usd(m.current_top_cents)}, ahead of you"]
+            why = f"Watch this one. If the TPX {verb} orders thin out, it becomes a trade."
+            return "behind", "Almost", "Someone is ahead of you", steps, "No profit yet.", why
+        # Nothing to do: say why in one line.
+        if v.dn is None:
+            return "none", "No Dealernet price", "", [], "", "No Dealernet listing matched this product."
+        if best and best.post and not best.near_market:
+            m = best.post
+            verb = "sell" if m.side == "ask" else "buy"
+            return ("none", "No profit right now", "", [], "",
+                    f"Fees and shipping eat the gap: you would have to {verb} at {_usd(m.rest_clean_cents)} on TPX, "
+                    f"but it trades around {_usd(v.ref)}.")
+        if v.edge is not None:
+            return ("none", "No profit right now", "", [], "",
+                    f"Prices are too close. Dealernet pays {_usd(v.dn_bid)} and sells at {_usd(v.dn_ask)}; "
+                    f"TPX pays {_usd(v.tpx_bid)} and sells at {_usd(v.tpx_ask)}.")
+        return "none", "No prices to trade against", "", [], "", "One side has no buyers or sellers right now."
+
+
+def _facts(v: ProductView) -> str:
+    bits = []
+    if v.vol30:
+        bits.append(f"TPX sold {v.vol30:,} in the last 30 days")
+    else:
+        bits.append("No TPX trades in the last 30 days")
+    if v.chg30 is not None:
+        bits.append(f'TPX price <span class="{_cls(v.chg30)}">{"up" if v.chg30 >= 0 else "down"} {_pct(abs(v.chg30), False)}</span> in 30 days')
+    if v.tcg:
+        bits.append(f"TCGplayer market price {_usd(v.tcg)} (TPX pays {pct_of(v.tpx_bid, v.tcg) or '—'}%, Dealernet pays {pct_of(v.dn_bid, v.tcg) or '—'}% of it)")
+    return " · ".join(bits)
+
+
+def _card(st: Story, rank: int) -> str:
+    v = st.v
     spark = sparkline([p["close"] for p in v.closes][-30:], baseline=None)
-    tcg_bid = pct_of(v.tpx_bid, v.tcg)
-    tcg_dn = pct_of(v.dn_bid, v.tcg)
-    tcg_cell = (f'<div class="two"><span>{_usd(v.tcg)}</span><span class="small muted">TPX {tcg_bid or "—"}% · DN {tcg_dn or "—"}%</span></div>'
-                if v.tcg else '<span class="muted">—</span>')
-    markets = " ".join(f'<span class="chip">{"Vault" if a.tpx_is_vaulted else "Ship"}</span>' for a in v.items)
-
-    def post_cell(d: Direction) -> str:
-        m = d.post
-        if not m:
-            return '<div class="c num muted" data-v="-1e12">—</div>'
-        gap = d.gap_cents
-        if not d.near_market:
-            return (f'<div class="c num post far" data-v="{_sortv(gap, -1e11)}"><b>{_usd(m.rest_clean_cents)}</b>'
-                    f'<div class="small">{_pct(d.off_market_pct, dec=0)} off mkt · no fill</div></div>')
-        state = ("top" if m.would_be_best else "behind") if m.current_top_cents is not None else "top"
-        mkt = "Vault" if "[Vaulted]" in m.venue else "Ship"
-        return (f'<div class="c num post {state}" data-v="{_sortv(gap, -1e12)}"><b>{_usd(m.rest_clean_cents)}</b>'
-                f'<div class="small">{("top " + _usd(m.current_top_cents) + " · " + _usd_signed(gap)) if m.current_top_cents is not None else "empty book · you\'d be alone"}'
-                f'</div><div class="small muted">{mkt} market</div></div>')
-
+    steps = "".join(f'<li>{_e(x)}</li>' for x in st.steps)
     return (
-        f'<details class="prod" data-edge="{1 if v.edge is not None and v.edge > 0 else 0}" data-sig="{sig_cls}" '
-        f'data-search="{_e(v.name.lower())}">'
-        f'<summary class="row">'
-        f'<div class="c name"><b>{_e(v.name)}</b><div class="small muted">{markets}{" · " if markets else ""}{_e(v.primary.tpx_market.replace("TPX:", ""))}</div></div>'
-        f'<div class="c sig-c"><span class="sig {sig_cls}">{sig_label}</span></div>'
-        f'<div class="c num edge {_cls(v.edge)}" data-v="{_sortv(v.edge)}"><b>{_usd_signed(v.edge)}</b><div class="small">{_pct(v.edge_pct)}</div></div>'
-        f'{post_cell(v.buy_tpx)}{post_cell(v.buy_dn)}'
-        f'<div class="c num" data-v="{_sortv(v.last)}">{_usd(v.last)}<div class="small {_cls(v.chg30)}">{_pct(v.chg30)} 30d</div></div>'
-        f'<div class="c num" data-v="{_sortv(v.tpx_bid)}"><span class="bid">{_usd(v.tpx_bid)}</span> / <span class="ask">{_usd(v.tpx_ask)}</span>'
-        f'<div class="small muted">{_int(v.primary.tpx.bid_depth_units)} × {_int(v.primary.tpx.ask_depth_units)}</div></div>'
-        f'<div class="c num" data-v="{_sortv(v.dn_bid)}"><span class="bid">{_usd(v.dn_bid)}</span> / <span class="ask">{_usd(v.dn_ask)}</span>'
-        f'<div class="small muted">{(_int(v.dn.bid_depth_units) + " × " + _int(v.dn.ask_depth_units)) if v.dn else "no price"}</div></div>'
-        f'<div class="c num" data-v="{_sortv(v.vol30)}">{v.vol30:,}<div class="small muted">{v.trades30:,} trades</div></div>'
-        f'<div class="c num" data-v="{_sortv(v.fv)}">{_usd(v.fv) if v.fv else "<span class=muted>no FV</span>"}</div>'
-        f'<div class="c num" data-v="{_sortv(tcg_bid)}">{tcg_cell}</div>'
-        f'<div class="c spk">{spark}</div>'
-        f'</summary>{_desk(v)}</details>'
+        f'<article class="card {st.cls}" data-rank="{rank}">'
+        f'<div class="card-top"><span class="badge {st.cls}">{_e(st.badge)}</span><span class="rank">#{rank}</span></div>'
+        f'<h3>{_e(v.name)}</h3>'
+        f'<p class="headline">{_e(st.headline)}</p>'
+        f'<ol class="steps">{steps}</ol>'
+        f'<p class="profit">{_e(st.profit)}</p>'
+        f'<p class="why">{_e(st.why)}</p>'
+        + (f'<p class="why caution">Caution: nothing has traded on TPX in the last 30 days, so this order could sit unfilled for a long time.</p>' if not v.vol30 and st.cls == "post" else "")
+        + f'<div class="facts"><span>{_facts(v)}</span>{spark}</div>'
+        + '</article>'
     )
+
+
+def _quiet_row(st: Story) -> str:
+    v = st.v
+    spark = sparkline([p["close"] for p in v.closes][-30:], baseline=None)
+    return (
+        f'<div class="qrow"><div class="qname"><b>{_e(v.name)}</b><div class="small muted">{_e(st.why)}</div>'
+        f'<div class="small muted">{_facts(v)}</div></div>'
+        f'<div class="qprice"><span class="small muted">TPX</span><br>{_usd(v.last or v.tpx_bid)}</div>'
+        f'<div class="qprice"><span class="small muted">Dealernet pays / sells</span><br>{_usd(v.dn_bid)} / {_usd(v.dn_ask)}</div>'
+        f'<div class="qspk">{spark}</div></div>'
+    )
+
+
+def _summary(stories: list[Story], generated_at: datetime) -> str:
+    now = [s for s in stories if s.cls in ("edge", "thin")]
+    post = [s for s in stories if s.cls == "post"]
+    almost = [s for s in stories if s.cls == "behind"]
+    best = max((s for s in now + post), key=lambda s: _profit_cents(s), default=None)
+    tiles = [
+        ("Ready to trade now", str(len(now)), "both prices are live right now", "pos" if now else ""),
+        ("Post an order and wait", str(len(post)), "you would be first in line on TPX", "pos" if post else ""),
+        ("Almost", str(len(almost)), "someone is slightly ahead of you", ""),
+        ("Best profit per unit", _usd(_profit_cents(best)) if best else "—", _e(best.v.short) if best else "nothing clears the target today", "pos" if best else ""),
+    ]
+    return "".join(f'<div class="m"><div class="m-l">{l}</div><div class="m-v {c}">{val}</div><div class="m-s">{sub}</div></div>'
+                   for l, val, sub, c in tiles)
+
+
+def _profit_cents(st: Optional[Story]) -> Optional[Decimal]:
+    if st is None:
+        return None
+    v = st.v
+    if st.cls in ("edge", "thin") and v.arb:
+        return v.arb.edge_per_unit_cents
+    best = max((d for d in (v.buy_tpx, v.buy_dn) if d.post), key=lambda d: d.post_rank, default=None)
+    return best.post.expected_edge_cents if best and best.post else None
 
 
 # ---------------------------------------------------------------------------
@@ -502,6 +513,9 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
         return (order[sig], -(v.edge if v.edge is not None else Decimal(-10 ** 9)) if sig in ("edge", "thin") else ZERO,
                 -v.vol30, -gap if sig in ("post", "behind") else 0)
     views.sort(key=key)
+    stories = [Story(v) for v in views]
+    opps = [s for s in stories if s.is_opportunity]
+    quiet = [s for s in stories if not s.is_opportunity]
 
     banner = ""
     if source != "live":
@@ -513,13 +527,15 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
     meta_refresh = f'<meta http-equiv="refresh" content="{int(refresh_s)}">' if refresh_s else ""
     live = ('<span class="live"><i></i>LIVE</span>' if source == "live" else '<span class="live demo"><i></i>DEMO</span>')
     data = json.dumps({"generated_at": generated_at.isoformat(), "source": source})
-    rows = "".join(_row(v) for v in views)
+    cards = "".join(_card(s, i + 1) for i, s in enumerate(opps)) or (
+        '<div class="empty">Nothing clears the target right now. The list below says why for each product.</div>')
+    qrows = "".join(_quiet_row(s) for s in quiet)
+    m = f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%"
     return TEMPLATE.format(
         meta_refresh=meta_refresh, generated=_e(generated_at.strftime("%b %d, %Y · %H:%M UTC")), live=live,
-        actions=actions, banner=banner + warn_html, ticker=_ticker(views), metrics=_metrics(views, margin, generated_at),
-        margin=f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%",
-        rows=rows or '<p class="muted">No products.</p>', n=len(views), data=data,
-        refresh_note=(f"Refreshes every {refresh_s} s." if refresh_s else "Re-run <code>edge dashboard</code> to refresh."),
+        actions=actions, banner=banner + warn_html, ticker=_ticker(views), summary=_summary(stories, generated_at),
+        margin=m, cards=cards, n_opps=len(opps), qrows=qrows or '<p class="muted">Everything has a trade.</p>', n_quiet=len(quiet),
+        data=data, refresh_note=(f"Refreshes every {refresh_s} s." if refresh_s else "Re-run <code>edge dashboard</code> to refresh."),
     )
 
 
@@ -527,29 +543,24 @@ TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 {meta_refresh}<title>TPX Dealernet Edges</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
 <style>
-/* Terminal: dark-first, numbers in mono, one amber accent for the thing that needs your eyes. */
+/* Dark-first board: one green for "money", one amber for "do something", everything else quiet. */
 :root{{--bg:#0d1117;--panel:#161b22;--panel-2:#1c232d;--ink:#e6edf3;--muted:#8b98a8;--line:#2a3340;--line-2:#3a4656;
---pos:#3fb950;--neg:#f85149;--flat:#8b98a8;--accent:#f0b429;--accent-ink:#1a1200;
---s1:#58a6ff;--s2:#f0883e;--s3:#bc8cff;--s4:#39d2c0;--bid:#3fb950;--ask:#f85149;--fv:#8b98a8;--banner:#2a2410;
+--pos:#3fb950;--pos-soft:#12301c;--neg:#f85149;--flat:#8b98a8;--accent:#f0b429;--accent-soft:#33280c;--accent-ink:#1a1200;--banner:#2a2410;
 --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
 color-scheme:dark}}
 @media (prefers-color-scheme:light){{:root:not([data-theme="dark"]){{--bg:#f3f5f8;--panel:#ffffff;--panel-2:#eef1f5;--ink:#141a22;--muted:#5d6b7c;
---line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-ink:#ffffff;
---s1:#0969da;--s2:#bc4c00;--s3:#8250df;--s4:#0f8f80;--bid:#1a7f37;--ask:#cf222e;--fv:#5d6b7c;--banner:#fff4d6;color-scheme:light}}}}
+--line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--pos-soft:#e3f5e8;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-soft:#fff1cf;--accent-ink:#ffffff;--banner:#fff4d6;color-scheme:light}}}}
 :root[data-theme="light"]{{--bg:#f3f5f8;--panel:#ffffff;--panel-2:#eef1f5;--ink:#141a22;--muted:#5d6b7c;
---line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-ink:#ffffff;
---s1:#0969da;--s2:#bc4c00;--s3:#8250df;--s4:#0f8f80;--bid:#1a7f37;--ask:#cf222e;--fv:#5d6b7c;--banner:#fff4d6;color-scheme:light}}
+--line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--pos-soft:#e3f5e8;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-soft:#fff1cf;--accent-ink:#ffffff;--banner:#fff4d6;color-scheme:light}}
 *{{box-sizing:border-box}}html,body{{margin:0}}
-body{{background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px}}
-main{{max-width:1440px;margin:0 auto}}
-h1{{font-size:18px;font-weight:600;margin:0;letter-spacing:.01em}}h2{{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:26px 0 10px;font-weight:600}}
-h4{{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:14px 0 6px;font-weight:600}}
-.num,.mono,.m-v,.lv-v,.tk-p,.tk-c,.ladder,.mini td.num{{font-family:var(--mono);font-variant-numeric:tabular-nums}}
-.num{{text-align:right;white-space:nowrap}}
-.muted{{color:var(--muted)}}.small{{font-size:12px}}.pos{{color:var(--pos)}}.neg{{color:var(--neg)}}.flat{{color:var(--flat)}}
-.bid{{color:var(--bid)}}.ask{{color:var(--ask)}}
+body{{background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px}}
+main{{max-width:1480px;margin:0 auto}}
+h1{{font-size:20px;font-weight:700;margin:0;letter-spacing:.01em}}
+h2{{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:26px 0 12px;font-weight:600}}
+.mono,.m-v,.tk-p,.tk-c,.qprice{{font-family:var(--mono);font-variant-numeric:tabular-nums}}
+.muted{{color:var(--muted)}}.small{{font-size:13px}}.pos{{color:var(--pos)}}.neg{{color:var(--neg)}}.flat{{color:var(--flat)}}
 .top{{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:14px 0 10px;border-bottom:1px solid var(--line)}}
 .top-l{{display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
 .live{{font:600 11px/1 var(--mono);letter-spacing:.12em;color:var(--pos);display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--pos);border-radius:3px}}
@@ -561,112 +572,65 @@ h4{{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut
 .banner{{background:var(--banner);border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin:14px 0 0}}
 /* ticker tape */
 .tape{{overflow:hidden;border-bottom:1px solid var(--line);background:var(--panel);margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px))) 0 calc(-1 * max(16px,env(safe-area-inset-right,0px)));padding:0 16px}}
-.tape-track{{display:inline-flex;gap:0;white-space:nowrap;animation:tape 90s linear infinite;will-change:transform}}
+.tape-track{{display:inline-flex;white-space:nowrap;animation:tape 90s linear infinite;will-change:transform}}
 .tape:hover .tape-track{{animation-play-state:paused}}
 @keyframes tape{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
-.tk{{display:inline-flex;gap:10px;align-items:baseline;padding:9px 18px;border-right:1px solid var(--line);font-size:12px}}
+.tk{{display:inline-flex;gap:10px;align-items:baseline;padding:9px 18px;border-right:1px solid var(--line);font-size:13px}}
 .tk-n{{color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:500}}.tk-p{{font-weight:600}}
 @media (prefers-reduced-motion:reduce){{.tape-track{{animation:none;white-space:normal;flex-wrap:wrap}}.tape-track .tk:nth-child(n+1000){{display:none}}.live i{{animation:none}}}}
-/* metrics */
-.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:16px}}
-.m{{background:var(--panel);padding:12px 14px;min-width:0}}.m.hero{{background:var(--panel-2)}}
-.m-l{{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}}
-.m-v{{font-size:26px;font-weight:600;line-height:1.2;margin:4px 0 2px}}.m.hero .m-v{{font-size:34px}}
-.m-s{{font-size:12px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-/* screener */
-.controls{{display:flex;flex-wrap:wrap;gap:10px 16px;align-items:center;margin-bottom:8px}}
-.controls input[type=search]{{padding:7px 10px;border:1px solid var(--line-2);border-radius:4px;background:var(--panel);color:var(--ink);min-width:220px;font:inherit}}
-.controls label{{display:inline-flex;gap:6px;align-items:center;cursor:pointer}}
-.screener{{background:var(--panel);border:1px solid var(--line);border-radius:6px;overflow-x:auto}}
-.hdr,.row{{display:grid;grid-template-columns:minmax(200px,2fr) 96px 120px 200px 200px 108px 168px 168px 96px 86px 120px 96px;gap:0 14px;align-items:center;min-width:1760px;padding:0 14px}}
-.hdr-s{{display:block;font-size:10px;letter-spacing:.02em;text-transform:none;color:var(--muted);font-weight:400}}
-.post b{{font-size:14px}}.post.top b{{color:var(--pos)}}.post.behind b{{color:var(--ink)}}.post.behind .small{{color:var(--neg)}}.post.top .small{{color:var(--muted)}}.post.far b{{color:var(--muted);font-weight:500}}.post.far .small{{color:var(--muted)}}
-.hdr{{position:sticky;top:0;z-index:2;background:var(--panel-2);border-bottom:1px solid var(--line);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:600}}
-.hdr div{{padding:9px 0;cursor:pointer;user-select:none;white-space:nowrap}}.hdr div:hover{{color:var(--ink)}}
-.hdr .num{{text-align:right}}.hdr .sorted::after{{content:" ▾";color:var(--accent)}}.hdr .sorted.asc::after{{content:" ▴"}}
-details.prod{{border-bottom:1px solid var(--line)}}details.prod:last-child{{border-bottom:0}}
-summary.row{{list-style:none;cursor:pointer;padding-top:10px;padding-bottom:10px;line-height:1.3}}
-summary.row::-webkit-details-marker{{display:none}}summary.row:hover{{background:var(--panel-2)}}
-details[open] summary.row{{background:var(--panel-2);border-left:3px solid var(--accent);padding-left:11px}}
-.c{{min-width:0}}.name b{{font-weight:600}}.name .small{{margin-top:2px}}
-.chip{{display:inline-block;font:500 10px/1 var(--mono);padding:2px 5px;border:1px solid var(--line-2);border-radius:3px;color:var(--muted);margin-right:4px;letter-spacing:.04em}}
-.edge b{{font-size:15px}}
-.sig{{display:inline-block;font:600 10px/1 var(--mono);letter-spacing:.1em;padding:5px 7px;border-radius:3px;border:1px solid var(--line-2);color:var(--muted);white-space:nowrap}}
-.sig.edge{{background:var(--pos);color:#04200b;border-color:var(--pos)}}.sig.thin{{color:var(--pos);border-color:var(--pos)}}
-.sig.post{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}.sig.behind{{color:var(--accent);border-color:var(--accent)}}
-.spk{{display:flex;justify-content:flex-end}}.spark{{width:96px;height:26px}}
-.spark-pos{{stroke:var(--pos)}}.spark-neg{{stroke:var(--neg)}}.spark-pos-dot{{fill:var(--pos)}}.spark-neg-dot{{fill:var(--neg)}}
-.two{{display:flex;flex-direction:column;align-items:flex-end}}
-/* desk */
-.desk{{padding:12px 14px 18px;background:var(--bg);border-top:1px solid var(--line)}}
-.desk-top{{display:flex;flex-wrap:wrap;gap:10px 24px;align-items:center;justify-content:space-between}}
-.plan{{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-size:14px}}.hist{{display:flex;gap:8px;align-items:center}}
-.desk-grid{{display:grid;grid-template-columns:minmax(0,3fr) minmax(260px,2fr);gap:14px;margin-top:12px}}
-.desk-chart{{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px 12px 8px;min-width:0}}
-.chart{{width:100%;height:auto;display:block}}.grid{{stroke:var(--line);stroke-width:1}}.axis{{fill:var(--muted);font-size:10px;font-family:var(--mono)}}
-.dot{{stroke:var(--panel);stroke-width:2}}
-.ref-bid{{stroke:var(--bid);stroke-dasharray:5 4;stroke-width:1.5}}.ref-ask{{stroke:var(--ask);stroke-dasharray:5 4;stroke-width:1.5}}
-.ref-fv{{stroke:var(--fv);stroke-dasharray:2 3;stroke-width:1.5}}.ref-tcg{{stroke:var(--s3);stroke-dasharray:7 3;stroke-width:1.5}}
-.legend{{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:11px;color:var(--muted);margin-top:6px}}
-.key i{{display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}}
-.k-bid{{background:var(--bid)}}.k-ask{{background:var(--ask)}}.k-fv{{background:var(--fv)}}.k-tcg{{background:var(--s3)}}
-.levels{{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;align-content:start}}
-.lv{{background:var(--panel);padding:10px 12px;min-width:0}}.lv-l{{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}}
-.lv-v{{font-size:17px;font-weight:600;margin:3px 0 1px;white-space:nowrap}}.lv-s{{font-size:11px;color:var(--muted)}}
-.desk-cols{{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px 24px;margin-top:4px}}
-.tw{{overflow-x:auto}}.mini{{border-collapse:collapse;width:100%;font-size:13px}}
-.mini th,.mini td{{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}}
-.mini th{{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}}.mini th.num{{text-align:right}}
-.ladders{{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:12px}}
-.lad-t{{font-size:11px;color:var(--muted);margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-.ladder{{border-collapse:collapse;width:100%;font-size:12px}}.ladder th,.ladder td{{padding:3px 6px;border-bottom:1px solid var(--line);text-align:right}}
-.ladder th:first-child,.ladder td:first-child{{text-align:left}}.ladder th{{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}}
-.ladder.bid td:first-child{{color:var(--bid)}}.ladder.ask td:first-child{{color:var(--ask)}}
-.flags{{margin:10px 0 0}}
+/* summary tiles */
+.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:16px}}
+.m{{background:var(--panel);padding:12px 16px;min-width:0}}
+.m-l{{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}}
+.m-v{{font-size:30px;font-weight:600;line-height:1.2;margin:4px 0 2px}}
+.m-s{{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+/* opportunity cards */
+.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px}}
+.card{{background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--line-2);border-radius:8px;padding:16px 18px 14px;min-width:0;display:flex;flex-direction:column;gap:8px}}
+.card.edge,.card.thin{{border-left-color:var(--pos)}}.card.post{{border-left-color:var(--accent)}}.card.behind{{border-left-color:var(--line-2)}}
+.card[data-rank="1"],.card[data-rank="2"]{{grid-column:span 1}}
+.card-top{{display:flex;justify-content:space-between;align-items:center}}
+.badge{{display:inline-block;font:600 12px/1 var(--sans);letter-spacing:.04em;padding:6px 10px;border-radius:4px;border:1px solid var(--line-2);color:var(--muted);text-transform:uppercase}}
+.badge.edge{{background:var(--pos);color:#04200b;border-color:var(--pos)}}.badge.thin{{background:var(--pos-soft);color:var(--pos);border-color:var(--pos)}}
+.badge.post{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}.badge.behind{{color:var(--muted)}}
+.rank{{font:600 13px var(--mono);color:var(--muted)}}
+.card h3{{font-size:20px;font-weight:700;margin:0;line-height:1.25;text-wrap:balance}}
+.headline{{margin:0;font-size:15px;font-weight:600;color:var(--muted)}}
+.steps{{margin:0;padding-left:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:6px}}
+.steps li{{counter-increment:s;display:flex;gap:10px;align-items:baseline;font-size:16px}}
+.steps li::before{{content:counter(s);flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel-2);border:1px solid var(--line-2);font:600 12px/20px var(--mono);text-align:center;color:var(--ink)}}
+.profit{{margin:2px 0 0;font-size:17px;font-weight:600;color:var(--pos)}}.card.behind .profit{{color:var(--muted);font-weight:500}}
+.why{{margin:0;color:var(--muted);font-size:14px}}.caution{{color:var(--accent)}}
+.facts{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:8px;margin-top:2px}}
+.empty{{background:var(--panel);border:1px dashed var(--line-2);border-radius:8px;padding:22px;color:var(--muted)}}
+.spark{{width:96px;height:26px;flex:none}}.spark-pos{{stroke:var(--pos)}}.spark-neg{{stroke:var(--neg)}}.spark-pos-dot{{fill:var(--pos)}}.spark-neg-dot{{fill:var(--neg)}}.grid{{stroke:var(--line);stroke-width:1}}
+/* quiet list */
+.quiet{{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}}
+.qrow{{display:grid;grid-template-columns:minmax(0,3fr) 110px 190px 200px;gap:0 16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}}
+.qrow:last-child{{border-bottom:0}}.qname{{min-width:0}}.qname b{{font-weight:600}}
+.qprice{{text-align:right;white-space:nowrap;font-size:14px}}.qspk{{display:flex;justify-content:flex-end;gap:6px}}
+@media (max-width:760px){{.qrow{{grid-template-columns:1fr 1fr}}.qname{{grid-column:1/-1}}.qspk{{grid-column:1/-1;justify-content:flex-start}}.cards{{grid-template-columns:1fr}}.m-v{{font-size:24px}}}}
 footer{{margin-top:28px}}code{{font-family:var(--mono);font-size:12px}}
-@media (max-width:900px){{.desk-grid,.desk-cols{{grid-template-columns:1fr}}.m-v{{font-size:22px}}.m.hero .m-v{{font-size:28px}}}}
-input:focus-visible,summary:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
 /* big-screen mode: #tv */
-html.tv body{{font-size:16px}}html.tv main{{max-width:none}}html.tv .controls,html.tv footer,html.tv .banner{{display:none}}
-html.tv .m-v{{font-size:32px}}html.tv .m.hero .m-v{{font-size:42px}}html.tv .tk{{font-size:15px;padding:12px 22px}}
-html.tv summary.row{{padding-top:13px;padding-bottom:13px}}html.tv .edge b,html.tv .post b{{font-size:18px}}html.tv .small{{font-size:13px}}
-html.tv h2{{margin-top:18px}}
+html.tv body{{font-size:17px}}html.tv main{{max-width:none}}html.tv footer,html.tv .banner{{display:none}}
+html.tv .cards{{grid-template-columns:repeat(auto-fill,minmax(480px,1fr))}}html.tv .card h3{{font-size:23px}}html.tv .steps li{{font-size:18px}}html.tv .profit{{font-size:20px}}
+html.tv .m-v{{font-size:38px}}html.tv .tk{{font-size:15px;padding:12px 22px}}html.tv h2{{margin-top:18px}}
 </style></head><body><main>
-<div class="top"><div class="top-l"><h1>TPX ↔ Dealernet edge terminal</h1>{live}<span class="muted small">{generated}</span></div>
-<div class="top-l"><span class="muted small">target {margin} on capital · all edges after fees &amp; shipping</span>{actions}</div></div>
+<div class="top"><div class="top-l"><h1>Where you can make money today</h1>{live}<span class="muted small">Updated {generated}</span></div>
+<div class="top-l"><span class="muted small">TPX vs Dealernet · {margin} profit target · every number is after fees &amp; shipping</span>{actions}</div></div>
 {ticker}
 {banner}
-<div class="metrics">{metrics}</div>
-<h2>Screener · {n} products</h2>
-<div class="controls"><input type="search" id="q" placeholder="Filter products" aria-label="Filter products">
-<label><input type="checkbox" id="edgesOnly"> Edges only</label><label><input type="checkbox" id="withDn"> Has Dealernet price</label>
-<span class="muted small">Click a column to sort · click a row for the trade desk · prices are clean (pre-fee), edges are all-in · add <code>#tv</code> to the link for the big-screen view.</span></div>
-<div class="screener"><div class="hdr" id="hdr">
-<div>Product</div><div>Signal</div><div class="num" title="Hit both books right now">Take now</div>
-<div class="num" title="Highest TPX bid you can post and still clear the target margin when you sell into the Dealernet bid">Post TPX bid<br><span class="hdr-s">buy TPX → sell DN bid</span></div>
-<div class="num" title="Lowest TPX ask you can post and still clear the target margin when you buy from the Dealernet ask">Post TPX ask<br><span class="hdr-s">buy DN ask → sell TPX</span></div>
-<div class="num">Last · 30d</div><div class="num">TPX bid / ask</div>
-<div class="num">DN bid / ask</div><div class="num">TPX vol 30d</div><div class="num">Fair value</div>
-<div class="num" title="High bid as % of TCGplayer market price">vs TCGplayer mkt</div><div class="num">30d trend</div></div>
-<div id="rows">{rows}</div></div>
-<footer class="muted small">View only. This page never places, lists or cancels anything. {refresh_note} The edge-over-runs line fills in as the dashboard is re-run.</footer>
+<div class="metrics">{summary}</div>
+<h2>Do this · {n_opps} products</h2>
+<div class="cards">{cards}</div>
+<h2>Nothing to do right now · {n_quiet} products</h2>
+<div class="quiet">{qrows}</div>
+<footer class="muted small">View only. This page never places, lists or cancels anything. {refresh_note} Add <code>#tv</code> to the link for the big-screen view.</footer>
 </main>
 <script id="meta" type="application/json">{data}</script>
 <script>
 (function(){{
 if(location.hash==='#tv')document.documentElement.classList.add('tv');
 window.addEventListener('hashchange',function(){{document.documentElement.classList.toggle('tv',location.hash==='#tv');}});
-var q=document.getElementById('q'),eo=document.getElementById('edgesOnly'),wd=document.getElementById('withDn'),box=document.getElementById('rows');
-try{{eo.checked=localStorage.getItem('edgesOnly')==='1';wd.checked=localStorage.getItem('withDn')==='1';}}catch(e){{}}
-function rows(){{return Array.prototype.slice.call(box.querySelectorAll('details.prod'));}}
-function apply(){{var t=q.value.toLowerCase();rows().forEach(function(r){{
-var ok=(!t||(r.dataset.search||'').indexOf(t)>=0)&&(!eo.checked||r.dataset.edge==='1')&&(!wd.checked||r.dataset.sig!=='none'||r.querySelector('.c:nth-child(6) .small').textContent!=='no price');
-r.hidden=!ok;}});try{{localStorage.setItem('edgesOnly',eo.checked?'1':'0');localStorage.setItem('withDn',wd.checked?'1':'0');}}catch(e){{}}}}
-q.addEventListener('input',apply);eo.addEventListener('change',apply);wd.addEventListener('change',apply);apply();
-var hdr=document.getElementById('hdr');Array.prototype.forEach.call(hdr.children,function(h,i){{var dir=-1;h.addEventListener('click',function(){{
-dir=-dir;Array.prototype.forEach.call(hdr.children,function(x){{x.classList.remove('sorted','asc');}});h.classList.add('sorted');if(dir>0)h.classList.add('asc');
-var rs=rows();rs.sort(function(a,b){{var x=a.querySelector('summary').children[i],y=b.querySelector('summary').children[i];
-var vx=x.dataset.v,vy=y.dataset.v;if(vx!==undefined&&vy!==undefined)return (parseFloat(vx)-parseFloat(vy))*dir;
-return x.textContent.localeCompare(y.textContent)*dir;}});rs.forEach(function(r){{box.appendChild(r);}});}});}});
 }})();
 </script></body></html>"""
