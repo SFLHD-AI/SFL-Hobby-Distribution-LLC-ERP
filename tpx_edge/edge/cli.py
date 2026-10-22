@@ -332,11 +332,15 @@ def dashboard(
     m = Decimal(str(margin)) if margin is not None else s.target_margin
     uni_rows: list[dict] = []
     hot: list[dict] = []
-    if universe > 0 and source == "live":
+    if source == "live":
         from .universe import Universe, hottest
         svc = _service(ctx)
-        uni_rows = Universe(svc.client, svc.catalog, s.cache_dir).load()
-        for vertical in ("sealed_wax", "sealed_tcg"):
+        uni = Universe(svc.client, svc.catalog, s.cache_dir)
+        if universe > 0:
+            uni_rows = uni.load()
+        else:  # quick refresh: embed the cached catalogue for search, price only the watchlist
+            uni_rows = uni.load_cached()
+        for vertical in ("sealed_wax", "sealed_tcg") if universe > 0 else ():
             hot += [{"name": r["name"], "tpx_id": r["id"],
                      "shipping": 4 if any(w in r["name"].lower() for w in ("pack", "tin", "blister")) else None}
                     for r in hottest(uni_rows, universe, vertical)]

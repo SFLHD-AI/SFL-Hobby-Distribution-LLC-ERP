@@ -51,6 +51,13 @@ class Universe:
         self.path.write_text(json.dumps(rows))
         return rows
 
+    def load_cached(self) -> list[dict]:
+        """The last scan, whatever its age, without touching the network ([] if none)."""
+        try:
+            return json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return []
+
     def scan(self) -> list[dict]:
         rows: list[dict] = []
         for vertical in ("sealed_wax", "sealed_tcg"):
