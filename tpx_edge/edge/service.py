@@ -52,9 +52,11 @@ class EdgeService:
             max_retries=settings.max_retries,
             recorder=recorder,
         )
+        # Demo IDs (at_sealed_wax, ...) must never land in the live ID cache.
+        cache_dir = settings.cache_dir / "demo" if demo_fixtures is not None else settings.cache_dir
         self.catalog = Catalog(
             self.client,
-            settings.cache_dir,
+            cache_dir,
             {"sealed_wax": settings.tpx_asset_type_sealed_wax, "sealed_tcg": settings.tpx_asset_type_sealed_tcg},
         )
         self.market = MarketData(self.client)
