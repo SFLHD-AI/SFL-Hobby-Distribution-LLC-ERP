@@ -99,7 +99,7 @@ class CSVSource(DealernetSource):
     def products(self) -> list[str]:
         return list(self.quotes)
 
-    def get_quote(self, product: str) -> Optional[DealernetQuote]:
+    def get_quote(self, product: str, upc: Optional[str] = None) -> Optional[DealernetQuote]:
         if product in self.quotes:
             return self.quotes[product]
         if self.matcher:

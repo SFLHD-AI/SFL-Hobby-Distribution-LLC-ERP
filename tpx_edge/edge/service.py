@@ -175,6 +175,7 @@ class EdgeService:
             "format": product.format,
             "is_case": product.is_case,
             "year": product.year,
+            "upc": data.get("upc"),
             "image": image_data_uri(url, self.settings.cache_dir) if url else None,
         }
 
@@ -189,7 +190,10 @@ class EdgeService:
         if name is None:
             name = self.mappings.dealernet_name_for(product.asset_configuration_id) or product.name
             how = how or ("mappings.yaml" if self.mappings.dealernet_name_for(product.asset_configuration_id) else "tpx name")
-        dq: Optional[DealernetQuote] = source.get_quote(name)
+        upc = str((product.raw.get("data") or {}).get("upc") or "").strip() or None
+        dq: Optional[DealernetQuote] = source.get_quote(name, upc)
+        if dq is not None and dq.upc_match is False:
+            how = f"{how}; UPC mismatch"
         if dq is None:
             return None, how
         return dq.to_venue_quote(product.asset_configuration_id, product.name), how

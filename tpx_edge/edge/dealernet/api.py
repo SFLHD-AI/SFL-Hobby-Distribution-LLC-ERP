@@ -23,7 +23,7 @@ class ApiSource(DealernetSource):
         self.base_url = base_url.rstrip("/")
         self._key = api_key
 
-    def get_quote(self, product: str) -> Optional[DealernetQuote]:
+    def get_quote(self, product: str, upc: Optional[str] = None) -> Optional[DealernetQuote]:
         raise NotImplementedError(
             "Dealernet API key is set, but the endpoint mapping needs Dealernet's API docs. "
             "Share them and the quote lookup will be wired in; use DEALERNET_ACCESS=scrape until then."

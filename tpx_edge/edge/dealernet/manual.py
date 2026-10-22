@@ -21,7 +21,7 @@ class ManualSource(DealernetSource):
         self.interactive = interactive
         self.console = console or Console(emoji=False)
 
-    def get_quote(self, product: str) -> Optional[DealernetQuote]:
+    def get_quote(self, product: str, upc: Optional[str] = None) -> Optional[DealernetQuote]:
         bid, ask, bq, aq = self.bid, self.ask, self.bid_qty, self.ask_qty
         if bid is None and ask is None:
             if not self.interactive:

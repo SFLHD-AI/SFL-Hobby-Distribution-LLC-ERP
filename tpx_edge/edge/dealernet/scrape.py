@@ -119,7 +119,8 @@ def parse_listing(page: str, product: str, url: str, *, want_case: bool = False,
             else:
                 (bids if is_bid else asks).append(lvl)
     q = DealernetQuote(product=product, bids=bids, asks=asks, case_bids=case_bids, case_asks=case_asks,
-                       boxes_per_case=bpc, fetched_at=now, source="dealernet page", url=url)
+                       boxes_per_case=bpc, fetched_at=now, source="dealernet page", url=url,
+                       upc=(re.search(r"UPC:</strong>\s*([0-9]+)", page) or [None, None])[1])
     hb = re.search(r"Current High Bid:\s*<strong>([^<]*)</strong>", page)
     la = re.search(r"Current Low Ask:\s*<strong>([^<]*)</strong>", page)
     q_header = {"high_bid": _first_price(hb.group(1)) if hb else None,
@@ -228,6 +229,7 @@ class ScrapeSource(DealernetSource):
         self.mappings = mappings
         self.min_interval_s = min_interval_s
         self._last = 0.0
+        self.last_rejected: dict[str, Optional[dict]] = {}
         self._urls_path = Path(cache_dir) / "dealernet_urls.json"
         try:
             self._urls: dict[str, str] = json.loads(self._urls_path.read_text())
@@ -282,15 +284,21 @@ class ScrapeSource(DealernetSource):
         raise AssertionError("unreachable")
 
     # --- product -> page ----------------------------------------------------
-    def resolve_url(self, product: str) -> Optional[str]:
+    def resolve_url(self, product: str, upc: Optional[str] = None) -> Optional[str]:
+        """The Dealernet listing for `product`. With Tradepost's `upc`, a search hit
+        that carries the same UPC wins outright and a hit that carries a different
+        UPC is never used, however close the name: Dealernet lists several versions
+        of a box under near-identical names and the UPC is what tells them apart."""
         if self.mappings:
             for p in self.mappings.products:
                 if product.strip().lower() in ((p.get("dealernet_name") or "").lower(), (p.get("tpx_name") or "").lower()):
                     if p.get("dealernet_url"):
                         return p["dealernet_url"]
-        if product in self._urls:
-            return self._urls[product] or None
+        key = f"{product}|upc={upc}" if upc else product
+        if key in self._urls:
+            return self._urls[key] or None
         best: Optional[tuple[float, dict]] = None
+        rejected: Optional[tuple[float, dict]] = None  # best name match with a different UPC
         seen: set[str] = set()
         for q in search_queries(product):
             for hit in parse_search(self._get(urljoin(BASE, "search.php?" + urlencode({"keywordsearch": q})))):
@@ -298,23 +306,47 @@ class ScrapeSource(DealernetSource):
                     continue
                 seen.add(hit["url"])
                 sc = page_match_score(product, f'{hit["name"]} {hit["variation"]}'.strip())
+                if upc and hit.get("upc"):
+                    if hit["upc"] == upc:
+                        sc = 200.0
+                    else:
+                        if rejected is None or sc > rejected[0]:
+                            rejected = (sc, hit)
+                        continue
                 if best is None or sc > best[0]:
                     best = (sc, hit)
             if best and best[0] >= 90:
                 break
         url = best[1]["url"] if best and best[0] >= MATCH_THRESHOLD else ""
         if best:
-            log.info("Dealernet match for %r: %r (%.0f)%s", product, best[1]["name"], best[0], "" if url else " - rejected")
-        self._urls[product] = url
+            log.info("Dealernet match for %r: %r (%.0f)%s", product, best[1]["name"], best[0],
+                     " by UPC" if best[0] >= 200 else "" if url else " - rejected")
+        elif rejected and rejected[0] >= MATCH_THRESHOLD:
+            log.info("Dealernet match for %r rejected: %r has UPC %s, Tradepost has %s",
+                     product, rejected[1]["name"], rejected[1]["upc"], upc)
+        self.last_rejected[product] = rejected[1] if (not url and rejected and rejected[0] >= MATCH_THRESHOLD) else None
+        self._urls[key] = url
         self._urls_path.parent.mkdir(parents=True, exist_ok=True)
         self._urls_path.write_text(json.dumps(self._urls, indent=2))
         return url or None
 
-    def get_quote(self, product: str) -> Optional[DealernetQuote]:
-        url = self.resolve_url(product)
+    def get_quote(self, product: str, upc: Optional[str] = None) -> Optional[DealernetQuote]:
+        url = self.resolve_url(product, upc)
         if not url:
+            rej = self.last_rejected.get(product)
+            if rej:
+                # Say why there is no Dealernet price rather than silently comparing the wrong box.
+                return DealernetQuote(product=rej["name"], source="dealernet page", url=rej["url"], upc=rej["upc"],
+                                      upc_match=False, upc_note=f"Dealernet's closest listing ({rej['name']}) has UPC "
+                                      f"{rej['upc']}, Tradepost's is {upc}. Different product, so not compared.")
             return None
-        return parse_listing(self._get(url), product, url, want_case=normalize(product).is_case)
+        q = parse_listing(self._get(url), product, url, want_case=normalize(product).is_case)
+        if upc and q.upc:
+            q.upc_match = q.upc == upc
+            if not q.upc_match:
+                q.upc_note = f"Dealernet listing UPC {q.upc} differs from Tradepost UPC {upc}. Different product, so not compared."
+                q.bids, q.asks, q.case_bids, q.case_asks = [], [], [], []
+        return q
 
 
 def _logged_in(page: str) -> bool:

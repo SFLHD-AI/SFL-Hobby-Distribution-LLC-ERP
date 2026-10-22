@@ -38,6 +38,9 @@ class DealernetQuote(BaseModel):
     fetched_at: datetime = Field(default_factory=utcnow)
     source: str = "manual"
     url: Optional[str] = None
+    upc: Optional[str] = None  # the UPC printed on the Dealernet listing
+    upc_match: Optional[bool] = None  # True = same UPC as Tradepost, False = differs, None = unknown
+    upc_note: Optional[str] = None  # plain-words explanation when the UPC differs
 
     def to_venue_quote(self, product_id: str, product_name: str = "") -> VenueQuote:
         bids = sorted(self.bids, key=lambda l: -l.price_cents)
@@ -66,7 +69,8 @@ class DealernetQuote(BaseModel):
                  "case_bid": max((l.price_cents for l in self.case_bids), default=None),
                  "case_ask": min((l.price_cents for l in self.case_asks), default=None),
                  "case_bid_qty": sum(l.quantity for l in self.case_bids),
-                 "case_ask_qty": sum(l.quantity for l in self.case_asks)},
+                 "case_ask_qty": sum(l.quantity for l in self.case_asks),
+                 "upc": self.upc, "upc_match": self.upc_match, "upc_note": self.upc_note},
         )
 
 
@@ -92,8 +96,10 @@ class DealernetSource(ABC):
     name = "base"
 
     @abstractmethod
-    def get_quote(self, product: str) -> Optional[DealernetQuote]:
-        """Return the current bid/ask ladder for `product`, or None if unknown."""
+    def get_quote(self, product: str, upc: Optional[str] = None) -> Optional[DealernetQuote]:
+        """Return the current bid/ask ladder for `product`, or None if unknown.
+        `upc` is Tradepost's UPC for the product; a source that knows Dealernet's UPC
+        uses it to confirm both sites mean the same box."""
 
 
 def dollars_to_cents(v) -> int:

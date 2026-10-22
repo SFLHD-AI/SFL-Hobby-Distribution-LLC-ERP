@@ -514,7 +514,9 @@ def product_payload(st: Story) -> dict:
                             for a in v.items]},
         "dn": ({"bid": v.dn_bid, "ask": v.dn_ask, "bid_qty": dn.bid_depth_units, "ask_qty": dn.ask_depth_units,
                 "case_bid": dn_raw.get("case_bid"), "case_ask": dn_raw.get("case_ask"), "bpc": dn_raw.get("boxes_per_case"),
-                "url": dn_raw.get("url"), "page": dn_raw.get("product")} if dn else None),
+                "url": dn_raw.get("url"), "page": dn_raw.get("product"), "upc": dn_raw.get("upc"),
+                "upc_match": dn_raw.get("upc_match"), "upc_note": dn_raw.get("upc_note")} if dn else None),
+        "upc": (m.get("upc") or None),
         "tcg": ({"market": v.tcg, "low": v.tcg_low} if v.tcg else None),
         "cls": st.cls, "call": st.compact,
         "story": {"badge": st.badge, "headline": st.headline, "steps": st.steps, "profit": st.profit, "why": st.why},
@@ -612,7 +614,7 @@ h1{{font-size:17px;font-weight:700;margin:0;white-space:nowrap}}
 .strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:rgba(28,28,32,.8);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
 .cmp{{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}}.lbl{{font-size:11px;font-weight:600;color:var(--muted);margin-right:2px}}
 .cmp .pill{{background:var(--tile);color:var(--ink);font-weight:500}}.cmp .pill.best{{background:var(--best);border-color:var(--up);color:var(--up);font-weight:700}}
-.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}.cmp .pill i{{font-style:normal;color:var(--muted);margin-left:4px;font-size:.9em}}.cmp .vrow{{display:inline-flex;align-items:center;gap:4px;margin-right:6px}}.cmp .vrow .lbl{{min-width:58px}}.tile.m .cmp .vrow{{flex-wrap:wrap;margin-right:0}}.tile.m .cmp .vrow .lbl{{min-width:0}}.tile.m .cmp{{row-gap:2px}}.cmp .pill.best i{{color:var(--up)}}
+.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}.cmp .pill i{{font-style:normal;color:var(--muted);margin-left:4px;font-size:.9em}}.cmp .vrow{{display:inline-flex;align-items:center;gap:4px;margin-right:6px}}.cmp .vrow .lbl{{min-width:58px}}.banner{{position:fixed;left:50%;bottom:14px;transform:translateX(-50%);background:var(--accent);color:#1a1200;padding:8px 14px;border-radius:8px;font-weight:600;z-index:50;max-width:90vw}}.cmp .lbl.warn{{color:var(--accent);font-weight:600}}.cmp .lbl.ok{{color:var(--up)}}.tile.m .cmp .vrow{{flex-wrap:wrap;margin-right:0}}.tile.m .cmp .vrow .lbl{{min-width:0}}.tile.m .cmp{{row-gap:2px}}.cmp .pill.best i{{color:var(--up)}}
 .act{{font-size:12px;font-weight:600;color:var(--muted)}}.act.edge,.act.thin{{color:var(--up)}}.act.post{{color:var(--accent)}}.act.behind{{color:var(--ink)}}
 .tile footer{{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;position:relative;z-index:2;margin-top:2px;text-shadow:0 1px 3px var(--bg)}}
 .tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}
@@ -670,6 +672,7 @@ html.tv .top .tb,html.tv .counts,html.tv .seg{{display:none}}html.tv h1{{font-si
 <div class="ph"><h3>How to read this board</h3><button type="button" class="tb" data-close="help">Close</button></div>
 <ol class="guide">
 <li><b>Each tile is one product you chose.</b> Bigger tile = more money traded on Tradepost in the last 30 days. The chart behind it is the Tradepost price over 30 days; the faint bars are daily units sold. <span class="up">Green</span> = up over 30 days, <span class="down">red</span> = down. <b>Click a tile</b> for the full chart, the numbers and the outlook.</li>
+<li><b>UPC ✓ / ⚠ Different UPC:</b> every Dealernet listing is checked against the Tradepost UPC. Same UPC = same box. A different UPC means Dealernet's closest listing is another version, so its prices are left out rather than compared.</li>
 <li><b>Top right of a tile:</b> last Tradepost sale price and the 30-day change.</li>
 <li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy Tradepost $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
 <li><b>Sports tiles</b> show what each venue <i>pays</i> (their best buy offer, where you would sell) and what it <i>sells</i> for (their best sell offer, where you would buy). The <span class="up">green pill</span> is the best price on each side.</li>
@@ -731,6 +734,7 @@ var tm=p.group==='tcg'&&p.tcg&&p.tcg.market;var pc=function(v){{return tm&&v?'<i
 var cell=function(l,v,b,t){{return '<span class="pill'+(b?' best':'')+'" title="'+t+'">'+l+' '+usd(v)+pc(v)+'</span>';}};
 var h='<span class="vrow"><span class="lbl">Tradepost</span>'+cell('pays',tpx.bid,tpx.bid&&tpx.bid===hb,'Highest Tradepost buy order')+cell('sells',tpx.ask,tpx.ask&&tpx.ask===la,'Lowest Tradepost sell order')+'</span>'
 +'<span class="vrow"><span class="lbl">Dealernet</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb,'Dealernet buy price')+cell('sells',dn.ask,dn.ask&&dn.ask===la,'Dealernet sell price')+'</span>'+caseP;
+if(dn.upc_match===false)h+='<span class="lbl warn" title="'+esc(dn.upc_note||'')+'">⚠ Different UPC on Dealernet: not compared</span>';else if(dn.upc_match===true)h+='<span class="lbl ok" title="Same UPC on both sites">UPC ✓</span>';else if(p.dn&&p.upc&&!dn.upc)h+='<span class="lbl muted" title="Dealernet shows no UPC for this listing; matched by name">name match</span>';
 if(p.group==='tcg')h+='<span class="lbl'+(tm?'':' muted')+'">'+(tm?'vs TCGplayer market '+usd(tm)+' (% = share of market)':'TCGplayer: keys not set')+'</span>';
 return '<div class="strip"><div class="cmp">'+h+'</div><div class="act '+p.cls+'">'+esc(p.call)+'</div></div>';}}
 function tile(p,r,W,H){{var up=(p.chg30||0)>=0,wpx=r[2]/100*W,hpx=r[3]/100*H,size=(wpx>=420&&hpx>=300)?'xl':(wpx>=280&&hpx>=190)?'l':(wpx>=160&&hpx>=130)?'m':'s';
@@ -773,7 +777,7 @@ var ms=[['Last Tradepost sale',usd(p.last),p.last_at?new Date(p.last_at).toLocal
 ['Tradepost pays / sells',usd(p.tpx.bid)+' / '+usd(p.tpx.ask),(p.tpx.bid_units||0).toLocaleString()+' bid × '+(p.tpx.ask_units||0).toLocaleString()+' offered'],
 ['Dealernet pays / sells',dn?usd(dn.bid)+' / '+usd(dn.ask):'no listing',dn?((dn.bid_qty||0)+' × '+(dn.ask_qty||0)+(dn.case_bid||dn.case_ask?' · case '+usd(dn.case_bid)+' / '+usd(dn.case_ask)+'/box':'')):''],
 ['TCGplayer market',p.tcg?usd(p.tcg.market):'—',p.tcg?('Tradepost '+(p.tpx.bid?(p.tpx.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' · DN '+(dn&&dn.bid?(dn.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' of market'):'keys not set'],
-['Tradepost fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
+['UPC',p.upc||'—',dn?(dn.upc_match===false?'⚠ Dealernet listing is '+dn.upc+' (different product, not compared)':dn.upc_match===true?'Dealernet '+dn.upc+' · same product ✓':dn.upc?'Dealernet '+dn.upc:'Dealernet shows no UPC; matched by name'):'no Dealernet listing'],['Tradepost fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
 var h='<div class="ph"><div class="dhead">'+img+'<div><div class="series">'+esc(p.series)+'</div><h3 style="margin:0">'+esc(p.name)+'</h3></div><div class="dprice"><b>'+usd(p.price)+'</b><span class="chg '+(up?'up':'down')+'">'+(up?'↗':'↘')+' '+Math.abs(p.chg30||0).toFixed(2)+'% · 30d</span></div></div><div><button type="button" class="tb x" id="btnRemove">Remove from board</button> <button type="button" class="tb" data-close="detail">Close</button></div></div>';
 h+='<div class="dgrid"><div><div class="dchart">'+bigChart(p)+'</div>';
 h+='<div class="callbox '+p.cls+'"><b>'+esc(st.badge||'')+'</b>'+(st.headline?' · '+esc(st.headline):'')+(st.steps&&st.steps.length?'<ol>'+st.steps.map(function(x){{return '<li>'+esc(x)+'</li>';}}).join('')+'</ol>':'')+(st.profit?'<div class="profit">'+esc(st.profit)+'</div>':'')+'<div class="muted small">'+esc(st.why||'')+'</div></div></div>';
@@ -796,9 +800,12 @@ var b=el('button','tb'+(on?' x':' primary'),on?'Remove':'+ Add');b.type='button'
 function addProduct(u){{if(isSelected(u.id,u.name))return;state.selected.push({{name:u.name,tpx_id:u.id}});save('Added '+u.name);}}
 function removeProduct(id,name){{state.selected=state.selected.filter(function(s){{return !((s.tpx_id&&s.tpx_id===id)||(s.name||'').toLowerCase()===(name||'').toLowerCase());}});save('Removed '+name);}}
 var saving=false,pendingSave=false;
-function save(what){{renderBoard();renderRows();if(!state.db){{status('Settings cannot be saved from this view.');return;}}if(saving){{pendingSave=true;return;}}saving=true;
-state.db.doc('settings/board').set({{products:state.selected,hours:state.hours,updated:new Date().toISOString()}}).then(function(){{status(what+'. Saved.');}})
-.catch(function(e){{status(e&&e.code==='invalid_argument'?'Only the board owner can change this.':'Could not save ('+(e&&e.code||'error')+'). Try again.');if(e&&e.code==='invalid_argument'){{state.canWrite=false;}}}}).then(function(){{saving=false;if(pendingSave){{pendingSave=false;save('Saved');}}}});}}
+function backup(){{try{{localStorage.setItem('radar.board',JSON.stringify({{products:state.selected,hours:state.hours}}));}}catch(e){{}}}}
+function restoreBackup(){{try{{var b=JSON.parse(localStorage.getItem('radar.board')||'null');if(b&&Array.isArray(b.products)&&b.products.length){{state.selected=b.products;if(typeof b.hours==='number')state.hours=b.hours;return true;}}}}catch(e){{}}return false;}}
+function banner(t){{var b=$('banner');if(!b){{b=el('div','banner');b.id='banner';document.body.appendChild(b);}}b.textContent=t;b.hidden=!t;}}
+function save(what){{backup();renderBoard();renderRows();if(!state.db){{status('Settings cannot be saved from this view.');banner('Your picks are kept in this browser only; they could not be saved to the board.');return;}}if(saving){{pendingSave=true;return;}}saving=true;
+state.db.doc('settings/board').set({{products:state.selected,hours:state.hours,updated:new Date().toISOString()}}).then(function(){{status(what+'. Saved.');banner('');}})
+.catch(function(e){{var msg=e&&e.code==='invalid_argument'?'Only the board owner can change this.':'Could not save ('+(e&&(e.code||e.message)||'error')+'). Your picks are kept in this browser; try again.';status(msg);banner(msg);if(e&&e.code==='invalid_argument'){{state.canWrite=false;}}}}).then(function(){{saving=false;if(pendingSave){{pendingSave=false;save('Saved');}}}});}}
 function status(t){{$('setStatus').textContent=t;}}
 /* ---- wiring ---- */
 $('btnAdd').addEventListener('click',function(){{openAdd('hot');}});$('btnHelp').addEventListener('click',function(){{$('help').hidden=false;}});
@@ -814,8 +821,8 @@ renderBoard();
 var settled=false;function settle(){{if(settled)return;settled=true;state.loaded=true;renderBoard();}}
 setTimeout(settle,4000);
 $('btnRefresh').onclick=function(){{var b=this;b.disabled=true;b.textContent='↻ Refreshing…';var done=function(msg){{b.textContent=msg;setTimeout(function(){{b.disabled=false;b.textContent='↻ Refresh';}},6000);}};var fallback=function(){{done('↻ Reloading…');setTimeout(function(){{location.reload();}},800);}};if(!(window.claude&&claude.use))return fallback();claude.use('comments').then(function(c){{if(!c||!c.canSendToClaude)return fallback();return Promise.resolve(c.canSendToClaude()).then(function(st){{if(st!=='available')return fallback();return c.anchorFor(b).then(function(a){{return c.sendToClaude({{anchor:a,text:'Refresh the board now: pull fresh Tradepost, Dealernet and TCGplayer prices and republish.'}});}}).then(function(){{done('✓ Refresh requested · new prices in ~10 min');}});}});}}).catch(function(){{fallback();}});}};
-if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db){{settle();return;}}state.db=db;
-db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d){{if(Array.isArray(d.products))state.selected=d.products.slice();if(typeof d.hours==='number'){{state.hours=d.hours;$('cadence').value=String(d.hours);}}}}settle();renderBoard();if(!$('add').hidden)renderRows();}},function(){{settle();}});}});
-claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false)status('You can view this board; only its owner can change it.');}});}});}}else settle();
+if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db){{restoreBackup();settle();return;}}state.db=db;
+var first=true;db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d&&Array.isArray(d.products)&&d.products.length){{state.selected=d.products.slice();if(typeof d.hours==='number'){{state.hours=d.hours;$('cadence').value=String(d.hours);}}backup();}}else if(first&&restoreBackup()){{save('Restored your picks');}}first=false;settle();renderBoard();if(!$('add').hidden)renderRows();}},function(){{restoreBackup();settle();renderBoard();}});}});
+claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false)status('You can view this board; only its owner can change it.');}});}});}}else{{restoreBackup();settle();}}
 }})();
 </script></body></html>"""
