@@ -30,6 +30,11 @@ class DealernetQuote(BaseModel):
     product: str  # the Dealernet product name as shown / as typed
     bids: list[DealernetLevel] = Field(default_factory=list)
     asks: list[DealernetLevel] = Field(default_factory=list)
+    # Case-format offers on a single-unit product, priced per unit. Cases trade at
+    # a premium and need a full case to fill, so they never mix into bids/asks.
+    case_bids: list[DealernetLevel] = Field(default_factory=list)
+    case_asks: list[DealernetLevel] = Field(default_factory=list)
+    boxes_per_case: Optional[int] = None
     fetched_at: datetime = Field(default_factory=utcnow)
     source: str = "manual"
     url: Optional[str] = None
@@ -57,7 +62,11 @@ class DealernetQuote(BaseModel):
             asks=[BookLevel(price_cents=a.price_cents, quantity=a.quantity, resting_since=a.observed_at) for a in asks],
             fetched_at=self.fetched_at,
             source=f"Dealernet ({self.source})",
-            raw={"url": self.url, "product": self.product},
+            raw={"url": self.url, "product": self.product, "boxes_per_case": self.boxes_per_case,
+                 "case_bid": max((l.price_cents for l in self.case_bids), default=None),
+                 "case_ask": min((l.price_cents for l in self.case_asks), default=None),
+                 "case_bid_qty": sum(l.quantity for l in self.case_bids),
+                 "case_ask_qty": sum(l.quantity for l in self.case_asks)},
         )
 
 

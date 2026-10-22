@@ -44,6 +44,7 @@ def test_dashboard_shows_pct_of_tcgplayer(service):
     _, assessments = service.compare(prod, None, with_candles=False)
     for a in assessments:
         a.tpx.tcg_market = 20000
+        a.tpx.raw["product_meta"] = {"asset_type": "sealed_tcg"}  # TCG tiles compare against TCGplayer
     page = render(assessments, source="demo")
-    assert "TCGplayer market price" in page
-    assert "$200.00" in page and "TPX " in page and "%" in page
+    assert "vs TCGplayer $200.00" in page
+    assert "Buy TPX" in page and "%" in page

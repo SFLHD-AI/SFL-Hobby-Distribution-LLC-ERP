@@ -366,6 +366,28 @@ class Story:
     def is_opportunity(self) -> bool:
         return self.cls in ("edge", "thin", "post", "behind")
 
+    @property
+    def compact(self) -> str:
+        """One line for a tile."""
+        v = self.v
+        if self.cls in ("edge", "thin"):
+            a = v.arb
+            return (f"▲ Buy {_venue_word(a.buy_venue)} {_usd(a.buy_clean_cents)} → sell {_venue_word(a.sell_venue)} "
+                    f"{_usd(a.sell_clean_cents)} · +{_usd(a.edge_per_unit_cents)}/{self.unit} now")
+        best = max((d for d in (v.buy_tpx, v.buy_dn) if d.post), key=lambda d: d.post_rank, default=None)
+        if self.cls == "post" and best and best.post:
+            m = best.post
+            if m.side == "bid":
+                return f"◆ Post TPX buy {_usd(m.rest_clean_cents)} → sell DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
+            return f"◆ Post TPX sell {_usd(m.rest_clean_cents)} → buy DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
+        if self.cls == "behind" and best and best.post:
+            return f"Almost: TPX {best.post.side} {_usd(best.post.rest_clean_cents)} would work, someone is at {_usd(best.post.current_top_cents)}"
+        if v.dn is None:
+            return "No Dealernet listing matched"
+        if best and best.post and not best.near_market:
+            return "No profit: fees & shipping eat the gap"
+        return "No profit: prices too close"
+
     def _build(self):
         v = self.v
         sig = v.signal[0]
@@ -424,72 +446,198 @@ class Story:
         return "none", "No prices to trade against", "", [], "", "One side has no buyers or sellers right now."
 
 
-def _facts(v: ProductView) -> str:
-    bits = []
-    if v.vol30:
-        bits.append(f"TPX sold {v.vol30:,} in the last 30 days")
+def _compact(n, money: bool = True) -> str:
+    """$2.9M / 23.5K style figures for tile footers."""
+    if n is None:
+        return "—"
+    v = float(n) / (100 if money else 1)
+    sign = "$" if money else ""
+    for cutoff, suffix in ((1e9, "B"), (1e6, "M"), (1e3, "K")):
+        if abs(v) >= cutoff:
+            return f"{sign}{v / cutoff:.1f}{suffix}"
+    return f"{sign}{v:,.0f}" if money else f"{sign}{v:,.0f}"
+
+
+def _meta(v: ProductView) -> dict:
+    return v.primary.tpx.raw.get("product_meta") or {}
+
+
+def _group(v: ProductView) -> str:
+    t = str(_meta(v).get("asset_type") or "").lower()
+    return "sports" if "wax" in t else "tcg"
+
+
+def _series_label(v: ProductView) -> str:
+    m = _meta(v)
+    if _group(v) == "tcg":
+        bits = [m.get("brand"), m.get("set")]
     else:
-        bits.append("No TPX trades in the last 30 days")
-    if v.chg30 is not None:
-        bits.append(f'TPX price <span class="{_cls(v.chg30)}">{"up" if v.chg30 >= 0 else "down"} {_pct(abs(v.chg30), False)}</span> in 30 days')
-    if v.tcg:
-        bits.append(f"TCGplayer market price {_usd(v.tcg)} (TPX pays {pct_of(v.tpx_bid, v.tcg) or '—'}%, Dealernet pays {pct_of(v.dn_bid, v.tcg) or '—'}% of it)")
-    return " · ".join(bits)
+        bits = [m.get("set"), m.get("format")]
+    return " · ".join(str(b) for b in bits if b)
 
 
-def _card(st: Story, rank: int) -> str:
+def _initials(name: str) -> str:
+    words = [w for w in re.findall(r"[A-Za-z0-9]+", name) if w.lower() not in ("the", "of", "and")]
+    return "".join(w[0] for w in words[:2]).upper() or "?"
+
+
+def squarify(weights: list[tuple[str, float]], x: float, y: float, w: float, h: float) -> dict[str, tuple[float, float, float, float]]:
+    """Squarified treemap: rects (in the units of w/h) for weights sorted descending."""
+    out: dict[str, tuple[float, float, float, float]] = {}
+    total = sum(a for _, a in weights) or 1.0
+    scaled = [(k, a / total * w * h) for k, a in sorted(weights, key=lambda t: -t[1])]
+    _squarify_layout(scaled, x, y, w, h, out)
+    return out
+
+
+def _worst(row: list[float], length: float) -> float:
+    s = sum(row)
+    if not s or not length:
+        return float("inf")
+    return max(length * length * max(row) / (s * s), s * s / (length * length * min(row)))
+
+
+def _squarify_layout(items, x, y, w, h, out) -> None:
+    if not items:
+        return
+    if len(items) == 1:
+        out[items[0][0]] = (x, y, w, h)
+        return
+    vertical = w >= h  # lay a column along the short side
+    length = h if vertical else w
+    row: list = []
+    rest = list(items)
+    while rest:
+        cand = row + [rest[0]]
+        if not row or _worst([c[1] for c in cand], length) <= _worst([c[1] for c in row], length):
+            row = cand
+            rest = rest[1:]
+        else:
+            break
+    area = sum(c[1] for c in row)
+    if vertical:
+        cw = area / h
+        yy = y
+        for k, a in row:
+            hh = a / cw
+            out[k] = (x, yy, cw, hh)
+            yy += hh
+        _squarify_layout(rest, x + cw, y, w - cw, h, out)
+    else:
+        rh = area / w
+        xx = x
+        for k, a in row:
+            ww = a / rh
+            out[k] = (xx, y, ww, rh)
+            xx += ww
+        _squarify_layout(rest, x, y + rh, w, h - rh, out)
+
+
+def tile_chart(closes: list[dict], up: bool) -> str:
+    """Price line with a soft fill and volume bars behind it, stretched to the tile."""
+    pts = [(c.get("close"), c.get("volume") or 0) for c in closes if c.get("close") is not None][-30:]
+    if len(pts) < 2:
+        return '<svg class="tchart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend"><text x="150" y="55" text-anchor="middle" class="nodata">No price history</text></svg>'
+    prices = [p for p, _ in pts]
+    vols = [v for _, v in pts]
+    lo, hi = min(prices), max(prices)
+    span = (hi - lo) or 1
+    n = len(pts)
+    step = 300 / (n - 1)
+    xs = [i * step for i in range(n)]
+    ys = [92 - (p - lo) / span * 74 for p in prices]
+    vmax = max(vols) or 1
+    bw = max(step * 0.7, 2)
+    bars = "".join(f'<rect x="{x - bw / 2:.1f}" y="{100 - v / vmax * 40:.1f}" width="{bw:.1f}" height="{v / vmax * 40:.1f}"/>'
+                   for x, v in zip(xs, vols) if v)
+    line = " ".join(f'{"M" if i == 0 else "L"}{x:.1f},{y:.1f}' for i, (x, y) in enumerate(zip(xs, ys)))
+    fill = f'{line} L300,100 L0,100 Z'
+    cls = "up" if up else "down"
+    return (f'<svg class="tchart {cls}" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend">'
+            f'<g class="vol">{bars}</g><path class="area" d="{fill}"/><path class="line" d="{line}" vector-effect="non-scaling-stroke"/></svg>')
+
+
+def _strip(st: Story) -> str:
+    """The decision strip: the venue-vs-venue comparison this group cares about,
+    then one line on what (if anything) to do."""
     v = st.v
-    spark = sparkline([p["close"] for p in v.closes][-30:], baseline=None)
-    steps = "".join(f'<li>{_e(x)}</li>' for x in st.steps)
+    g = _group(v)
+    dn_raw = v.dn.raw if v.dn else {}
+    case = ""
+    if dn_raw.get("case_bid") or dn_raw.get("case_ask"):
+        bpc = dn_raw.get("boxes_per_case")
+        case = (f'<span class="pill case" title="Dealernet case offers, priced per box; a case trades at a premium and needs a full case to fill">'
+                f'Case{f" ×{bpc}" if bpc else ""}: pays {_usd(dn_raw.get("case_bid"))} · sells {_usd(dn_raw.get("case_ask"))}</span>')
+    if g == "tcg":
+        tpx_pct, dn_pct = pct_of(v.tpx_ask, v.tcg), pct_of(v.dn_ask, v.tcg)
+        best = None
+        if v.tpx_ask and v.dn_ask:
+            best = "tpx" if v.tpx_ask <= v.dn_ask else "dn"
+        elif v.tpx_ask or v.dn_ask:
+            best = "tpx" if v.tpx_ask else "dn"
+        head = (f'<span class="lbl">vs TCGplayer {_usd(v.tcg)}</span>' if v.tcg
+                else '<span class="lbl muted" title="Add TCGPLAYER_PUBLIC_KEY / PRIVATE_KEY to compare against market">TCGplayer market: keys not set</span>')
+        cmp_ = (head
+                + f'<span class="pill {"best" if best == "tpx" else ""}">Buy TPX {_usd(v.tpx_ask)}{f" · {tpx_pct}%" if tpx_pct is not None else ""}</span>'
+                + f'<span class="pill {"best" if best == "dn" else ""}">Buy DN {_usd(v.dn_ask)}{f" · {dn_pct}%" if dn_pct is not None else ""}</span>'
+                + case)
+    else:
+        bids = [b for b in (v.tpx_bid, v.dn_bid) if b]
+        asks = [a for a in (v.tpx_ask, v.dn_ask) if a]
+        hb, la = (max(bids) if bids else None), (min(asks) if asks else None)
+
+        def cell(label, val, best_):
+            return f'<span class="pill {"best" if best_ else ""}">{label} {_usd(val)}</span>'
+        cmp_ = ('<span class="lbl">TPX</span>' + cell("pays", v.tpx_bid, v.tpx_bid and v.tpx_bid == hb) + cell("sells", v.tpx_ask, v.tpx_ask and v.tpx_ask == la)
+                + '<span class="lbl">DN</span>' + cell("pays", v.dn_bid, v.dn_bid and v.dn_bid == hb) + cell("sells", v.dn_ask, v.dn_ask and v.dn_ask == la)
+                + case)
+    act = st.compact
+    return f'<div class="strip"><div class="cmp">{cmp_}</div><div class="act {st.cls}">{act}</div></div>'
+
+
+def _tile(st: Story, rect: tuple[float, float, float, float], size: str) -> str:
+    v = st.v
+    x, y, w, h = rect
+    px = v.last or v.fv or v.tpx_bid or v.dn_bid
+    up = (v.chg30 or ZERO) >= 0
+    m = _meta(v)
+    img = (f'<img class="thumb" src="{m["image"]}" alt="">' if m.get("image")
+           else f'<span class="thumb ph">{_e(_initials(v.name))}</span>')
+    chg = (f'<span class="chg {"up" if up else "down"}">{"↗" if up else "↘"} {_pct(abs(v.chg30), False, 2)}</span>'
+           if v.chg30 is not None else '<span class="chg flat">—</span>')
+    notional = sum((c.get("vwap") or c.get("close") or 0) * (c.get("volume") or 0) for c in v.closes) or ((v.vwap30 or v.last or 0) * v.vol30)
     return (
-        f'<article class="card {st.cls}" data-rank="{rank}">'
-        f'<div class="card-top"><span class="badge {st.cls}">{_e(st.badge)}</span><span class="rank">#{rank}</span></div>'
-        f'<h3>{_e(v.name)}</h3>'
-        f'<p class="headline">{_e(st.headline)}</p>'
-        f'<ol class="steps">{steps}</ol>'
-        f'<p class="profit">{_e(st.profit)}</p>'
-        f'<p class="why">{_e(st.why)}</p>'
-        + (f'<p class="why caution">Caution: nothing has traded on TPX in the last 30 days, so this order could sit unfilled for a long time.</p>' if not v.vol30 and st.cls == "post" else "")
-        + f'<div class="facts"><span>{_facts(v)}</span>{spark}</div>'
-        + '</article>'
+        f'<article class="tile {size} {st.cls}" style="left:{x:.3f}%;top:{y:.3f}%;width:{w:.3f}%;height:{h:.3f}%" data-search="{_e(v.name.lower())}">'
+        f'<header><div class="who">{img}<div class="names"><div class="series">{_e(_series_label(v))}</div><div class="name">{_e(v.name)}</div></div></div>'
+        f'<div class="px"><div class="price">{_usd(px)}</div>{chg}</div></header>'
+        f'{tile_chart(v.closes, up)}'
+        f'{_strip(st)}'
+        f'<footer><span><i>Volume</i>{_compact(notional)}</span><span><i>Last sale</i><b class="{"up" if up else "down"}">{_usd(v.last)}</b></span><span><i>30D sold</i>{_compact(v.vol30, False)}</span></footer>'
+        f'</article>'
     )
 
 
-def _quiet_row(st: Story) -> str:
-    v = st.v
-    spark = sparkline([p["close"] for p in v.closes][-30:], baseline=None)
-    return (
-        f'<div class="qrow"><div class="qname"><b>{_e(v.name)}</b><div class="small muted">{_e(st.why)}</div>'
-        f'<div class="small muted">{_facts(v)}</div></div>'
-        f'<div class="qprice"><span class="small muted">TPX</span><br>{_usd(v.last or v.tpx_bid)}</div>'
-        f'<div class="qprice"><span class="small muted">Dealernet pays / sells</span><br>{_usd(v.dn_bid)} / {_usd(v.dn_ask)}</div>'
-        f'<div class="qspk">{spark}</div></div>'
-    )
-
-
-def _summary(stories: list[Story], generated_at: datetime) -> str:
-    now = [s for s in stories if s.cls in ("edge", "thin")]
-    post = [s for s in stories if s.cls == "post"]
-    almost = [s for s in stories if s.cls == "behind"]
-    best = max((s for s in now + post), key=lambda s: _profit_cents(s), default=None)
-    tiles = [
-        ("Ready to trade now", str(len(now)), "both prices are live right now", "pos" if now else ""),
-        ("Post an order and wait", str(len(post)), "you would be first in line on TPX", "pos" if post else ""),
-        ("Almost", str(len(almost)), "someone is slightly ahead of you", ""),
-        ("Best profit per unit", _usd(_profit_cents(best)) if best else "—", _e(best.v.short) if best else "nothing clears the target today", "pos" if best else ""),
-    ]
-    return "".join(f'<div class="m"><div class="m-l">{l}</div><div class="m-v {c}">{val}</div><div class="m-s">{sub}</div></div>'
-                   for l, val, sub, c in tiles)
-
-
-def _profit_cents(st: Optional[Story]) -> Optional[Decimal]:
-    if st is None:
-        return None
-    v = st.v
-    if st.cls in ("edge", "thin") and v.arb:
-        return v.arb.edge_per_unit_cents
-    best = max((d for d in (v.buy_tpx, v.buy_dn) if d.post), key=lambda d: d.post_rank, default=None)
-    return best.post.expected_edge_cents if best and best.post else None
+def _board(stories: list[Story], aspect: float) -> str:
+    """One treemap: tiles sized by 30-day TPX dollar volume (floored so every product shows)."""
+    if not stories:
+        return '<div class="empty">No products in this group.</div>'
+    weights = []
+    for st in stories:
+        v = st.v
+        notional = sum((c.get("vwap") or c.get("close") or 0) * (c.get("volume") or 0) for c in v.closes) or ((v.vwap30 or v.last or 0) * v.vol30)
+        weights.append((v.name, float(notional)))
+    total = sum(a for _, a in weights) or 1.0
+    # Floor so every product shows; cap so one runaway product cannot own the board.
+    weights = [(k, min(max(a, total * 0.03), total * 0.22)) for k, a in weights]
+    rects = squarify(weights, 0, 0, 100, 100 * aspect)
+    by_name = {st.v.name: st for st in stories}
+    tiles = []
+    for name, (x, y, w, h) in rects.items():
+        # size class from the rough pixel box on a 1400px-wide board
+        wpx, hpx = w / 100 * 1400, h / (100 * aspect) * 1400 * aspect
+        size = "xl" if wpx >= 420 and hpx >= 300 else "l" if wpx >= 280 and hpx >= 190 else "m" if wpx >= 160 and hpx >= 130 else "s"
+        tiles.append(_tile(by_name[name], (x, y / aspect, w, h / aspect), size))
+    return f'<div class="board" style="aspect-ratio:{1 / aspect:.4f}">{"".join(tiles)}</div>'
 
 
 # ---------------------------------------------------------------------------
@@ -503,19 +651,11 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
     for a in ranked:
         by_product[a.product_name].append(a)
     views = [ProductView(p, items, margin, history) for p, items in by_product.items()]
-    order = {"edge": 0, "thin": 1, "post": 2, "behind": 3, "none": 4}
-
-    def key(v: ProductView):
-        sig = v.signal[0]
-        best = max((d for d in (v.buy_tpx, v.buy_dn) if d.post), key=lambda d: d.post_rank, default=None)
-        gap = best.gap_cents if best and best.gap_cents is not None else -10 ** 9
-        # Taker edges by $ per unit; postable levels by how likely they are to fill (TPX volume), then by gap.
-        return (order[sig], -(v.edge if v.edge is not None else Decimal(-10 ** 9)) if sig in ("edge", "thin") else ZERO,
-                -v.vol30, -gap if sig in ("post", "behind") else 0)
-    views.sort(key=key)
     stories = [Story(v) for v in views]
-    opps = [s for s in stories if s.is_opportunity]
-    quiet = [s for s in stories if not s.is_opportunity]
+    tcg = [s for s in stories if _group(s.v) == "tcg"]
+    sports = [s for s in stories if _group(s.v) == "sports"]
+    now = [s for s in stories if s.cls in ("edge", "thin")]
+    post = [s for s in stories if s.cls == "post"]
 
     banner = ""
     if source != "live":
@@ -527,15 +667,25 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
     meta_refresh = f'<meta http-equiv="refresh" content="{int(refresh_s)}">' if refresh_s else ""
     live = ('<span class="live"><i></i>LIVE</span>' if source == "live" else '<span class="live demo"><i></i>DEMO</span>')
     data = json.dumps({"generated_at": generated_at.isoformat(), "source": source})
-    cards = "".join(_card(s, i + 1) for i, s in enumerate(opps)) or (
-        '<div class="empty">Nothing clears the target right now. The list below says why for each product.</div>')
-    qrows = "".join(_quiet_row(s) for s in quiet)
-    m = f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%"
+
+    def aspect_for(n: int) -> float:
+        return 0.42 if n <= 4 else 0.5 if n <= 8 else 0.58
+
+    sections = []
+    if tcg:
+        sections.append(f'<section><h2>Pokémon &amp; One Piece <span class="sub">which venue is cheaper to buy, judged against TCGplayer market</span></h2>{_board(tcg, aspect_for(len(tcg)))}</section>')
+    if sports:
+        sections.append(f'<section><h2>Sports <span class="sub">Dealernet pays / sells vs TPX pays / sells</span></h2>{_board(sports, aspect_for(len(sports)))}</section>')
+    if not sections:
+        sections.append('<p class="muted">No products.</p>')
+    counts = (f'<span class="count pos">{len(now)} ready now</span><span class="count warn">{len(post)} post &amp; wait</span>'
+              f'<span class="count muted">{len(stories) - len(now) - len(post)} nothing to do</span>')
     return TEMPLATE.format(
         meta_refresh=meta_refresh, generated=_e(generated_at.strftime("%b %d, %Y · %H:%M UTC")), live=live,
-        actions=actions, banner=banner + warn_html, ticker=_ticker(views), summary=_summary(stories, generated_at),
-        margin=m, cards=cards, n_opps=len(opps), qrows=qrows or '<p class="muted">Everything has a trade.</p>', n_quiet=len(quiet),
-        data=data, refresh_note=(f"Refreshes every {refresh_s} s." if refresh_s else "Re-run <code>edge dashboard</code> to refresh."),
+        actions=actions, banner=banner + warn_html, ticker=_ticker(views), counts=counts,
+        margin=f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%", sections="".join(sections), data=data,
+        n_sections={1: "one", 2: "two"}.get(len([x for x in (tcg, sports) if x]), "one"),
+        refresh_note=(f"Refreshes every {refresh_s} s." if refresh_s else "Re-run <code>edge dashboard</code> to refresh."),
     )
 
 
@@ -543,89 +693,90 @@ TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 {meta_refresh}<title>TPX Dealernet Edges</title>
 <meta name="claude:viewport-fit-sides" content="cover">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
-/* Dark-first board: one green for "money", one amber for "do something", everything else quiet. */
-:root{{--bg:#0d1117;--panel:#161b22;--panel-2:#1c232d;--ink:#e6edf3;--muted:#8b98a8;--line:#2a3340;--line-2:#3a4656;
---pos:#3fb950;--pos-soft:#12301c;--neg:#f85149;--flat:#8b98a8;--accent:#f0b429;--accent-soft:#33280c;--accent-ink:#1a1200;--banner:#2a2410;
---mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;--sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
-color-scheme:dark}}
-@media (prefers-color-scheme:light){{:root:not([data-theme="dark"]){{--bg:#f3f5f8;--panel:#ffffff;--panel-2:#eef1f5;--ink:#141a22;--muted:#5d6b7c;
---line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--pos-soft:#e3f5e8;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-soft:#fff1cf;--accent-ink:#ffffff;--banner:#fff4d6;color-scheme:light}}}}
-:root[data-theme="light"]{{--bg:#f3f5f8;--panel:#ffffff;--panel-2:#eef1f5;--ink:#141a22;--muted:#5d6b7c;
---line:#d9dfe7;--line-2:#c3ccd7;--pos:#1a7f37;--pos-soft:#e3f5e8;--neg:#cf222e;--flat:#5d6b7c;--accent:#b7791f;--accent-soft:#fff1cf;--accent-ink:#ffffff;--banner:#fff4d6;color-scheme:light}}
+/* Heat-board: near-black ground, charcoal tiles, red/green for direction, one amber for "do this". */
+:root{{--bg:#0b0b0c;--tile:#1f1f22;--tile-2:#26262a;--ink:#f2f2f3;--muted:#8d8d94;--line:#2c2c31;
+--up:#3ddc84;--down:#ff4d6a;--flat:#8d8d94;--accent:#f5b63a;--accent-ink:#1a1200;--best:#1f3a2a;--banner:#2a2410;
+--sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark}}
+@media (prefers-color-scheme:light){{:root:not([data-theme="dark"]){{--bg:#eef0f3;--tile:#ffffff;--tile-2:#f3f4f7;--ink:#141518;--muted:#656a75;--line:#dcdfe5;
+--up:#15934f;--down:#d8243f;--flat:#656a75;--accent:#b7791f;--accent-ink:#ffffff;--best:#dff3e6;--banner:#fff4d6;color-scheme:light}}}}
+:root[data-theme="light"]{{--bg:#eef0f3;--tile:#ffffff;--tile-2:#f3f4f7;--ink:#141518;--muted:#656a75;--line:#dcdfe5;
+--up:#15934f;--down:#d8243f;--flat:#656a75;--accent:#b7791f;--accent-ink:#ffffff;--best:#dff3e6;--banner:#fff4d6;color-scheme:light}}
 *{{box-sizing:border-box}}html,body{{margin:0}}
-body{{background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 48px}}
-main{{max-width:1480px;margin:0 auto}}
-h1{{font-size:20px;font-weight:700;margin:0;letter-spacing:.01em}}
-h2{{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:26px 0 12px;font-weight:600}}
-.mono,.m-v,.tk-p,.tk-c,.qprice{{font-family:var(--mono);font-variant-numeric:tabular-nums}}
-.muted{{color:var(--muted)}}.small{{font-size:13px}}.pos{{color:var(--pos)}}.neg{{color:var(--neg)}}.flat{{color:var(--flat)}}
-.top{{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:14px 0 10px;border-bottom:1px solid var(--line)}}
+body{{background:var(--bg);color:var(--ink);font:14px/1.4 var(--sans);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px;font-variant-numeric:tabular-nums}}
+main{{max-width:1600px;margin:0 auto}}
+h1{{font-size:18px;font-weight:700;margin:0}}
+h2{{font-size:15px;font-weight:700;margin:18px 0 8px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}}
+h2 .sub{{font-size:12px;font-weight:500;color:var(--muted)}}
+.muted{{color:var(--muted)}}.pos,.up{{color:var(--up)}}.neg,.down{{color:var(--down)}}.flat{{color:var(--flat)}}
+.top{{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:12px 0 10px}}
 .top-l{{display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
-.live{{font:600 11px/1 var(--mono);letter-spacing:.12em;color:var(--pos);display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--pos);border-radius:3px}}
-.live i{{width:7px;height:7px;border-radius:50%;background:var(--pos);animation:blink 1.6s infinite}}
+.live{{font:600 11px/1 var(--sans);letter-spacing:.12em;color:var(--up);display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--up);border-radius:3px}}
+.live i{{width:7px;height:7px;border-radius:50%;background:var(--up);animation:blink 1.6s infinite}}
 .live.demo{{color:var(--accent);border-color:var(--accent)}}.live.demo i{{background:var(--accent)}}
 @keyframes blink{{50%{{opacity:.25}}}}
-.pill{{display:inline-block;border:1px solid var(--line-2);border-radius:3px;padding:4px 10px;font:500 11px/1 var(--mono);letter-spacing:.06em;color:var(--muted);text-transform:uppercase}}
-.pill.on{{border-color:var(--neg);color:var(--neg)}}
-.banner{{background:var(--banner);border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin:14px 0 0}}
-/* ticker tape */
-.tape{{overflow:hidden;border-bottom:1px solid var(--line);background:var(--panel);margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px))) 0 calc(-1 * max(16px,env(safe-area-inset-right,0px)));padding:0 16px}}
+.pill{{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:3px 8px;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap}}
+.pill.on{{border-color:var(--down);color:var(--down)}}
+.count{{font-size:12px;font-weight:600;margin-left:12px}}.count.warn{{color:var(--accent)}}
+.banner{{background:var(--banner);border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin:10px 0 0}}
+/* tape */
+.tape{{overflow:hidden;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px))) 0 calc(-1 * max(16px,env(safe-area-inset-right,0px)));padding:0 16px}}
 .tape-track{{display:inline-flex;white-space:nowrap;animation:tape 90s linear infinite;will-change:transform}}
 .tape:hover .tape-track{{animation-play-state:paused}}
 @keyframes tape{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
-.tk{{display:inline-flex;gap:10px;align-items:baseline;padding:9px 18px;border-right:1px solid var(--line);font-size:13px}}
-.tk-n{{color:var(--muted);text-transform:uppercase;letter-spacing:.04em;font-weight:500}}.tk-p{{font-weight:600}}
+.tk{{display:inline-flex;gap:8px;align-items:baseline;padding:7px 16px;border-right:1px solid var(--line);font-size:12px}}
+.tk-n{{color:var(--muted);font-weight:500}}.tk-p{{font-weight:600}}.tk-c.pos{{color:var(--up)}}.tk-c.neg{{color:var(--down)}}
 @media (prefers-reduced-motion:reduce){{.tape-track{{animation:none;white-space:normal;flex-wrap:wrap}}.tape-track .tk:nth-child(n+1000){{display:none}}.live i{{animation:none}}}}
-/* summary tiles */
-.metrics{{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:16px}}
-.m{{background:var(--panel);padding:12px 16px;min-width:0}}
-.m-l{{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}}
-.m-v{{font-size:30px;font-weight:600;line-height:1.2;margin:4px 0 2px}}
-.m-s{{font-size:13px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
-/* opportunity cards */
-.cards{{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:14px}}
-.card{{background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--line-2);border-radius:8px;padding:16px 18px 14px;min-width:0;display:flex;flex-direction:column;gap:8px}}
-.card.edge,.card.thin{{border-left-color:var(--pos)}}.card.post{{border-left-color:var(--accent)}}.card.behind{{border-left-color:var(--line-2)}}
-.card[data-rank="1"],.card[data-rank="2"]{{grid-column:span 1}}
-.card-top{{display:flex;justify-content:space-between;align-items:center}}
-.badge{{display:inline-block;font:600 12px/1 var(--sans);letter-spacing:.04em;padding:6px 10px;border-radius:4px;border:1px solid var(--line-2);color:var(--muted);text-transform:uppercase}}
-.badge.edge{{background:var(--pos);color:#04200b;border-color:var(--pos)}}.badge.thin{{background:var(--pos-soft);color:var(--pos);border-color:var(--pos)}}
-.badge.post{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}.badge.behind{{color:var(--muted)}}
-.rank{{font:600 13px var(--mono);color:var(--muted)}}
-.card h3{{font-size:20px;font-weight:700;margin:0;line-height:1.25;text-wrap:balance}}
-.headline{{margin:0;font-size:15px;font-weight:600;color:var(--muted)}}
-.steps{{margin:0;padding-left:0;list-style:none;counter-reset:s;display:flex;flex-direction:column;gap:6px}}
-.steps li{{counter-increment:s;display:flex;gap:10px;align-items:baseline;font-size:16px}}
-.steps li::before{{content:counter(s);flex:none;width:22px;height:22px;border-radius:50%;background:var(--panel-2);border:1px solid var(--line-2);font:600 12px/20px var(--mono);text-align:center;color:var(--ink)}}
-.profit{{margin:2px 0 0;font-size:17px;font-weight:600;color:var(--pos)}}.card.behind .profit{{color:var(--muted);font-weight:500}}
-.why{{margin:0;color:var(--muted);font-size:14px}}.caution{{color:var(--accent)}}
-.facts{{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;color:var(--muted);border-top:1px solid var(--line);padding-top:8px;margin-top:2px}}
-.empty{{background:var(--panel);border:1px dashed var(--line-2);border-radius:8px;padding:22px;color:var(--muted)}}
-.spark{{width:96px;height:26px;flex:none}}.spark-pos{{stroke:var(--pos)}}.spark-neg{{stroke:var(--neg)}}.spark-pos-dot{{fill:var(--pos)}}.spark-neg-dot{{fill:var(--neg)}}.grid{{stroke:var(--line);stroke-width:1}}
-/* quiet list */
-.quiet{{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}}
-.qrow{{display:grid;grid-template-columns:minmax(0,3fr) 110px 190px 200px;gap:0 16px;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line)}}
-.qrow:last-child{{border-bottom:0}}.qname{{min-width:0}}.qname b{{font-weight:600}}
-.qprice{{text-align:right;white-space:nowrap;font-size:14px}}.qspk{{display:flex;justify-content:flex-end;gap:6px}}
-@media (max-width:760px){{.qrow{{grid-template-columns:1fr 1fr}}.qname{{grid-column:1/-1}}.qspk{{grid-column:1/-1;justify-content:flex-start}}.cards{{grid-template-columns:1fr}}.m-v{{font-size:24px}}}}
-footer{{margin-top:28px}}code{{font-family:var(--mono);font-size:12px}}
+/* board */
+.board{{position:relative;width:100%;max-width:100%}}
+.tile{{position:absolute;background:var(--tile);border:3px solid var(--bg);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-width:0;padding:10px 12px;gap:4px}}
+.tile:hover{{background:var(--tile-2)}}
+.tile header{{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:relative;z-index:2}}
+.who{{display:flex;gap:10px;min-width:0;align-items:flex-start}}
+.thumb{{width:38px;height:38px;border-radius:7px;object-fit:cover;flex:none;background:var(--tile-2)}}
+.thumb.ph{{display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:var(--muted);border:1px solid var(--line)}}
+.names{{min-width:0}}.series{{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}}
+.name{{font-weight:700;font-size:15px;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
+.px{{text-align:right;flex:none}}.price{{font-weight:700;font-size:16px}}.chg{{font-size:12px;font-weight:600}}
+.tchart{{position:absolute;left:0;right:0;bottom:0;top:0;width:100%;height:100%;z-index:0;pointer-events:none}}
+.tchart .vol rect{{fill:var(--ink);opacity:.08}}.tchart .line{{fill:none;stroke-width:2.5}}.tchart .dot{{stroke:var(--bg);stroke-width:2}}
+.tchart.up .line{{stroke:var(--up)}}.tchart.up .dot{{fill:var(--up)}}.tchart.up .area{{fill:url(#g-up)}}
+.tchart.down .line{{stroke:var(--down)}}.tchart.down .dot{{fill:var(--down)}}.tchart.down .area{{fill:url(#g-down)}}
+.nodata{{fill:var(--muted);font-size:9px}}
+.strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:color-mix(in srgb,var(--tile) 78%,transparent);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
+.cmp{{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}}.lbl{{font-size:11px;font-weight:600;color:var(--muted);margin-right:2px}}
+.cmp .pill{{background:var(--tile);color:var(--ink);font-weight:500}}.cmp .pill.best{{background:var(--best);border-color:var(--up);color:var(--up);font-weight:700}}
+.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}
+.act{{font-size:12px;font-weight:600;color:var(--muted)}}.act.edge,.act.thin{{color:var(--up)}}.act.post{{color:var(--accent)}}.act.behind{{color:var(--ink)}}
+.tile footer{{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;position:relative;z-index:2;margin-top:2px;text-shadow:0 1px 3px var(--bg)}}
+.tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}.tile footer b{{font-weight:700}}
+/* what each size shows */
+.tile.s header{{flex-direction:column;gap:4px}}.tile.s .px{{text-align:left;margin-top:auto}}.tile.s .series,.tile.s .strip,.tile.s footer{{display:none}}.tile.s .name{{font-size:12px;-webkit-line-clamp:3}}.tile.s .thumb{{width:30px;height:30px}}.tile.s .price{{font-size:14px}}
+.tile.m .series{{display:none}}.tile.m footer{{display:none}}.tile.m .name{{font-size:13px}}.tile.m .act{{font-size:11px}}.tile.m .cmp .pill{{padding:2px 6px;font-size:10px}}
+.tile.m .lbl.muted,.tile.m .pill.case,.tile.m .nodata,.tile.s .nodata{{display:none}}.tile.m .strip{{padding:4px 6px;gap:2px}}
+.tile.l footer{{display:none}}
+.tile.xl .name{{font-size:17px}}.tile.xl .price{{font-size:18px}}.tile.xl .chg{{font-size:13px}}
+.empty{{background:var(--tile);border:1px dashed var(--line);border-radius:8px;padding:22px;color:var(--muted)}}
+footer.page{{margin-top:22px;font-size:12px;color:var(--muted)}}code{{font-size:12px}}
+@media (max-width:760px){{.board{{aspect-ratio:auto!important;display:flex;flex-direction:column;gap:8px}}.tile{{position:static;width:auto!important;height:200px!important;border:0}}.tile.s .series,.tile.s .strip,.tile.m .series{{display:flex}}.tile.s header{{flex-direction:row}}}}
 /* big-screen mode: #tv */
-html.tv body{{font-size:17px}}html.tv main{{max-width:none}}html.tv footer,html.tv .banner{{display:none}}
-html.tv .cards{{grid-template-columns:repeat(auto-fill,minmax(480px,1fr))}}html.tv .card h3{{font-size:23px}}html.tv .steps li{{font-size:18px}}html.tv .profit{{font-size:20px}}
-html.tv .m-v{{font-size:38px}}html.tv .tk{{font-size:15px;padding:12px 22px}}html.tv h2{{margin-top:18px}}
-</style></head><body><main>
-<div class="top"><div class="top-l"><h1>Where you can make money today</h1>{live}<span class="muted small">Updated {generated}</span></div>
-<div class="top-l"><span class="muted small">TPX vs Dealernet · {margin} profit target · every number is after fees &amp; shipping</span>{actions}</div></div>
+html.tv body{{font-size:16px}}html.tv main{{max-width:none}}html.tv footer.page,html.tv .banner{{display:none}}
+html.tv .name{{font-size:17px}}html.tv .tile.xl .name{{font-size:21px}}html.tv .price{{font-size:19px}}html.tv .tile.xl .price{{font-size:24px}}
+html.tv .cmp .pill{{font-size:13px}}html.tv .act{{font-size:14px}}
+html.tv main.two .board{{aspect-ratio:auto!important;height:calc(50vh - 78px)}}html.tv main.one .board{{aspect-ratio:auto!important;height:calc(100vh - 150px)}}
+html.tv .tape{{display:none}}
+</style></head><body><main class="{n_sections}">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<linearGradient id="g-up" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ddc84" stop-opacity=".45"/><stop offset="1" stop-color="#3ddc84" stop-opacity="0"/></linearGradient>
+<linearGradient id="g-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4d6a" stop-opacity=".45"/><stop offset="1" stop-color="#ff4d6a" stop-opacity="0"/></linearGradient>
+</defs></svg>
+<div class="top"><div class="top-l"><h1>TPX × Dealernet edge board</h1>{live}<span class="muted">Updated {generated}</span>{counts}</div>
+<div class="top-l"><span class="muted">tiles sized by 30-day TPX volume · {margin} profit target after fees &amp; shipping</span>{actions}</div></div>
 {ticker}
 {banner}
-<div class="metrics">{summary}</div>
-<h2>Do this · {n_opps} products</h2>
-<div class="cards">{cards}</div>
-<h2>Nothing to do right now · {n_quiet} products</h2>
-<div class="quiet">{qrows}</div>
-<footer class="muted small">View only. This page never places, lists or cancels anything. {refresh_note} Add <code>#tv</code> to the link for the big-screen view.</footer>
+{sections}
+<footer class="page">View only. This page never places, lists or cancels anything. {refresh_note} Green pill = the better price right now. Add <code>#tv</code> to the link for the big-screen view.</footer>
 </main>
 <script id="meta" type="application/json">{data}</script>
 <script>

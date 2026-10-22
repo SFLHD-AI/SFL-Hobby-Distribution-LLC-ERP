@@ -6,7 +6,9 @@ cookie kept on disk under .cache/) and reads product listing pages:
   * header: "Current High Bid" / "Current Low Ask" (per box), UPC
   * "Sell To" table -> bids, "Buy From" table -> asks; each row has dealer,
     qty (a CASE badge means qty is in cases), notes, per-box price
-  * "N boxes per case" so case products are priced per case
+  * "N boxes per case" so case products are priced per case; on a box page the
+    CASE rows are kept apart (case_bids/case_asks, per box): cases trade at a
+    premium and take a full case to fill, so they never set the box price
 
 Only GETs of search.php and listing.php after login. It never posts a form
 other than the login, never touches the cart, listings or offers, and waits
@@ -97,20 +99,27 @@ def parse_listing(page: str, product: str, url: str, *, want_case: bool = False,
     bpc = int(bpc_m.group(1)) if bpc_m else None
     bids: list[DealernetLevel] = []
     asks: list[DealernetLevel] = []
+    case_bids: list[DealernetLevel] = []
+    case_asks: list[DealernetLevel] = []
     for card in re.split(r'(?i)<div class="offer-card"', page)[1:]:
         title = _text(re.search(r"(?is)<h2[^>]*>(.*?)</h2>", card).group(1)) if "<h2" in card else ""
-        side = bids if title.lower().startswith("sell") else asks if title.lower().startswith("buy") else None
-        if side is None:
+        is_bid = title.lower().startswith("sell")
+        if not is_bid and not title.lower().startswith("buy"):
             continue
         for lvl, is_case in _offer_rows(card, now, bpc):
             if want_case:
                 if not is_case or not bpc:
                     continue
                 lvl.price_cents *= bpc
-            elif is_case and bpc:
-                lvl.quantity *= bpc  # case qty -> boxes; price is already per box
-            side.append(lvl)
-    q = DealernetQuote(product=product, bids=bids, asks=asks, fetched_at=now, source="dealernet page", url=url)
+                (bids if is_bid else asks).append(lvl)
+            elif is_case:
+                # A case offer on a box page: keep it, priced per box, but apart
+                # from the single-box book. It needs a whole case to fill.
+                (case_bids if is_bid else case_asks).append(lvl)
+            else:
+                (bids if is_bid else asks).append(lvl)
+    q = DealernetQuote(product=product, bids=bids, asks=asks, case_bids=case_bids, case_asks=case_asks,
+                       boxes_per_case=bpc, fetched_at=now, source="dealernet page", url=url)
     hb = re.search(r"Current High Bid:\s*<strong>([^<]*)</strong>", page)
     la = re.search(r"Current Low Ask:\s*<strong>([^<]*)</strong>", page)
     q_header = {"high_bid": _first_price(hb.group(1)) if hb else None,
@@ -118,9 +127,10 @@ def parse_listing(page: str, product: str, url: str, *, want_case: bool = False,
                 "upc": (re.search(r"UPC:</strong>\s*([0-9]+)", page) or [None, None])[1],
                 "boxes_per_case": bpc}
     # The header is the page's own summary; fall back to it when a side has no parseable rows.
-    if not q.bids and q_header["high_bid"] and not want_case:
+    # (The header may be quoting a case row, so only when the page had no rows at all.)
+    if not q.bids and not q.case_bids and q_header["high_bid"] and not want_case:
         q.bids.append(DealernetLevel(price_cents=q_header["high_bid"], quantity=1, observed_at=now))
-    if not q.asks and q_header["low_ask"] and not want_case:
+    if not q.asks and not q.case_asks and q_header["low_ask"] and not want_case:
         q.asks.append(DealernetLevel(price_cents=q_header["low_ask"], quantity=1, observed_at=now))
     return q
 

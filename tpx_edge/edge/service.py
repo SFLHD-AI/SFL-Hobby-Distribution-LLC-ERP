@@ -156,9 +156,27 @@ class EdgeService:
                 log.info("market %s state %s", m.get("displayName"), m.get("tradingState"))
             q = self.market.venue_quote(product, m, with_candles=with_candles)
             q.fair_value, q.fair_value_model = fv, model
+            q.raw["product_meta"] = self._product_meta(product)
             cm = self.market.market_cost_model(str(m["id"]), m.get("displayName") or str(m["id"]), ship, ship, bool(m.get("isVaulted")))
             out.append((q, cm))
         return out
+
+    def _product_meta(self, product: Product) -> dict:
+        """What the dashboard shows on a tile: group, set, format, picture."""
+        from .images import image_data_uri
+
+        data = product.raw.get("data") or {}
+        variants = data.get("image_variants") or {}
+        url = variants.get("200_x_200") or (data.get("image_urls") or [None])[0]
+        return {
+            "asset_type": product.asset_type_name,
+            "brand": product.brand or data.get("brand"),
+            "set": product.raw.get("assetName"),
+            "format": product.format,
+            "is_case": product.is_case,
+            "year": product.year,
+            "image": image_data_uri(url, self.settings.cache_dir) if url else None,
+        }
 
     def dealernet_quote(self, product: Product, source: DealernetSource, dn_name: Optional[str] = None,
                         candidates: Optional[list[str]] = None) -> tuple[Optional[VenueQuote], Optional[str]]:
