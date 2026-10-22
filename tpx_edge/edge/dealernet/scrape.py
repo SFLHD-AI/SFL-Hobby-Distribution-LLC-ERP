@@ -55,8 +55,18 @@ def _first_price(fragment: str) -> Optional[int]:
     return dollars_to_cents(m.group(1)) if m else None
 
 
+def norm_upc(v: Optional[str]) -> str:
+    """Digits only, without leading zeros, so 0196214153080 == 196214153080."""
+    return re.sub(r"\D", "", v or "").lstrip("0")
+
+
+def upcs_in(cell: str) -> list[str]:
+    """A Dealernet UPC cell can list several codes ("887521161485 887521161478")."""
+    return [u for u in (norm_upc(x) for x in re.split(r"[\s,/;]+", cell or "")) if u]
+
+
 def parse_search(page: str) -> list[dict]:
-    """search.php results -> [{name, variation, upc, url}]."""
+    """search.php results -> [{name, variation, upc, url}]; upc is the cell as shown."""
     out = []
     for row in _ROW_RE.findall(page):
         if "product-link" not in row:
@@ -143,13 +153,13 @@ _SYNONYMS = [(re.compile(r"\belite trainer box\b"), "etb"), (re.compile(r"\bpoke
              (re.compile(r"\bsuper[- ]premium\b"), "spc"), (re.compile(r"\bultra[- ]premium\b"), "upc"),
              (re.compile(r"\bbooster \(sleeved\)|\bsleeved booster packs?\b"), "sleeved pack"),
              (re.compile(r"\bbooster \(bundle\)"), "bundle"), (re.compile(r"\bbooster \(unlimited\)"), "booster box"),
-             (re.compile(r"\bbooster packs?\b"), "pack")]
+             (re.compile(r"\bbooster packs?\b"), "pack"), (re.compile(r"\bknock[- ]out\b"), "knockout")]
 _STOP = {"box", "boxes", "edition", "the", "of", "and", "factory", "sealed", "cards", "set", "v1", "v2", "v3"}
 _MCODE = re.compile(r"^m\d+$")
 # Words that name a different product format; one side having it and the other not is a mismatch.
 _FORMAT_WORDS = {"hobby", "jumbo", "blaster", "mega", "hanger", "cello", "retail", "breakers", "delight", "fotl", "choice",
                  "binder", "blister", "bundle", "display", "tin", "mini", "etb", "pc", "pack", "poster", "stickers",
-                 "build", "battle", "sleeved", "booster", "sapphire", "logofractor", "black", "update",
+                 "build", "battle", "sleeved", "booster", "sapphire", "knockout", "logofractor", "black", "update",
                  "cosmic", "definitive", "pristine", "finest", "museum", "spc", "upc"}
 _SOFT_FORMAT_WORDS = {"collection", "x", "ex"}
 _BOX_FORMATS = _FORMAT_WORDS - {"hobby", "black", "update", "cosmic", "definitive", "pristine", "finest", "museum", "sapphire", "logofractor"}
@@ -166,9 +176,9 @@ def _page_tokens(name: str) -> tuple[Optional[int], set[str]]:
         y = 2000 + int(m.group(3)) if m.group(3) else int(m.group(1) + m.group(2))
         s = s.replace(m.group(0), " ")
     s = _CASE_WORDS.sub(" ", s)
-    s = _SERIES.sub(" ", s)
-    for pat, rep in _SYNONYMS:
+    for pat, rep in _SYNONYMS:  # before the series strip: "pokemon center" must not lose its "pokemon"
         s = pat.sub(rep, s)
+    s = _SERIES.sub(" ", s)
     toks = {t for t in re.split(r"[^\w]+", s) if t and t not in _STOP and not _MCODE.match(t)}
     return y, toks
 
@@ -306,8 +316,8 @@ class ScrapeSource(DealernetSource):
                     continue
                 seen.add(hit["url"])
                 sc = page_match_score(product, f'{hit["name"]} {hit["variation"]}'.strip())
-                if upc and hit.get("upc"):
-                    if hit["upc"] == upc:
+                if upc and upcs_in(hit.get("upc")):
+                    if norm_upc(upc) in upcs_in(hit["upc"]):
                         sc = 200.0
                     else:
                         if rejected is None or sc > rejected[0]:
@@ -342,7 +352,7 @@ class ScrapeSource(DealernetSource):
             return None
         q = parse_listing(self._get(url), product, url, want_case=normalize(product).is_case)
         if upc and q.upc:
-            q.upc_match = q.upc == upc
+            q.upc_match = norm_upc(upc) in upcs_in(q.upc)
             if not q.upc_match:
                 q.upc_note = f"Dealernet listing UPC {q.upc} differs from Tradepost UPC {upc}. Different product, so not compared."
                 q.bids, q.asks, q.case_bids, q.case_asks = [], [], [], []
