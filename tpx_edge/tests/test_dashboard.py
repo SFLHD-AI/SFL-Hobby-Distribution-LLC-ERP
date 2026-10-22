@@ -36,7 +36,11 @@ def test_dashboard_has_no_action_controls(tmp_path):
     page, _ = _run(tmp_path)
     # Page controls (help, product list) are fine; nothing may submit anywhere or call a marketplace.
     assert not re.search(r"<form\b", page, re.I)
-    assert "fetch(" not in page and "XMLHttpRequest" not in page and "tradepost.co/graphql" not in page
+    assert "XMLHttpRequest" not in page and "tradepost.co/graphql" not in page
+    # The only network calls are the hosted app's own same-origin /api endpoints (board + refresh).
+    assert page.count("fetch(") == 1
+    paths = re.findall(r"api\('(?:GET|PUT|POST)','([^']+)'", page)
+    assert paths and all(p.startswith("/api/") for p in paths)
 
 
 def test_actions_toggle_is_shown(tmp_path):

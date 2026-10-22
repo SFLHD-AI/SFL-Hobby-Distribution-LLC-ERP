@@ -294,3 +294,22 @@ snapshots are kept apart). Demo output carries a "Sample data" banner.
 The page has no buttons, forms or network calls. `ACTIONS_ENABLED` (default `false`) is the master
 switch for any future feature that would act on a marketplace; the dashboard shows its state, and no
 such feature exists yet.
+
+## Hosted web app (Railway)
+
+`edge/webapp.py` serves the board as a web app: it keeps your picks and refresh cadence in
+`$DATA_DIR/board.json`, re-runs `edge dashboard` on that cadence (the hottest list at most hourly,
+your board alone in between, down to every 15 min), and runs a board-only refresh when you press
+**Refresh**. Run it locally with `EDGE_DEMO=1 python -m edge.webapp` (http://localhost:8080).
+
+Railway service (deploys on every push to the branch it watches):
+
+| Setting | Value |
+|---|---|
+| Source | this repo, branch `claude/awesome-gates-692isa` (until merged), **Root Directory** `tpx_edge` |
+| Config file | `/tpx_edge/railway.json` (Dockerfile build, `/healthz` health check) |
+| Volume | mount path `/data` (board, history, catalogue cache, Dealernet session) |
+| Variables | `TPX_API_KEY`, `DEALERNET_ACCESS=scrape`, `DEALERNET_USERNAME`, `DEALERNET_PASSWORD`, `APP_PASSWORD` (login for the page; any user name) |
+| Optional | `HOT_COUNT` (hottest products priced per vertical, default 25), `FULL_EVERY_S` (default 3600) |
+
+Secrets live only in Railway's Variables; nothing secret is in the image or the repo.
