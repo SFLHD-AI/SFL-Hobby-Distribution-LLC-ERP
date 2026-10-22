@@ -666,7 +666,8 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
                else '<span class="pill" title="Set ACTIONS_ENABLED=true to allow features that act on a marketplace">Actions: OFF (view only)</span>')
     meta_refresh = f'<meta http-equiv="refresh" content="{int(refresh_s)}">' if refresh_s else ""
     live = ('<span class="live"><i></i>LIVE</span>' if source == "live" else '<span class="live demo"><i></i>DEMO</span>')
-    data = json.dumps({"generated_at": generated_at.isoformat(), "source": source})
+    data = json.dumps({"generated_at": generated_at.isoformat(), "source": source,
+                       "products": [v.name for v in views]})
 
     def aspect_for(n: int) -> float:
         return 0.42 if n <= 4 else 0.5 if n <= 8 else 0.58
@@ -759,6 +760,20 @@ h2 .sub{{font-size:12px;font-weight:500;color:var(--muted)}}
 .tile.xl .name{{font-size:17px}}.tile.xl .price{{font-size:18px}}.tile.xl .chg{{font-size:13px}}
 .empty{{background:var(--tile);border:1px dashed var(--line);border-radius:8px;padding:22px;color:var(--muted)}}
 footer.page{{margin-top:22px;font-size:12px;color:var(--muted)}}code{{font-size:12px}}
+.tb{{font:600 12px var(--sans);color:var(--ink);background:var(--tile);border:1px solid var(--line);border-radius:5px;padding:5px 10px;cursor:pointer}}
+.tb:hover{{background:var(--tile-2)}}.tb.primary{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}
+.overlay[hidden]{{display:none!important}}
+.overlay{{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 16px max(16px,env(safe-area-inset-left,0px));overflow:auto}}
+.panel{{background:var(--tile);border:1px solid var(--line);border-radius:12px;padding:18px 20px;max-width:720px;width:100%;margin-top:4vh;font-size:14px}}
+.ph{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}}.ph h3{{margin:0;font-size:18px}}
+.guide{{padding-left:20px;display:flex;flex-direction:column;gap:10px;margin:0}}.guide li{{line-height:1.5}}.guide .act{{display:inline;font-weight:600}}
+.addrow{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}}.addrow input[type=text]{{flex:1;min-width:200px;padding:7px 10px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}}
+.plist{{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:4px;max-height:40vh;overflow:auto}}
+.plist li{{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px}}
+.plist .x{{color:var(--down)}}.cadence{{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:12px}}
+.cadence select{{padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}}
+#setStatus{{margin-top:8px;min-height:1.2em}}
+html.tv .top .tb{{display:none}}
 @media (max-width:760px){{.board{{aspect-ratio:auto!important;display:flex;flex-direction:column;gap:8px}}.tile{{position:static;width:auto!important;height:200px!important;border:0}}.tile.s .series,.tile.s .strip,.tile.m .series{{display:flex}}.tile.s header{{flex-direction:row}}}}
 /* big-screen mode: #tv */
 html.tv body{{font-size:16px}}html.tv main{{max-width:none}}html.tv footer.page,html.tv .banner{{display:none}}
@@ -772,10 +787,33 @@ html.tv .tape{{display:none}}
 <linearGradient id="g-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4d6a" stop-opacity=".45"/><stop offset="1" stop-color="#ff4d6a" stop-opacity="0"/></linearGradient>
 </defs></svg>
 <div class="top"><div class="top-l"><h1>TPX × Dealernet edge board</h1>{live}<span class="muted">Updated {generated}</span>{counts}</div>
-<div class="top-l"><span class="muted">tiles sized by 30-day TPX volume · {margin} profit target after fees &amp; shipping</span>{actions}</div></div>
+<div class="top-l"><span class="muted">tiles sized by 30-day TPX volume · {margin} profit target after fees &amp; shipping</span>{actions}
+<button type="button" class="tb" id="btnSettings" title="Choose the products on the board and how often it refreshes">⚙ My products</button>
+<button type="button" class="tb" id="btnHelp" title="How to read this board">? How to read</button></div></div>
 {ticker}
 {banner}
 {sections}
+<div class="overlay" id="help" hidden><div class="panel">
+<div class="ph"><h3>How to read this board</h3><button type="button" class="tb" data-close="help">Close</button></div>
+<ol class="guide">
+<li><b>Each tile is one product.</b> Bigger tile = more money traded on TPX in the last 30 days. The chart behind it is the TPX price over 30 days; the faint bars are how much sold each day. <span class="up">Green</span> = price up over 30 days, <span class="down">red</span> = down.</li>
+<li><b>Top right of a tile:</b> the last TPX sale price and the 30-day change.</li>
+<li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy TPX $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one right now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each price also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
+<li><b>Sports tiles</b> show what each venue <i>pays</i> (their best buy offer, where you would sell) and what it <i>sells</i> for (their best sell offer, where you would buy). The <span class="up">green pill</span> is the best price on each side.</li>
+<li><b>Amber "Case" pill:</b> Dealernet has case-only offers for this product, shown per box. A case needs a full case to fill and usually pays more than singles, so it is never used as the box price.</li>
+<li><b>The line under the pills is the call:</b><br><span class="act edge">▲ Buy … → sell … · +$ now</span> both prices are live, you can do the round trip now.<br><span class="act post">◆ Post TPX buy $x → sell DN $y · +$z/box</span> post that order on TPX; when it fills, sell to Dealernet at their price for the profit shown.<br><span class="act post">◆ Post TPX sell $x → buy DN $y</span> the reverse: post a sell on TPX, cover from Dealernet.<br><span class="muted">No profit: …</span> nothing to do on this product right now, and why.</li>
+<li><b>Every dollar figure is after fees and shipping</b>, aiming for the profit target in the header. Nothing on this page places an order.</li>
+<li><b>Big screen:</b> add <code>#tv</code> to the link. <b>Your products:</b> the ⚙ button lets you add or remove products and set how often the board refreshes.</li>
+</ol></div></div>
+<div class="overlay" id="settings" hidden><div class="panel">
+<div class="ph"><h3>My products</h3><button type="button" class="tb" data-close="settings">Close</button></div>
+<p class="muted small" id="setNote">Type a product name as it appears on TPX (for example "2026 Topps Finest Baseball Hobby Box" or "Surging Sparks Elite Trainer Box"). Changes are saved and picked up by the next refresh.</p>
+<div class="addrow"><input type="text" id="newProd" placeholder="Product name as on TPX" aria-label="Product name"><label class="small"><input type="checkbox" id="newCase"> it's a case</label><button type="button" class="tb primary" id="btnAdd">Add</button></div>
+<ul class="plist" id="plist"></ul>
+<div class="cadence"><b>Refresh the board</b> <select id="cadence" aria-label="Refresh cadence"><option value="1">every hour</option><option value="2">every 2 hours</option><option value="4">every 4 hours</option><option value="12">every 12 hours</option><option value="24">once a day</option><option value="0">paused</option></select>
+<span class="muted small">Hourly is the fastest the cloud scheduler allows. For a live 2-minute refresh run it on your own machine: <code>edge dashboard watchlist.live.yaml --refresh 120 --open</code>.</span></div>
+<div class="small" id="setStatus"></div>
+</div></div>
 <footer class="page">View only. This page never places, lists or cancels anything. {refresh_note} Green pill = the better price right now. Add <code>#tv</code> to the link for the big-screen view.</footer>
 </main>
 <script id="meta" type="application/json">{data}</script>
@@ -783,5 +821,32 @@ html.tv .tape{{display:none}}
 (function(){{
 if(location.hash==='#tv')document.documentElement.classList.add('tv');
 window.addEventListener('hashchange',function(){{document.documentElement.classList.toggle('tv',location.hash==='#tv');}});
+var $=function(id){{return document.getElementById(id);}};
+function show(id,on){{$(id).hidden=!on;}}
+$('btnHelp').addEventListener('click',function(){{show('help',true);}});
+$('btnSettings').addEventListener('click',function(){{show('settings',true);}});
+Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{show(b.dataset.close,false);}});}});
+document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{show('help',false);show('settings',false);}}}});
+try{{if(!localStorage.getItem('seenHelp')&&location.hash!=='#tv'){{show('help',true);localStorage.setItem('seenHelp','1');}}}}catch(e){{}}
+/* My products + cadence: shared settings kept in the page's database (owner/editors write). */
+var meta=JSON.parse($('meta').textContent||'{{}}');
+var state={{products:(meta.products||[]).map(function(n){{return {{name:n}};}}),hours:1,canWrite:null,db:null}};
+function renderList(){{var ul=$('plist');ul.innerHTML='';state.products.forEach(function(p,i){{var li=document.createElement('li');
+var sp=document.createElement('span');sp.textContent=p.name+(p.is_case?'  (case)':'');li.appendChild(sp);
+if(state.canWrite!==false){{var b=document.createElement('button');b.type='button';b.className='tb x';b.textContent='Remove';b.addEventListener('click',function(){{state.products.splice(i,1);save('Removed');}});li.appendChild(b);}}
+ul.appendChild(li);}});$('cadence').value=String(state.hours);}}
+function status(t){{$('setStatus').textContent=t;}}
+var saving=false;
+function save(what){{renderList();if(!state.db){{status('Settings cannot be saved from this view.');return;}}if(saving)return;saving=true;
+state.db.doc('settings/board').set({{products:state.products,hours:state.hours,updated:new Date().toISOString()}}).then(function(){{status(what+'. Saved; the next refresh uses it.');}})
+.catch(function(e){{status(e&&e.code==='invalid_argument'?'Only the board owner can change this.':'Could not save ('+(e&&e.code||'error')+'). Try again.');if(e&&e.code==='invalid_argument'){{state.canWrite=false;renderList();}}}}).then(function(){{saving=false;}});}}
+$('btnAdd').addEventListener('click',function(){{var n=$('newProd').value.trim();if(!n)return;if(state.products.some(function(p){{return p.name.toLowerCase()===n.toLowerCase();}})){{status('Already on the list.');return;}}
+state.products.push($('newCase').checked?{{name:n,is_case:true}}:{{name:n}});$('newProd').value='';$('newCase').checked=false;save('Added '+n);}});
+$('newProd').addEventListener('keydown',function(e){{if(e.key==='Enter')$('btnAdd').click();}});
+$('cadence').addEventListener('change',function(){{state.hours=parseInt($('cadence').value,10);save('Refresh set');}});
+renderList();
+if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db)return;state.db=db;
+db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d){{if(Array.isArray(d.products))state.products=d.products.slice();if(typeof d.hours==='number')state.hours=d.hours;renderList();}}}},function(){{}});}});
+claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false){{$('btnAdd').disabled=true;$('cadence').disabled=true;status('You can view the list; only the board owner can change it.');}}renderList();}});}});}}
 }})();
 </script></body></html>"""

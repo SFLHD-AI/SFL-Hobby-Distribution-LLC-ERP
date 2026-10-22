@@ -34,8 +34,9 @@ def test_dashboard_renders_demo(tmp_path):
 
 def test_dashboard_has_no_action_controls(tmp_path):
     page, _ = _run(tmp_path)
-    assert not re.search(r"<(form|button)\b", page, re.I)
-    assert "fetch(" not in page and "XMLHttpRequest" not in page
+    # Page controls (help, product list) are fine; nothing may submit anywhere or call a marketplace.
+    assert not re.search(r"<form\b", page, re.I)
+    assert "fetch(" not in page and "XMLHttpRequest" not in page and "tradepost.co/graphql" not in page
 
 
 def test_actions_toggle_is_shown(tmp_path):
