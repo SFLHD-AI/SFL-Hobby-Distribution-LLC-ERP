@@ -46,5 +46,4 @@ def test_dashboard_shows_pct_of_tcgplayer(service):
         a.tpx.tcg_market = 20000
         a.tpx.raw["product_meta"] = {"asset_type": "sealed_tcg"}  # TCG tiles compare against TCGplayer
     page = render(assessments, source="demo")
-    assert "vs TCGplayer $200.00" in page
-    assert "Buy TPX" in page and "%" in page
+    assert '"tcg":{"market":20000' in page  # the page shows bids/asks as % of this

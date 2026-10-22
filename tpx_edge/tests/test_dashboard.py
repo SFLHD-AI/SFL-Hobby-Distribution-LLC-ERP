@@ -27,7 +27,7 @@ def test_dashboard_renders_demo(tmp_path):
     assert "Sample data" in page  # demo is always labelled
     assert "Actions: OFF" in page
     assert "2024 Topps Chrome Baseball Hobby Box" in page
-    assert page.count("<svg") >= 3  # one price chart per product
+    assert '"closes":[' in page  # price history embedded for the page's charts
     rows = [json.loads(l) for l in hist.read_text().splitlines()]
     assert rows and all(r["source"] == "demo" for r in rows)
 
@@ -48,7 +48,7 @@ def test_history_accumulates_into_edge_trend(tmp_path):
     _run(tmp_path)
     page, hist = _run(tmp_path)
     assert len(hist.read_text().splitlines()) == 12  # 6 product/market rows x 2 runs
-    assert 'aria-label="price trend"' in page  # the page keeps its per-product trend; the edge log only accumulates
+    assert '"outlook":{' in page  # each product carries its trend analysis
 
 
 def test_chart_helpers_handle_empty_and_flat():

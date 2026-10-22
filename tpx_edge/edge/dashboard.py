@@ -481,170 +481,52 @@ def _initials(name: str) -> str:
     return "".join(w[0] for w in words[:2]).upper() or "?"
 
 
-def squarify(weights: list[tuple[str, float]], x: float, y: float, w: float, h: float) -> dict[str, tuple[float, float, float, float]]:
-    """Squarified treemap: rects (in the units of w/h) for weights sorted descending."""
-    out: dict[str, tuple[float, float, float, float]] = {}
-    total = sum(a for _, a in weights) or 1.0
-    scaled = [(k, a / total * w * h) for k, a in sorted(weights, key=lambda t: -t[1])]
-    _squarify_layout(scaled, x, y, w, h, out)
-    return out
+def _num(v):
+    """Decimal/None -> JSON-friendly."""
+    if v is None:
+        return None
+    if isinstance(v, Decimal):
+        return float(v)
+    return v
 
 
-def _worst(row: list[float], length: float) -> float:
-    s = sum(row)
-    if not s or not length:
-        return float("inf")
-    return max(length * length * max(row) / (s * s), s * s / (length * length * min(row)))
+def product_payload(st: Story) -> dict:
+    """Everything the page needs for one product, as plain JSON."""
+    from .outlook import analyze
 
-
-def _squarify_layout(items, x, y, w, h, out) -> None:
-    if not items:
-        return
-    if len(items) == 1:
-        out[items[0][0]] = (x, y, w, h)
-        return
-    vertical = w >= h  # lay a column along the short side
-    length = h if vertical else w
-    row: list = []
-    rest = list(items)
-    while rest:
-        cand = row + [rest[0]]
-        if not row or _worst([c[1] for c in cand], length) <= _worst([c[1] for c in row], length):
-            row = cand
-            rest = rest[1:]
-        else:
-            break
-    area = sum(c[1] for c in row)
-    if vertical:
-        cw = area / h
-        yy = y
-        for k, a in row:
-            hh = a / cw
-            out[k] = (x, yy, cw, hh)
-            yy += hh
-        _squarify_layout(rest, x + cw, y, w - cw, h, out)
-    else:
-        rh = area / w
-        xx = x
-        for k, a in row:
-            ww = a / rh
-            out[k] = (xx, y, ww, rh)
-            xx += ww
-        _squarify_layout(rest, x, y + rh, w, h - rh, out)
-
-
-def tile_chart(closes: list[dict], up: bool) -> str:
-    """Price line with a soft fill and volume bars behind it, stretched to the tile."""
-    pts = [(c.get("close"), c.get("volume") or 0) for c in closes if c.get("close") is not None][-30:]
-    if len(pts) < 2:
-        return '<svg class="tchart" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend"><text x="150" y="55" text-anchor="middle" class="nodata">No price history</text></svg>'
-    prices = [p for p, _ in pts]
-    vols = [v for _, v in pts]
-    lo, hi = min(prices), max(prices)
-    span = (hi - lo) or 1
-    n = len(pts)
-    step = 300 / (n - 1)
-    xs = [i * step for i in range(n)]
-    ys = [92 - (p - lo) / span * 74 for p in prices]
-    vmax = max(vols) or 1
-    bw = max(step * 0.7, 2)
-    bars = "".join(f'<rect x="{x - bw / 2:.1f}" y="{100 - v / vmax * 40:.1f}" width="{bw:.1f}" height="{v / vmax * 40:.1f}"/>'
-                   for x, v in zip(xs, vols) if v)
-    line = " ".join(f'{"M" if i == 0 else "L"}{x:.1f},{y:.1f}' for i, (x, y) in enumerate(zip(xs, ys)))
-    fill = f'{line} L300,100 L0,100 Z'
-    cls = "up" if up else "down"
-    return (f'<svg class="tchart {cls}" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend">'
-            f'<g class="vol">{bars}</g><path class="area" d="{fill}"/><path class="line" d="{line}" vector-effect="non-scaling-stroke"/></svg>')
-
-
-def _strip(st: Story) -> str:
-    """The decision strip: the venue-vs-venue comparison this group cares about,
-    then one line on what (if anything) to do."""
     v = st.v
-    g = _group(v)
-    dn_raw = v.dn.raw if v.dn else {}
-    case = ""
-    if dn_raw.get("case_bid") or dn_raw.get("case_ask"):
-        bpc = dn_raw.get("boxes_per_case")
-        case = (f'<span class="pill case" title="Dealernet case offers, priced per box; a case trades at a premium and needs a full case to fill">'
-                f'Case{f" ×{bpc}" if bpc else ""}: pays {_usd(dn_raw.get("case_bid"))} · sells {_usd(dn_raw.get("case_ask"))}</span>')
-    if g == "tcg":
-        tpx_pct, dn_pct = pct_of(v.tpx_ask, v.tcg), pct_of(v.dn_ask, v.tcg)
-        best = None
-        if v.tpx_ask and v.dn_ask:
-            best = "tpx" if v.tpx_ask <= v.dn_ask else "dn"
-        elif v.tpx_ask or v.dn_ask:
-            best = "tpx" if v.tpx_ask else "dn"
-        head = (f'<span class="lbl">vs TCGplayer {_usd(v.tcg)}</span>' if v.tcg
-                else '<span class="lbl muted" title="Add TCGPLAYER_PUBLIC_KEY / PRIVATE_KEY to compare against market">TCGplayer market: keys not set</span>')
-        cmp_ = (head
-                + f'<span class="pill {"best" if best == "tpx" else ""}">Buy TPX {_usd(v.tpx_ask)}{f" · {tpx_pct}%" if tpx_pct is not None else ""}</span>'
-                + f'<span class="pill {"best" if best == "dn" else ""}">Buy DN {_usd(v.dn_ask)}{f" · {dn_pct}%" if dn_pct is not None else ""}</span>'
-                + case)
-    else:
-        bids = [b for b in (v.tpx_bid, v.dn_bid) if b]
-        asks = [a for a in (v.tpx_ask, v.dn_ask) if a]
-        hb, la = (max(bids) if bids else None), (min(asks) if asks else None)
-
-        def cell(label, val, best_):
-            return f'<span class="pill {"best" if best_ else ""}">{label} {_usd(val)}</span>'
-        cmp_ = ('<span class="lbl">TPX</span>' + cell("pays", v.tpx_bid, v.tpx_bid and v.tpx_bid == hb) + cell("sells", v.tpx_ask, v.tpx_ask and v.tpx_ask == la)
-                + '<span class="lbl">DN</span>' + cell("pays", v.dn_bid, v.dn_bid and v.dn_bid == hb) + cell("sells", v.dn_ask, v.dn_ask and v.dn_ask == la)
-                + case)
-    act = st.compact
-    return f'<div class="strip"><div class="cmp">{cmp_}</div><div class="act {st.cls}">{act}</div></div>'
-
-
-def _tile(st: Story, rect: tuple[float, float, float, float], size: str) -> str:
-    v = st.v
-    x, y, w, h = rect
-    px = v.last or v.fv or v.tpx_bid or v.dn_bid
-    up = (v.chg30 or ZERO) >= 0
     m = _meta(v)
-    img = (f'<img class="thumb" src="{m["image"]}" alt="">' if m.get("image")
-           else f'<span class="thumb ph">{_e(_initials(v.name))}</span>')
-    chg = (f'<span class="chg {"up" if up else "down"}">{"↗" if up else "↘"} {_pct(abs(v.chg30), False, 2)}</span>'
-           if v.chg30 is not None else '<span class="chg flat">—</span>')
+    dn = v.dn
+    dn_raw = dn.raw if dn else {}
+    closes = [{"t": c.get("t"), "close": c.get("close"), "vwap": c.get("vwap"), "volume": c.get("volume") or 0} for c in v.closes]
     notional = sum((c.get("vwap") or c.get("close") or 0) * (c.get("volume") or 0) for c in v.closes) or ((v.vwap30 or v.last or 0) * v.vol30)
-    return (
-        f'<article class="tile {size} {st.cls}" style="left:{x:.3f}%;top:{y:.3f}%;width:{w:.3f}%;height:{h:.3f}%" data-search="{_e(v.name.lower())}">'
-        f'<header><div class="who">{img}<div class="names"><div class="series">{_e(_series_label(v))}</div><div class="name">{_e(v.name)}</div></div></div>'
-        f'<div class="px"><div class="price">{_usd(px)}</div>{chg}</div></header>'
-        f'{tile_chart(v.closes, up)}'
-        f'{_strip(st)}'
-        f'<footer><span><i>Volume</i>{_compact(notional)}</span><span><i>Last sale</i><b class="{"up" if up else "down"}">{_usd(v.last)}</b></span><span><i>30D sold</i>{_compact(v.vol30, False)}</span></footer>'
-        f'</article>'
-    )
-
-
-def _board(stories: list[Story], aspect: float) -> str:
-    """One treemap: tiles sized by 30-day TPX dollar volume (floored so every product shows)."""
-    if not stories:
-        return '<div class="empty">No products in this group.</div>'
-    weights = []
-    for st in stories:
-        v = st.v
-        notional = sum((c.get("vwap") or c.get("close") or 0) * (c.get("volume") or 0) for c in v.closes) or ((v.vwap30 or v.last or 0) * v.vol30)
-        weights.append((v.name, float(notional)))
-    total = sum(a for _, a in weights) or 1.0
-    # Floor so every product shows; cap so one runaway product cannot own the board.
-    weights = [(k, min(max(a, total * 0.03), total * 0.22)) for k, a in weights]
-    rects = squarify(weights, 0, 0, 100, 100 * aspect)
-    by_name = {st.v.name: st for st in stories}
-    tiles = []
-    for name, (x, y, w, h) in rects.items():
-        # size class from the rough pixel box on a 1400px-wide board
-        wpx, hpx = w / 100 * 1400, h / (100 * aspect) * 1400 * aspect
-        size = "xl" if wpx >= 420 and hpx >= 300 else "l" if wpx >= 280 and hpx >= 190 else "m" if wpx >= 160 and hpx >= 130 else "s"
-        tiles.append(_tile(by_name[name], (x, y / aspect, w, h / aspect), size))
-    return f'<div class="board" style="aspect-ratio:{1 / aspect:.4f}">{"".join(tiles)}</div>'
+    out = analyze(closes, tpx_bid_units=v.primary.tpx.bid_depth_units, tpx_ask_units=v.primary.tpx.ask_depth_units,
+                  dn_bid_cents=v.dn_bid, dn_ask_cents=v.dn_ask, last_cents=v.last)
+    return {
+        "id": v.primary.tpx.product_id, "name": v.name, "group": _group(v), "series": _series_label(v),
+        "image": m.get("image"), "initials": _initials(v.name), "unit": st.unit, "is_case": bool(m.get("is_case")),
+        "price": v.last or v.fv or v.tpx_bid or v.dn_bid, "last": v.last, "last_at": v.last_at.isoformat() if v.last_at else None,
+        "chg30": _num(v.chg30), "vol30": v.vol30, "trades30": v.trades30, "notional": int(notional), "vwap30": v.vwap30,
+        "hi24": v.hi24, "lo24": v.lo24, "fv": v.fv, "closes": closes,
+        "tpx": {"bid": v.tpx_bid, "ask": v.tpx_ask, "bid_units": v.primary.tpx.bid_depth_units, "ask_units": v.primary.tpx.ask_depth_units,
+                "markets": [{"name": a.tpx_market.replace("TPX:", ""), "vaulted": bool(a.tpx_is_vaulted),
+                             "bid": a.tpx.best_bid, "ask": a.tpx.best_ask, "bid_units": a.tpx.bid_depth_units, "ask_units": a.tpx.ask_depth_units}
+                            for a in v.items]},
+        "dn": ({"bid": v.dn_bid, "ask": v.dn_ask, "bid_qty": dn.bid_depth_units, "ask_qty": dn.ask_depth_units,
+                "case_bid": dn_raw.get("case_bid"), "case_ask": dn_raw.get("case_ask"), "bpc": dn_raw.get("boxes_per_case"),
+                "url": dn_raw.get("url"), "page": dn_raw.get("product")} if dn else None),
+        "tcg": ({"market": v.tcg, "low": v.tcg_low} if v.tcg else None),
+        "cls": st.cls, "call": st.compact,
+        "story": {"badge": st.badge, "headline": st.headline, "steps": st.steps, "profit": st.profit, "why": st.why},
+        "outlook": out.as_dict(),
+    }
 
 
 # ---------------------------------------------------------------------------
 def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool = False,
            history: Optional[dict] = None, margin: Optional[Decimal] = None,
            generated_at: Optional[datetime] = None, refresh_s: Optional[int] = None,
-           warnings: Sequence[str] = ()) -> str:
+           warnings: Sequence[str] = (), universe: Optional[Sequence[dict]] = None) -> str:
     history = history or {}
     generated_at = generated_at or datetime.now(timezone.utc)
     by_product: dict[str, list[Assessment]] = defaultdict(list)
@@ -652,10 +534,17 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
         by_product[a.product_name].append(a)
     views = [ProductView(p, items, margin, history) for p, items in by_product.items()]
     stories = [Story(v) for v in views]
-    tcg = [s for s in stories if _group(s.v) == "tcg"]
-    sports = [s for s in stories if _group(s.v) == "sports"]
-    now = [s for s in stories if s.cls in ("edge", "thin")]
-    post = [s for s in stories if s.cls == "post"]
+    products = [product_payload(st) for st in stories]
+    # The search/hottest catalogue: every product TPX lists, ranked by 30-day dollar volume.
+    uni = [{"id": r["id"], "name": r["name"], "group": "sports" if "wax" in str(r.get("asset_type", "")) else "tcg",
+            "vol": r.get("volume_cents") or 0, "units": r.get("units") or 0, "last": r.get("last_cents"),
+            "chg": _num(r.get("change_pct")), "set": r.get("set")} for r in (universe or [])]
+    known = {p["id"] for p in products}
+    for p in products:  # make sure every priced product is searchable even if the scan missed it
+        if p["id"] not in known or not any(u["id"] == p["id"] for u in uni):
+            uni.append({"id": p["id"], "name": p["name"], "group": p["group"], "vol": p["notional"], "units": p["vol30"],
+                        "last": p["last"], "chg": p["chg30"], "set": p["series"]})
+    uni.sort(key=lambda u: -(u["vol"] or 0))
 
     banner = ""
     if source != "live":
@@ -666,26 +555,13 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
                else '<span class="pill" title="Set ACTIONS_ENABLED=true to allow features that act on a marketplace">Actions: OFF (view only)</span>')
     meta_refresh = f'<meta http-equiv="refresh" content="{int(refresh_s)}">' if refresh_s else ""
     live = ('<span class="live"><i></i>LIVE</span>' if source == "live" else '<span class="live demo"><i></i>DEMO</span>')
-    data = json.dumps({"generated_at": generated_at.isoformat(), "source": source,
-                       "products": [v.name for v in views]})
-
-    def aspect_for(n: int) -> float:
-        return 0.42 if n <= 4 else 0.5 if n <= 8 else 0.58
-
-    sections = []
-    if tcg:
-        sections.append(f'<section><h2>Pokémon &amp; One Piece <span class="sub">which venue is cheaper to buy, judged against TCGplayer market</span></h2>{_board(tcg, aspect_for(len(tcg)))}</section>')
-    if sports:
-        sections.append(f'<section><h2>Sports <span class="sub">Dealernet pays / sells vs TPX pays / sells</span></h2>{_board(sports, aspect_for(len(sports)))}</section>')
-    if not sections:
-        sections.append('<p class="muted">No products.</p>')
-    counts = (f'<span class="count pos">{len(now)} ready now</span><span class="count warn">{len(post)} post &amp; wait</span>'
-              f'<span class="count muted">{len(stories) - len(now) - len(post)} nothing to do</span>')
+    payload = {"generated_at": generated_at.isoformat(), "source": source,
+               "margin_pct": float(Decimal(margin) * 100) if margin is not None else 8.0,
+               "products": products, "universe": uni, "warnings": list(warnings)}
     return TEMPLATE.format(
         meta_refresh=meta_refresh, generated=_e(generated_at.strftime("%b %d, %Y · %H:%M UTC")), live=live,
-        actions=actions, banner=banner + warn_html, ticker=_ticker(views), counts=counts,
-        margin=f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%", sections="".join(sections), data=data,
-        n_sections={1: "one", 2: "two"}.get(len([x for x in (tcg, sports) if x]), "one"),
+        actions=actions, banner=banner + warn_html, data=json.dumps(payload, separators=(",", ":")).replace("</", "<\\/"),
+        margin=f"{Decimal(margin) * 100:.0f}%" if margin is not None else "8%",
         refresh_note=(f"Refreshes every {refresh_s} s." if refresh_s else "Re-run <code>edge dashboard</code> to refresh."),
     )
 
@@ -696,43 +572,32 @@ TEMPLATE = """<!doctype html>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
-/* Heat-board: near-black ground, charcoal tiles, red/green for direction, one amber for "do this". */
-:root{{--bg:#0b0b0c;--tile:#1f1f22;--tile-2:#26262a;--ink:#f2f2f3;--muted:#8d8d94;--line:#2c2c31;
---up:#3ddc84;--down:#ff4d6a;--flat:#8d8d94;--accent:#f5b63a;--accent-ink:#1a1200;--best:#1f3a2a;--banner:#2a2410;
+/* Always dark: a trading screen, by choice. Green/red for direction, one amber for "do this". */
+:root{{--bg:#0a0a0b;--tile:#1c1c20;--tile-2:#242428;--ink:#f2f2f3;--muted:#8c8c95;--line:#2a2a30;
+--up:#3ddc84;--down:#ff4d6a;--flat:#8c8c95;--accent:#f5b63a;--accent-ink:#1a1200;--best:#17331f;--banner:#2a2410;
 --sans:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;color-scheme:dark}}
-@media (prefers-color-scheme:light){{:root:not([data-theme="dark"]){{--bg:#eef0f3;--tile:#ffffff;--tile-2:#f3f4f7;--ink:#141518;--muted:#656a75;--line:#dcdfe5;
---up:#15934f;--down:#d8243f;--flat:#656a75;--accent:#b7791f;--accent-ink:#ffffff;--best:#dff3e6;--banner:#fff4d6;color-scheme:light}}}}
-:root[data-theme="light"]{{--bg:#eef0f3;--tile:#ffffff;--tile-2:#f3f4f7;--ink:#141518;--muted:#656a75;--line:#dcdfe5;
---up:#15934f;--down:#d8243f;--flat:#656a75;--accent:#b7791f;--accent-ink:#ffffff;--best:#dff3e6;--banner:#fff4d6;color-scheme:light}}
-*{{box-sizing:border-box}}html,body{{margin:0}}
-body{{background:var(--bg);color:var(--ink);font:14px/1.4 var(--sans);padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:0 40px;font-variant-numeric:tabular-nums}}
-main{{max-width:1600px;margin:0 auto}}
-h1{{font-size:18px;font-weight:700;margin:0}}
-h2{{font-size:15px;font-weight:700;margin:18px 0 8px;display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}}
-h2 .sub{{font-size:12px;font-weight:500;color:var(--muted)}}
-.muted{{color:var(--muted)}}.pos,.up{{color:var(--up)}}.neg,.down{{color:var(--down)}}.flat{{color:var(--flat)}}
-.top{{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;justify-content:space-between;padding:12px 0 10px}}
-.top-l{{display:flex;align-items:center;gap:12px;flex-wrap:wrap}}
+*{{box-sizing:border-box}}html,body{{margin:0;height:100%}}
+body{{background:var(--bg);color:var(--ink);font:14px/1.4 var(--sans);padding-left:max(12px,env(safe-area-inset-left,0px));padding-right:max(12px,env(safe-area-inset-right,0px));padding-block:0 8px;font-variant-numeric:tabular-nums;display:flex;flex-direction:column;min-height:100vh}}
+main{{flex:1;display:flex;flex-direction:column;min-height:0}}
+h1{{font-size:17px;font-weight:700;margin:0;white-space:nowrap}}
+.muted{{color:var(--muted)}}.up{{color:var(--up)}}.down{{color:var(--down)}}.flat{{color:var(--flat)}}.small{{font-size:12px}}
+.top{{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;justify-content:space-between;padding:10px 0 8px}}
+.top-l,.top-r{{display:flex;align-items:center;gap:10px;flex-wrap:wrap}}
 .live{{font:600 11px/1 var(--sans);letter-spacing:.12em;color:var(--up);display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border:1px solid var(--up);border-radius:3px}}
 .live i{{width:7px;height:7px;border-radius:50%;background:var(--up);animation:blink 1.6s infinite}}
 .live.demo{{color:var(--accent);border-color:var(--accent)}}.live.demo i{{background:var(--accent)}}
 @keyframes blink{{50%{{opacity:.25}}}}
 .pill{{display:inline-block;border:1px solid var(--line);border-radius:4px;padding:3px 8px;font-size:11px;font-weight:600;color:var(--muted);white-space:nowrap}}
 .pill.on{{border-color:var(--down);color:var(--down)}}
-.count{{font-size:12px;font-weight:600;margin-left:12px}}.count.warn{{color:var(--accent)}}
-.banner{{background:var(--banner);border:1px solid var(--line);border-radius:4px;padding:10px 12px;margin:10px 0 0}}
-/* tape */
-.tape{{overflow:hidden;border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin:0 calc(-1 * max(16px,env(safe-area-inset-left,0px))) 0 calc(-1 * max(16px,env(safe-area-inset-right,0px)));padding:0 16px}}
-.tape-track{{display:inline-flex;white-space:nowrap;animation:tape 90s linear infinite;will-change:transform}}
-.tape:hover .tape-track{{animation-play-state:paused}}
-@keyframes tape{{from{{transform:translateX(0)}}to{{transform:translateX(-50%)}}}}
-.tk{{display:inline-flex;gap:8px;align-items:baseline;padding:7px 16px;border-right:1px solid var(--line);font-size:12px}}
-.tk-n{{color:var(--muted);font-weight:500}}.tk-p{{font-weight:600}}.tk-c.pos{{color:var(--up)}}.tk-c.neg{{color:var(--down)}}
-@media (prefers-reduced-motion:reduce){{.tape-track{{animation:none;white-space:normal;flex-wrap:wrap}}.tape-track .tk:nth-child(n+1000){{display:none}}.live i{{animation:none}}}}
+.banner{{background:var(--banner);border:1px solid var(--line);border-radius:4px;padding:8px 12px;margin:0 0 8px;font-size:13px}}
+.tb{{font:600 12px var(--sans);color:var(--ink);background:var(--tile);border:1px solid var(--line);border-radius:6px;padding:6px 11px;cursor:pointer;white-space:nowrap}}
+.tb:hover{{background:var(--tile-2)}}.tb.primary{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}.tb.x{{color:var(--down)}}
+.seg{{display:inline-flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}}.seg .tb{{border:0;border-radius:0;background:transparent}}.seg .tb.on{{background:var(--tile-2);color:var(--accent)}}
+.counts{{display:flex;gap:10px;font-size:12px;font-weight:600}}.counts .warn{{color:var(--accent)}}
 /* board */
-.board{{position:relative;width:100%;max-width:100%}}
-.tile{{position:absolute;background:var(--tile);border:3px solid var(--bg);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-width:0;padding:10px 12px;gap:4px}}
-.tile:hover{{background:var(--tile-2)}}
+#board{{position:relative;flex:1;min-height:320px}}
+.tile{{position:absolute;background:var(--tile);border:3px solid var(--bg);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-width:0;padding:10px 12px;gap:4px;cursor:pointer;transition:background .15s}}
+.tile:hover{{background:var(--tile-2)}}.tile:focus-visible{{outline:2px solid var(--accent);outline-offset:-2px}}
 .tile header{{display:flex;justify-content:space-between;gap:10px;align-items:flex-start;position:relative;z-index:2}}
 .who{{display:flex;gap:10px;min-width:0;align-items:flex-start}}
 .thumb{{width:38px;height:38px;border-radius:7px;object-fit:cover;flex:none;background:var(--tile-2)}}
@@ -741,112 +606,215 @@ h2 .sub{{font-size:12px;font-weight:500;color:var(--muted)}}
 .name{{font-weight:700;font-size:15px;line-height:1.2;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}}
 .px{{text-align:right;flex:none}}.price{{font-weight:700;font-size:16px}}.chg{{font-size:12px;font-weight:600}}
 .tchart{{position:absolute;left:0;right:0;bottom:0;top:0;width:100%;height:100%;z-index:0;pointer-events:none}}
-.tchart .vol rect{{fill:var(--ink);opacity:.08}}.tchart .line{{fill:none;stroke-width:2.5}}.tchart .dot{{stroke:var(--bg);stroke-width:2}}
-.tchart.up .line{{stroke:var(--up)}}.tchart.up .dot{{fill:var(--up)}}.tchart.up .area{{fill:url(#g-up)}}
-.tchart.down .line{{stroke:var(--down)}}.tchart.down .dot{{fill:var(--down)}}.tchart.down .area{{fill:url(#g-down)}}
+.tchart .vol rect{{fill:var(--ink);opacity:.08}}.tchart .line{{fill:none;stroke-width:2.5}}
+.tchart.up .line{{stroke:var(--up)}}.tchart.up .area{{fill:url(#g-up)}}.tchart.down .line{{stroke:var(--down)}}.tchart.down .area{{fill:url(#g-down)}}
 .nodata{{fill:var(--muted);font-size:9px}}
-.strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:color-mix(in srgb,var(--tile) 78%,transparent);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
+.strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:rgba(28,28,32,.8);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
 .cmp{{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}}.lbl{{font-size:11px;font-weight:600;color:var(--muted);margin-right:2px}}
 .cmp .pill{{background:var(--tile);color:var(--ink);font-weight:500}}.cmp .pill.best{{background:var(--best);border-color:var(--up);color:var(--up);font-weight:700}}
 .cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}
 .act{{font-size:12px;font-weight:600;color:var(--muted)}}.act.edge,.act.thin{{color:var(--up)}}.act.post{{color:var(--accent)}}.act.behind{{color:var(--ink)}}
 .tile footer{{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;position:relative;z-index:2;margin-top:2px;text-shadow:0 1px 3px var(--bg)}}
-.tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}.tile footer b{{font-weight:700}}
-/* what each size shows */
-.tile.s header{{flex-direction:column;gap:4px}}.tile.s .px{{text-align:left;margin-top:auto}}.tile.s .series,.tile.s .strip,.tile.s footer{{display:none}}.tile.s .name{{font-size:12px;-webkit-line-clamp:3}}.tile.s .thumb{{width:30px;height:30px}}.tile.s .price{{font-size:14px}}
-.tile.m .series{{display:none}}.tile.m footer{{display:none}}.tile.m .name{{font-size:13px}}.tile.m .act{{font-size:11px}}.tile.m .cmp .pill{{padding:2px 6px;font-size:10px}}
-.tile.m .lbl.muted,.tile.m .pill.case,.tile.m .nodata,.tile.s .nodata{{display:none}}.tile.m .strip{{padding:4px 6px;gap:2px}}
-.tile.l footer{{display:none}}
-.tile.xl .name{{font-size:17px}}.tile.xl .price{{font-size:18px}}.tile.xl .chg{{font-size:13px}}
-.empty{{background:var(--tile);border:1px dashed var(--line);border-radius:8px;padding:22px;color:var(--muted)}}
-footer.page{{margin-top:22px;font-size:12px;color:var(--muted)}}code{{font-size:12px}}
-.tb{{font:600 12px var(--sans);color:var(--ink);background:var(--tile);border:1px solid var(--line);border-radius:5px;padding:5px 10px;cursor:pointer}}
-.tb:hover{{background:var(--tile-2)}}.tb.primary{{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}}
+.tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}
+.tile.s header{{flex-direction:column;gap:4px}}.tile.s .px{{text-align:left;margin-top:auto}}.tile.s .series,.tile.s .strip,.tile.s footer,.tile.s .nodata{{display:none}}.tile.s .name{{font-size:12px;-webkit-line-clamp:3}}.tile.s .thumb{{width:30px;height:30px}}.tile.s .price{{font-size:14px}}
+.tile.m .series,.tile.m footer,.tile.m .lbl.muted,.tile.m .pill.case,.tile.m .nodata{{display:none}}.tile.m .name{{font-size:13px}}.tile.m .act{{font-size:11px}}.tile.m .cmp .pill{{padding:2px 6px;font-size:10px}}.tile.m .strip{{padding:4px 6px;gap:2px}}
+.tile.l footer{{display:none}}.tile.xl .name{{font-size:17px}}.tile.xl .price{{font-size:18px}}.tile.xl .chg{{font-size:13px}}
+.tile.pending{{border-style:dashed;border-color:var(--line);background:transparent}}.tile.pending .name{{color:var(--muted)}}
+.empty{{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;text-align:center;color:var(--muted);padding:20px}}
+.empty h2{{margin:0;font-size:22px;color:var(--ink)}}.empty p{{margin:0;max-width:46ch}}
+/* overlays */
 .overlay[hidden]{{display:none!important}}
-.overlay{{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:max(16px,env(safe-area-inset-top,0px)) max(16px,env(safe-area-inset-right,0px)) 16px max(16px,env(safe-area-inset-left,0px));overflow:auto}}
-.panel{{background:var(--tile);border:1px solid var(--line);border-radius:12px;padding:18px 20px;max-width:720px;width:100%;margin-top:4vh;font-size:14px}}
-.ph{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px}}.ph h3{{margin:0;font-size:18px}}
-.guide{{padding-left:20px;display:flex;flex-direction:column;gap:10px;margin:0}}.guide li{{line-height:1.5}}.guide .act{{display:inline;font-weight:600}}
-.addrow{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}}.addrow input[type=text]{{flex:1;min-width:200px;padding:7px 10px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}}
-.plist{{list-style:none;padding:0;margin:0 0 14px;display:flex;flex-direction:column;gap:4px;max-height:40vh;overflow:auto}}
-.plist li{{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px}}
-.plist .x{{color:var(--down)}}.cadence{{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:12px}}
-.cadence select{{padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}}
-#setStatus{{margin-top:8px;min-height:1.2em}}
-html.tv .top .tb{{display:none}}
-@media (max-width:760px){{.board{{aspect-ratio:auto!important;display:flex;flex-direction:column;gap:8px}}.tile{{position:static;width:auto!important;height:200px!important;border:0}}.tile.s .series,.tile.s .strip,.tile.m .series{{display:flex}}.tile.s header{{flex-direction:row}}}}
-/* big-screen mode: #tv */
-html.tv body{{font-size:16px}}html.tv main{{max-width:none}}html.tv footer.page,html.tv .banner{{display:none}}
-html.tv .name{{font-size:17px}}html.tv .tile.xl .name{{font-size:21px}}html.tv .price{{font-size:19px}}html.tv .tile.xl .price{{font-size:24px}}
-html.tv .cmp .pill{{font-size:13px}}html.tv .act{{font-size:14px}}
-html.tv main.two .board{{aspect-ratio:auto!important;height:calc(50vh - 78px)}}html.tv main.one .board{{aspect-ratio:auto!important;height:calc(100vh - 150px)}}
-html.tv .tape{{display:none}}
-</style></head><body><main class="{n_sections}">
+.overlay{{position:fixed;inset:0;background:rgba(0,0,0,.66);z-index:50;display:flex;align-items:flex-start;justify-content:center;padding:max(14px,env(safe-area-inset-top,0px)) max(14px,env(safe-area-inset-right,0px)) 14px max(14px,env(safe-area-inset-left,0px));overflow:auto}}
+.panel{{background:var(--tile);border:1px solid var(--line);border-radius:12px;padding:16px 18px;max-width:760px;width:100%;margin-top:3vh;font-size:14px}}
+.panel.wide{{max-width:1080px}}
+.ph{{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px;flex-wrap:wrap}}.ph h3{{margin:0;font-size:18px}}
+.guide{{padding-left:20px;display:flex;flex-direction:column;gap:9px;margin:0}}.guide li{{line-height:1.5}}.guide .act{{display:inline;font-weight:600}}
+.srch{{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}}.srch input{{flex:1;min-width:220px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}}
+.rows{{display:flex;flex-direction:column;gap:3px;max-height:52vh;overflow:auto;margin-top:6px}}
+.r{{display:grid;grid-template-columns:minmax(0,1fr) 90px 80px 90px;gap:10px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:13px}}
+.r .rn{{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}.r .rs{{font-size:11px;color:var(--muted)}}.r .num{{text-align:right}}.r.on{{border-color:var(--accent)}}
+.r .tb{{padding:4px 8px;font-size:11px}}
+.cadence{{display:flex;gap:10px;align-items:center;flex-wrap:wrap;border-top:1px solid var(--line);padding-top:10px;margin-top:10px}}
+select{{padding:5px 8px;border:1px solid var(--line);border-radius:5px;background:var(--bg);color:var(--ink);font:inherit}}
+#setStatus{{margin-top:6px;min-height:1.2em;font-size:12px}}
+/* detail */
+.dhead{{display:flex;gap:14px;align-items:center}}.dhead .thumb{{width:56px;height:56px}}.dhead h3{{font-size:20px}}
+.dprice{{margin-left:auto;text-align:right}}.dprice b{{font-size:26px;display:block}}
+.dgrid{{display:grid;grid-template-columns:minmax(0,3fr) minmax(280px,2fr);gap:14px;margin-top:12px}}
+.dchart{{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px;min-width:0}}.dchart svg{{width:100%;height:auto;display:block}}
+.dchart .axis{{fill:var(--muted);font-size:10px}}.dchart .grid{{stroke:var(--line)}}.dchart .vol rect{{fill:var(--ink);opacity:.12}}.dchart .line{{fill:none;stroke-width:2}}
+.dchart .ref{{stroke-dasharray:5 4;stroke-width:1.3}}.dchart .ref.dn{{stroke:var(--accent)}}.dchart .ref.tcg{{stroke:#bc8cff}}.dchart .ref.fv{{stroke:var(--muted)}}
+.legend{{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--muted);margin-top:4px}}.legend i{{display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}}
+.metrics{{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:8px;overflow:hidden}}
+.m{{background:var(--tile);padding:8px 10px;min-width:0}}.m i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted);text-transform:uppercase;letter-spacing:.06em}}.m b{{font-size:15px}}.m .sub{{font-size:11px;color:var(--muted)}}
+.outlook{{border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px}}
+.outlook h4{{margin:0 0 6px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}}
+.olabel{{font-size:22px;font-weight:700}}.olabel.Rising{{color:var(--up)}}.olabel.Falling{{color:var(--down)}}
+.outlook ul{{margin:8px 0 0;padding-left:18px;display:flex;flex-direction:column;gap:4px}}.outlook .fine{{font-size:11px;color:var(--muted);margin-top:8px}}
+.callbox{{border-left:4px solid var(--line);padding:8px 12px;margin-top:12px;background:var(--bg);border-radius:0 8px 8px 0}}
+.callbox.edge,.callbox.thin{{border-left-color:var(--up)}}.callbox.post{{border-left-color:var(--accent)}}
+.callbox ol{{margin:6px 0;padding-left:20px}}.callbox .profit{{font-weight:700;color:var(--up)}}
+@media (max-width:760px){{#board{{position:static;min-height:0;display:flex;flex-direction:column;gap:8px}}.tile{{position:static;width:auto!important;height:200px!important;border:0}}.tile.s .series,.tile.s .strip,.tile.m .series{{display:flex}}.tile.s header{{flex-direction:row}}.dgrid{{grid-template-columns:1fr}}.r{{grid-template-columns:minmax(0,1fr) 80px}}.r .hide-sm{{display:none}}}}
+html.tv .top .tb,html.tv .counts,html.tv .seg{{display:none}}html.tv h1{{font-size:19px}}html.tv .name{{font-size:17px}}html.tv .tile.xl .name{{font-size:21px}}html.tv .price{{font-size:19px}}html.tv .tile.xl .price{{font-size:24px}}html.tv .cmp .pill{{font-size:13px}}html.tv .act{{font-size:14px}}
+</style></head><body><main>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
 <linearGradient id="g-up" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ddc84" stop-opacity=".45"/><stop offset="1" stop-color="#3ddc84" stop-opacity="0"/></linearGradient>
 <linearGradient id="g-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4d6a" stop-opacity=".45"/><stop offset="1" stop-color="#ff4d6a" stop-opacity="0"/></linearGradient>
 </defs></svg>
-<div class="top"><div class="top-l"><h1>TPX × Dealernet edge board</h1>{live}<span class="muted">Updated {generated}</span>{counts}</div>
-<div class="top-l"><span class="muted">tiles sized by 30-day TPX volume · {margin} profit target after fees &amp; shipping</span>{actions}
-<button type="button" class="tb" id="btnSettings" title="Choose the products on the board and how often it refreshes">⚙ My products</button>
-<button type="button" class="tb" id="btnHelp" title="How to read this board">? How to read</button></div></div>
-{ticker}
+<div class="top"><div class="top-l"><h1>TPX × Dealernet edge board</h1>{live}<span class="muted small">Updated {generated}</span><span class="counts" id="counts"></span></div>
+<div class="top-r"><span class="seg" id="groupSeg"><button type="button" class="tb on" data-g="all">All</button><button type="button" class="tb" data-g="tcg">Pokémon &amp; One Piece</button><button type="button" class="tb" data-g="sports">Sports</button></span>
+<button type="button" class="tb primary" id="btnAdd">+ Add products</button><button type="button" class="tb" id="btnHelp">? How to read</button>{actions}</div></div>
 {banner}
-{sections}
+<div id="board"></div>
 <div class="overlay" id="help" hidden><div class="panel">
 <div class="ph"><h3>How to read this board</h3><button type="button" class="tb" data-close="help">Close</button></div>
 <ol class="guide">
-<li><b>Each tile is one product.</b> Bigger tile = more money traded on TPX in the last 30 days. The chart behind it is the TPX price over 30 days; the faint bars are how much sold each day. <span class="up">Green</span> = price up over 30 days, <span class="down">red</span> = down.</li>
-<li><b>Top right of a tile:</b> the last TPX sale price and the 30-day change.</li>
-<li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy TPX $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one right now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each price also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
+<li><b>Each tile is one product you chose.</b> Bigger tile = more money traded on TPX in the last 30 days. The chart behind it is the TPX price over 30 days; the faint bars are daily units sold. <span class="up">Green</span> = up over 30 days, <span class="down">red</span> = down. <b>Click a tile</b> for the full chart, the numbers and the outlook.</li>
+<li><b>Top right of a tile:</b> last TPX sale price and the 30-day change.</li>
+<li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy TPX $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
 <li><b>Sports tiles</b> show what each venue <i>pays</i> (their best buy offer, where you would sell) and what it <i>sells</i> for (their best sell offer, where you would buy). The <span class="up">green pill</span> is the best price on each side.</li>
-<li><b>Amber "Case" pill:</b> Dealernet has case-only offers for this product, shown per box. A case needs a full case to fill and usually pays more than singles, so it is never used as the box price.</li>
-<li><b>The line under the pills is the call:</b><br><span class="act edge">▲ Buy … → sell … · +$ now</span> both prices are live, you can do the round trip now.<br><span class="act post">◆ Post TPX buy $x → sell DN $y · +$z/box</span> post that order on TPX; when it fills, sell to Dealernet at their price for the profit shown.<br><span class="act post">◆ Post TPX sell $x → buy DN $y</span> the reverse: post a sell on TPX, cover from Dealernet.<br><span class="muted">No profit: …</span> nothing to do on this product right now, and why.</li>
-<li><b>Every dollar figure is after fees and shipping</b>, aiming for the profit target in the header. Nothing on this page places an order.</li>
-<li><b>Big screen:</b> add <code>#tv</code> to the link. <b>Your products:</b> the ⚙ button lets you add or remove products and set how often the board refreshes.</li>
+<li><b>Amber "Case" pill:</b> Dealernet case-only offers, shown per box. A case needs a full case to fill and usually pays more than singles, so it never sets the box price.</li>
+<li><b>The line under the pills is the call:</b> <span class="act edge">▲ Buy … → sell … · +$ now</span> both prices are live, you can do the round trip now. <span class="act post">◆ Post TPX buy $x → sell DN $y · +$z/box</span> post that order on TPX; when it fills, sell to Dealernet for the profit shown. <span class="muted">No profit: …</span> nothing to do, and why.</li>
+<li><b>Outlook</b> (inside a tile): Rising / Falling / Sideways from the last 30 days of TPX trades: trend, momentum, volume, range position and today's order book. It describes the past; it is not advice.</li>
+<li><b>Every dollar figure is after fees and shipping</b>, aiming for the {margin} target. Nothing on this page places an order. Add <code>#tv</code> to the link for the big-screen view.</li>
 </ol></div></div>
-<div class="overlay" id="settings" hidden><div class="panel">
-<div class="ph"><h3>My products</h3><button type="button" class="tb" data-close="settings">Close</button></div>
-<p class="muted small" id="setNote">Type a product name as it appears on TPX (for example "2026 Topps Finest Baseball Hobby Box" or "Surging Sparks Elite Trainer Box"). Changes are saved and picked up by the next refresh.</p>
-<div class="addrow"><input type="text" id="newProd" placeholder="Product name as on TPX" aria-label="Product name"><label class="small"><input type="checkbox" id="newCase"> it's a case</label><button type="button" class="tb primary" id="btnAdd">Add</button></div>
-<ul class="plist" id="plist"></ul>
+<div class="overlay" id="add" hidden><div class="panel">
+<div class="ph"><h3>Add products</h3><div><span class="seg" id="addSeg"><button type="button" class="tb on" data-tab="hot">🔥 Hottest</button><button type="button" class="tb" data-tab="search">Search</button><button type="button" class="tb" data-tab="mine">On my board</button></span> <button type="button" class="tb" data-close="add">Done</button></div></div>
+<div class="srch"><input type="search" id="q" placeholder="Search every product TPX lists…" aria-label="Search products"><span class="seg" id="addGroup"><button type="button" class="tb on" data-g="all">All</button><button type="button" class="tb" data-g="tcg">Pokémon &amp; OP</button><button type="button" class="tb" data-g="sports">Sports</button></span></div>
+<div class="rows" id="rows"></div>
 <div class="cadence"><b>Refresh the board</b> <select id="cadence" aria-label="Refresh cadence"><option value="1">every hour</option><option value="2">every 2 hours</option><option value="4">every 4 hours</option><option value="12">every 12 hours</option><option value="24">once a day</option><option value="0">paused</option></select>
-<span class="muted small">Hourly is the fastest the cloud scheduler allows. For a live 2-minute refresh run it on your own machine: <code>edge dashboard watchlist.live.yaml --refresh 120 --open</code>.</span></div>
-<div class="small" id="setStatus"></div>
+<span class="muted small">Hourly is the fastest the cloud scheduler allows; for a 2-minute live feed run <code>edge dashboard --refresh 120 --open</code> on your own machine.</span></div>
+<div id="setStatus"></div>
 </div></div>
-<footer class="page">View only. This page never places, lists or cancels anything. {refresh_note} Green pill = the better price right now. Add <code>#tv</code> to the link for the big-screen view.</footer>
+<div class="overlay" id="detail" hidden><div class="panel wide" id="detailBody"></div></div>
+<footer class="muted small" id="foot">View only. Nothing here places, lists or cancels anything. {refresh_note}</footer>
 </main>
-<script id="meta" type="application/json">{data}</script>
+<script id="data" type="application/json">{data}</script>
 <script>
 (function(){{
+var D=JSON.parse(document.getElementById('data').textContent);
+var P=D.products, U=D.universe, byId={{}}, byName={{}};
+P.forEach(function(p){{byId[p.id]=p;byName[p.name.toLowerCase()]=p;}});
+var uniById={{}};U.forEach(function(u){{uniById[u.id]=u;}});
+var $=function(id){{return document.getElementById(id);}};
+var state={{selected:[],hours:1,group:'all',tab:'hot',addGroup:'all',db:null,canWrite:null,loaded:false}};
 if(location.hash==='#tv')document.documentElement.classList.add('tv');
 window.addEventListener('hashchange',function(){{document.documentElement.classList.toggle('tv',location.hash==='#tv');}});
-var $=function(id){{return document.getElementById(id);}};
-function show(id,on){{$(id).hidden=!on;}}
-$('btnHelp').addEventListener('click',function(){{show('help',true);}});
-$('btnSettings').addEventListener('click',function(){{show('settings',true);}});
-Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{show(b.dataset.close,false);}});}});
-document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{show('help',false);show('settings',false);}}}});
-try{{if(!localStorage.getItem('seenHelp')&&location.hash!=='#tv'){{show('help',true);localStorage.setItem('seenHelp','1');}}}}catch(e){{}}
-/* My products + cadence: shared settings kept in the page's database (owner/editors write). */
-var meta=JSON.parse($('meta').textContent||'{{}}');
-var state={{products:(meta.products||[]).map(function(n){{return {{name:n}};}}),hours:1,canWrite:null,db:null}};
-function renderList(){{var ul=$('plist');ul.innerHTML='';state.products.forEach(function(p,i){{var li=document.createElement('li');
-var sp=document.createElement('span');sp.textContent=p.name+(p.is_case?'  (case)':'');li.appendChild(sp);
-if(state.canWrite!==false){{var b=document.createElement('button');b.type='button';b.className='tb x';b.textContent='Remove';b.addEventListener('click',function(){{state.products.splice(i,1);save('Removed');}});li.appendChild(b);}}
-ul.appendChild(li);}});$('cadence').value=String(state.hours);}}
+function usd(c,d){{if(c==null)return '—';d=(d==null)?2:d;return '$'+(c/100).toLocaleString('en-US',{{minimumFractionDigits:d,maximumFractionDigits:d}});}}
+function pct(v,d){{if(v==null)return '—';d=(d==null)?1:d;return (v>=0?'+':'')+Number(v).toFixed(d)+'%';}}
+function compact(c,money){{if(c==null)return '—';var v=money?c/100:c,s=money?'$':'';var a=Math.abs(v);if(a>=1e9)return s+(v/1e9).toFixed(1)+'B';if(a>=1e6)return s+(v/1e6).toFixed(1)+'M';if(a>=1e3)return s+(v/1e3).toFixed(1)+'K';return s+Math.round(v).toLocaleString('en-US');}}
+function el(tag,cls,text){{var e=document.createElement(tag);if(cls)e.className=cls;if(text!=null)e.textContent=text;return e;}}
+function esc(s){{return String(s==null?'':s).replace(/[&<>"]/g,function(c){{return {{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c];}});}}
+/* ---- treemap (squarified) ---- */
+function squarify(items,x,y,w,h,out){{if(!items.length)return;if(items.length===1){{out[items[0].k]=[x,y,w,h];return;}}
+var vertical=w>=h,len=vertical?h:w,row=[],rest=items.slice();
+function worst(r){{var s=0,mx=0,mn=Infinity;r.forEach(function(i){{s+=i.a;mx=Math.max(mx,i.a);mn=Math.min(mn,i.a);}});if(!s||!len)return Infinity;return Math.max(len*len*mx/(s*s),s*s/(len*len*mn));}}
+while(rest.length){{var cand=row.concat([rest[0]]);if(!row.length||worst(cand)<=worst(row)){{row=cand;rest.shift();}}else break;}}
+var area=0;row.forEach(function(i){{area+=i.a;}});
+if(vertical){{var cw=area/h,yy=y;row.forEach(function(i){{var hh=i.a/cw;out[i.k]=[x,yy,cw,hh];yy+=hh;}});squarify(rest,x+cw,y,w-cw,h,out);}}
+else{{var rh=area/w,xx=x;row.forEach(function(i){{var ww=i.a/rh;out[i.k]=[xx,y,ww,rh];xx+=ww;}});squarify(rest,x,y+rh,w,h-rh,out);}}}}
+function layout(list,W,H){{var total=0;list.forEach(function(p){{total+=p.w;}});total=total||1;
+var items=list.map(function(p){{return {{k:p.id,a:Math.min(Math.max(p.w,total*0.03),total*0.22)}};}});var t2=0;items.forEach(function(i){{t2+=i.a;}});
+items.forEach(function(i){{i.a=i.a/t2*W*H;}});items.sort(function(a,b){{return b.a-a.a;}});var out={{}};squarify(items,0,0,W,H,out);return out;}}
+/* ---- tile pieces ---- */
+function chartSvg(closes,up,cls){{var pts=closes.filter(function(c){{return c.close!=null;}}).slice(-30);
+if(pts.length<2)return '<svg class="'+cls+'" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend"><text x="150" y="55" text-anchor="middle" class="nodata">No price history</text></svg>';
+var pr=pts.map(function(c){{return c.close;}}),vo=pts.map(function(c){{return c.volume||0;}}),lo=Math.min.apply(null,pr),hi=Math.max.apply(null,pr),span=(hi-lo)||1,n=pts.length,step=300/(n-1),vmax=Math.max.apply(null,vo)||1,bw=Math.max(step*0.7,2);
+var xs=pr.map(function(_,i){{return i*step;}}),ys=pr.map(function(p){{return 92-(p-lo)/span*74;}});
+var bars=vo.map(function(v,i){{return v?'<rect x="'+(xs[i]-bw/2).toFixed(1)+'" y="'+(100-v/vmax*40).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*40).toFixed(1)+'"/>':'';}}).join('');
+var line=xs.map(function(x,i){{return (i?'L':'M')+x.toFixed(1)+','+ys[i].toFixed(1);}}).join(' ');
+return '<svg class="'+cls+' '+(up?'up':'down')+'" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend"><g class="vol">'+bars+'</g><path class="area" d="'+line+' L300,100 L0,100 Z"/><path class="line" d="'+line+'" vector-effect="non-scaling-stroke"/></svg>';}}
+function strip(p){{var dn=p.dn||{{}},h='';
+var caseP=(dn.case_bid||dn.case_ask)?'<span class="pill case" title="Dealernet case offers, per box; a case needs a full case to fill">Case'+(dn.bpc?' ×'+dn.bpc:'')+': pays '+usd(dn.case_bid)+' · sells '+usd(dn.case_ask)+'</span>':'';
+if(p.group==='tcg'){{var ta=p.tpx.ask,da=dn.ask,best=(ta&&da)?(ta<=da?'tpx':'dn'):(ta?'tpx':(da?'dn':null));var tm=p.tcg&&p.tcg.market;
+var pc=function(v){{return tm&&v?' · '+(v/tm*100).toFixed(0)+'%':'';}};
+h='<span class="lbl'+(tm?'':' muted')+'">'+(tm?'vs TCGplayer '+usd(tm):'TCGplayer market: keys not set')+'</span><span class="pill'+(best==='tpx'?' best':'')+'">Buy TPX '+usd(ta)+pc(ta)+'</span><span class="pill'+(best==='dn'?' best':'')+'">Buy DN '+usd(da)+pc(da)+'</span>'+caseP;}}
+else{{var bids=[p.tpx.bid,dn.bid].filter(Boolean),asks=[p.tpx.ask,dn.ask].filter(Boolean),hb=bids.length?Math.max.apply(null,bids):null,la=asks.length?Math.min.apply(null,asks):null;
+var cell=function(l,v,b){{return '<span class="pill'+(b?' best':'')+'">'+l+' '+usd(v)+'</span>';}};
+h='<span class="lbl">TPX</span>'+cell('pays',p.tpx.bid,p.tpx.bid&&p.tpx.bid===hb)+cell('sells',p.tpx.ask,p.tpx.ask&&p.tpx.ask===la)+'<span class="lbl">DN</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb)+cell('sells',dn.ask,dn.ask&&dn.ask===la)+caseP;}}
+return '<div class="strip"><div class="cmp">'+h+'</div><div class="act '+p.cls+'">'+esc(p.call)+'</div></div>';}}
+function tile(p,r,W,H){{var up=(p.chg30||0)>=0,wpx=r[2]/100*W,hpx=r[3]/100*H,size=(wpx>=420&&hpx>=300)?'xl':(wpx>=280&&hpx>=190)?'l':(wpx>=160&&hpx>=130)?'m':'s';
+var a=el('article','tile '+size+' '+p.cls);a.tabIndex=0;a.style.cssText='left:'+r[0]+'%;top:'+r[1]+'%;width:'+r[2]+'%;height:'+r[3]+'%';a.dataset.id=p.id;
+var img=p.image?'<img class="thumb" src="'+p.image+'" alt="">':'<span class="thumb ph">'+esc(p.initials)+'</span>';
+var chg=p.chg30==null?'<span class="chg flat">—</span>':'<span class="chg '+(up?'up':'down')+'">'+(up?'↗':'↘')+' '+Math.abs(p.chg30).toFixed(2)+'%</span>';
+a.innerHTML='<header><div class="who">'+img+'<div class="names"><div class="series">'+esc(p.series)+'</div><div class="name">'+esc(p.name)+'</div></div></div><div class="px"><div class="price">'+usd(p.price)+'</div>'+chg+'</div></header>'+chartSvg(p.closes,up,'tchart')+strip(p)+'<footer><span><i>Volume</i>'+compact(p.notional,true)+'</span><span><i>Last sale</i><b class="'+(up?'up':'down')+'">'+usd(p.last)+'</b></span><span><i>30D sold</i>'+compact(p.vol30,false)+'</span></footer>';
+a.addEventListener('click',function(){{openDetail(p);}});a.addEventListener('keydown',function(e){{if(e.key==='Enter')openDetail(p);}});return a;}}
+function pendingTile(u,r){{var a=el('article','tile s pending');a.style.cssText='left:'+r[0]+'%;top:'+r[1]+'%;width:'+r[2]+'%;height:'+r[3]+'%';
+a.innerHTML='<header><div class="who"><span class="thumb ph">…</span><div class="names"><div class="name">'+esc(u.name)+'</div></div></div></header><div class="small muted">Prices arrive on the next refresh</div>';return a;}}
+/* ---- board ---- */
+function selectedProducts(){{var out=[];state.selected.forEach(function(s){{var p=(s.tpx_id&&byId[s.tpx_id])||byName[(s.name||'').toLowerCase()];
+if(p){{if(state.group==='all'||p.group===state.group)out.push({{p:p,id:p.id,w:p.notional||1}});}}
+else{{var u=(s.tpx_id&&uniById[s.tpx_id])||null;var g=u?u.group:null;if(state.group==='all'||g===state.group)out.push({{u:u||{{name:s.name,id:s.tpx_id||s.name}},id:s.tpx_id||s.name,w:1}});}}}});return out;}}
+function renderBoard(){{var b=$('board');b.innerHTML='';var list=selectedProducts();
+var now=0,post=0;list.forEach(function(x){{if(x.p){{if(x.p.cls==='edge'||x.p.cls==='thin')now++;else if(x.p.cls==='post')post++;}}}});
+$('counts').innerHTML=list.length?'<span class="up">'+now+' ready now</span><span class="warn">'+post+' post &amp; wait</span><span class="muted">'+(list.length-now-post)+' nothing to do</span>':'';
+if(!list.length){{var e=el('div','empty');e.innerHTML='<h2>'+(state.loaded?'Your board is empty':'Loading your board…')+'</h2><p>'+(state.loaded?'Add the products you trade. Pick from the hottest products on TPX by 30-day volume, or search every product TPX lists.':'')+'</p>';
+if(state.loaded){{var btn=el('button','tb primary','+ Add products');btn.type='button';btn.addEventListener('click',function(){{openAdd('hot');}});e.appendChild(btn);}}b.appendChild(e);return;}}
+var W=b.clientWidth||1400,H=b.clientHeight||700;var rects=layout(list,W,H);
+list.forEach(function(x){{var r=rects[x.id];if(!r)return;var pr=[r[0]/W*100,r[1]/H*100,r[2]/W*100,r[3]/H*100];b.appendChild(x.p?tile(x.p,pr,W,H):pendingTile(x.u,pr));}});}}
+window.addEventListener('resize',function(){{clearTimeout(window.__rt);window.__rt=setTimeout(renderBoard,150);}});
+/* ---- detail ---- */
+function bigChart(p){{var pts=p.closes.filter(function(c){{return c.close!=null;}});if(pts.length<2)return '<div class="muted" style="padding:30px;text-align:center">No price history in the last 30 days</div>';
+var W=640,H=240,L=46,R=10,T=12,B=28;var pr=pts.map(function(c){{return c.close;}}),vo=pts.map(function(c){{return c.volume||0;}});
+var refs=[];if(p.dn&&p.dn.bid)refs.push({{v:p.dn.bid,c:'dn',l:'DN pays'}});if(p.dn&&p.dn.ask)refs.push({{v:p.dn.ask,c:'dn',l:'DN sells'}});if(p.tcg&&p.tcg.market)refs.push({{v:p.tcg.market,c:'tcg',l:'TCGplayer market'}});if(p.fv)refs.push({{v:p.fv,c:'fv',l:'TPX fair value'}});
+var all=pr.concat(refs.map(function(r){{return r.v;}}));var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);var pad=(hi-lo)*0.08||1;lo-=pad;hi+=pad;
+var x=function(i){{return L+i/(pts.length-1)*(W-L-R);}},y=function(v){{return T+(hi-v)/(hi-lo)*(H-T-B);}};
+var vmax=Math.max.apply(null,vo)||1,bw=Math.max((W-L-R)/pts.length*0.6,2);
+var s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="30-day TPX price and volume">';
+for(var g=0;g<4;g++){{var v=lo+(hi-lo)*g/3;s+='<line class="grid" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'"/><text class="axis" x="'+(L-4)+'" y="'+(y(v)+3).toFixed(1)+'" text-anchor="end">'+usd(v,0)+'</text>';}}
+s+='<g class="vol">'+vo.map(function(v,i){{return v?'<rect x="'+(x(i)-bw/2).toFixed(1)+'" y="'+(H-B-v/vmax*60).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*60).toFixed(1)+'"/>':'';}}).join('')+'</g>';
+refs.forEach(function(r){{s+='<line class="ref '+r.c+'" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(r.v).toFixed(1)+'" y2="'+y(r.v).toFixed(1)+'"/>';}});
+var up=(p.chg30||0)>=0;s+='<path class="line" stroke="'+(up?'#3ddc84':'#ff4d6a')+'" d="'+pr.map(function(v,i){{return (i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1);}}).join(' ')+'"/>';
+[0,Math.floor((pts.length-1)/2),pts.length-1].forEach(function(i){{s+='<text class="axis" x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+(i===0?'start':i===pts.length-1?'end':'middle')+'">'+esc((pts[i].t||'').slice(5))+'</text>';}});
+s+='</svg><div class="legend"><span><i style="background:'+(up?'#3ddc84':'#ff4d6a')+'"></i>TPX daily close</span>'+refs.map(function(r){{return '<span><i style="background:'+(r.c==='dn'?'#f5b63a':r.c==='tcg'?'#bc8cff':'#8c8c95')+'"></i>'+r.l+' '+usd(r.v)+'</span>';}}).join('')+'<span><i style="background:#8c8c95;opacity:.5"></i>units sold</span></div>';return s;}}
+function openDetail(p){{var o=p.outlook||{{}},dn=p.dn,st=p.story||{{}};var up=(p.chg30||0)>=0;
+var img=p.image?'<img class="thumb" src="'+p.image+'" alt="">':'<span class="thumb ph">'+esc(p.initials)+'</span>';
+var ms=[['Last TPX sale',usd(p.last),p.last_at?new Date(p.last_at).toLocaleString():'no trades in 30d'],['30-day change',pct(p.chg30,2),''],['30-day volume',compact(p.notional,true),(p.vol30||0).toLocaleString()+' units · '+(p.trades30||0).toLocaleString()+' trades'],['30-day avg price',usd(p.vwap30),'volume-weighted'],
+['TPX pays / sells',usd(p.tpx.bid)+' / '+usd(p.tpx.ask),(p.tpx.bid_units||0).toLocaleString()+' bid × '+(p.tpx.ask_units||0).toLocaleString()+' offered'],
+['Dealernet pays / sells',dn?usd(dn.bid)+' / '+usd(dn.ask):'no listing',dn?((dn.bid_qty||0)+' × '+(dn.ask_qty||0)+(dn.case_bid||dn.case_ask?' · case '+usd(dn.case_bid)+' / '+usd(dn.case_ask)+'/box':'')):''],
+['TCGplayer market',p.tcg?usd(p.tcg.market):'—',p.tcg?('TPX '+(p.tpx.bid?(p.tpx.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' · DN '+(dn&&dn.bid?(dn.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' of market'):'keys not set'],
+['TPX fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
+var h='<div class="ph"><div class="dhead">'+img+'<div><div class="series">'+esc(p.series)+'</div><h3 style="margin:0">'+esc(p.name)+'</h3></div><div class="dprice"><b>'+usd(p.price)+'</b><span class="chg '+(up?'up':'down')+'">'+(up?'↗':'↘')+' '+Math.abs(p.chg30||0).toFixed(2)+'% · 30d</span></div></div><div><button type="button" class="tb x" id="btnRemove">Remove from board</button> <button type="button" class="tb" data-close="detail">Close</button></div></div>';
+h+='<div class="dgrid"><div><div class="dchart">'+bigChart(p)+'</div>';
+h+='<div class="callbox '+p.cls+'"><b>'+esc(st.badge||'')+'</b>'+(st.headline?' · '+esc(st.headline):'')+(st.steps&&st.steps.length?'<ol>'+st.steps.map(function(x){{return '<li>'+esc(x)+'</li>';}}).join('')+'</ol>':'')+(st.profit?'<div class="profit">'+esc(st.profit)+'</div>':'')+'<div class="muted small">'+esc(st.why||'')+'</div></div></div>';
+h+='<div><div class="metrics">'+ms.map(function(m){{return '<div class="m"><i>'+m[0]+'</i><b>'+m[1]+'</b><div class="sub">'+esc(m[2])+'</div></div>';}}).join('')+'</div>';
+h+='<div class="outlook"><h4>Outlook · next 7 days</h4><div class="olabel '+esc(o.label||'')+'">'+esc(o.label||'—')+'</div><div class="small muted">'+esc(o.confidence||'')+' confidence'+(o.range_low_cents?' · likely range '+usd(o.range_low_cents)+' – '+usd(o.range_high_cents):'')+'</div><ul>'+(o.reasons||[]).map(function(r){{return '<li>'+esc(r)+'</li>';}}).join('')+'</ul><div class="fine">Based only on the last 30 days of TPX trades and today\\'s order books. A description of the past, not advice.</div></div></div></div>';
+$('detailBody').innerHTML=h;$('detail').hidden=false;
+$('btnRemove').addEventListener('click',function(){{removeProduct(p.id,p.name);$('detail').hidden=true;}});
+Array.prototype.forEach.call($('detailBody').querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{$('detail').hidden=true;}});}});}}
+/* ---- add panel ---- */
+function isSelected(id,name){{return state.selected.some(function(s){{return (s.tpx_id&&s.tpx_id===id)||(s.name||'').toLowerCase()===(name||'').toLowerCase();}});}}
+function openAdd(tab){{state.tab=tab||state.tab;$('add').hidden=false;renderRows();$('q').focus();}}
+function renderRows(){{var box=$('rows');box.innerHTML='';Array.prototype.forEach.call($('addSeg').children,function(b){{b.classList.toggle('on',b.dataset.tab===state.tab);}});
+var q=$('q').value.trim().toLowerCase();var list;
+if(state.tab==='mine'){{list=state.selected.map(function(s){{var u=(s.tpx_id&&uniById[s.tpx_id])||null;return u||{{id:s.tpx_id||s.name,name:s.name,group:null,vol:null}};}});}}
+else{{list=U.filter(function(u){{return state.addGroup==='all'||u.group===state.addGroup;}});if(state.tab==='search'||q){{if(!q){{list=list.slice(0,60);}}else{{var terms=q.split(/\\s+/);list=list.filter(function(u){{var n=u.name.toLowerCase()+' '+(u.set||'').toLowerCase();return terms.every(function(t){{return n.indexOf(t)>=0;}});}}).slice(0,80);}}}}else list=list.slice(0,25);}}
+if(!list.length){{box.appendChild(el('div','muted small',q?'No TPX product matches "'+$('q').value+'".':'Nothing here yet.'));return;}}
+list.forEach(function(u,i){{var on=isSelected(u.id,u.name);var r=el('div','r'+(on?' on':''));
+r.innerHTML='<div class="rn"><b>'+(state.tab==='hot'?(i+1)+'. ':'')+esc(u.name)+'</b><div class="rs">'+esc(u.set||'')+(u.group?' · '+(u.group==='tcg'?'Pokémon/OP':'Sports'):'')+'</div></div><div class="num hide-sm"><div>'+compact(u.vol,true)+'</div><div class="rs">30d volume</div></div><div class="num hide-sm">'+(u.last?usd(u.last):'—')+'</div><div class="num"></div>';
+var b=el('button','tb'+(on?' x':' primary'),on?'Remove':'+ Add');b.type='button';b.addEventListener('click',function(){{if(on)removeProduct(u.id,u.name);else addProduct(u);}});r.lastChild.appendChild(b);box.appendChild(r);}});}}
+function addProduct(u){{if(isSelected(u.id,u.name))return;state.selected.push({{name:u.name,tpx_id:u.id}});save('Added '+u.name);}}
+function removeProduct(id,name){{state.selected=state.selected.filter(function(s){{return !((s.tpx_id&&s.tpx_id===id)||(s.name||'').toLowerCase()===(name||'').toLowerCase());}});save('Removed '+name);}}
+var saving=false,pendingSave=false;
+function save(what){{renderBoard();renderRows();if(!state.db){{status('Settings cannot be saved from this view.');return;}}if(saving){{pendingSave=true;return;}}saving=true;
+state.db.doc('settings/board').set({{products:state.selected,hours:state.hours,updated:new Date().toISOString()}}).then(function(){{status(what+'. Saved.');}})
+.catch(function(e){{status(e&&e.code==='invalid_argument'?'Only the board owner can change this.':'Could not save ('+(e&&e.code||'error')+'). Try again.');if(e&&e.code==='invalid_argument'){{state.canWrite=false;}}}}).then(function(){{saving=false;if(pendingSave){{pendingSave=false;save('Saved');}}}});}}
 function status(t){{$('setStatus').textContent=t;}}
-var saving=false;
-function save(what){{renderList();if(!state.db){{status('Settings cannot be saved from this view.');return;}}if(saving)return;saving=true;
-state.db.doc('settings/board').set({{products:state.products,hours:state.hours,updated:new Date().toISOString()}}).then(function(){{status(what+'. Saved; the next refresh uses it.');}})
-.catch(function(e){{status(e&&e.code==='invalid_argument'?'Only the board owner can change this.':'Could not save ('+(e&&e.code||'error')+'). Try again.');if(e&&e.code==='invalid_argument'){{state.canWrite=false;renderList();}}}}).then(function(){{saving=false;}});}}
-$('btnAdd').addEventListener('click',function(){{var n=$('newProd').value.trim();if(!n)return;if(state.products.some(function(p){{return p.name.toLowerCase()===n.toLowerCase();}})){{status('Already on the list.');return;}}
-state.products.push($('newCase').checked?{{name:n,is_case:true}}:{{name:n}});$('newProd').value='';$('newCase').checked=false;save('Added '+n);}});
-$('newProd').addEventListener('keydown',function(e){{if(e.key==='Enter')$('btnAdd').click();}});
+/* ---- wiring ---- */
+$('btnAdd').addEventListener('click',function(){{openAdd('hot');}});$('btnHelp').addEventListener('click',function(){{$('help').hidden=false;}});
+Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{$(b.dataset.close).hidden=true;}});}});
+document.addEventListener('keydown',function(e){{if(e.key==='Escape'){{['help','add','detail'].forEach(function(id){{$(id).hidden=true;}});}}}});
+Array.prototype.forEach.call($('groupSeg').children,function(b){{b.addEventListener('click',function(){{state.group=b.dataset.g;Array.prototype.forEach.call($('groupSeg').children,function(x){{x.classList.toggle('on',x===b);}});renderBoard();}});}});
+Array.prototype.forEach.call($('addSeg').children,function(b){{b.addEventListener('click',function(){{state.tab=b.dataset.tab;renderRows();}});}});
+Array.prototype.forEach.call($('addGroup').children,function(b){{b.addEventListener('click',function(){{state.addGroup=b.dataset.g;Array.prototype.forEach.call($('addGroup').children,function(x){{x.classList.toggle('on',x===b);}});renderRows();}});}});
+$('q').addEventListener('input',function(){{if($('q').value&&state.tab==='hot')state.tab='search';renderRows();}});
 $('cadence').addEventListener('change',function(){{state.hours=parseInt($('cadence').value,10);save('Refresh set');}});
-renderList();
-if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db)return;state.db=db;
-db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d){{if(Array.isArray(d.products))state.products=d.products.slice();if(typeof d.hours==='number')state.hours=d.hours;renderList();}}}},function(){{}});}});
-claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false){{$('btnAdd').disabled=true;$('cadence').disabled=true;status('You can view the list; only the board owner can change it.');}}renderList();}});}});}}
+try{{if(!localStorage.getItem('seenHelp')&&location.hash!=='#tv'){{$('help').hidden=false;localStorage.setItem('seenHelp','1');}}}}catch(e){{}}
+renderBoard();
+var settled=false;function settle(){{if(settled)return;settled=true;state.loaded=true;renderBoard();}}
+setTimeout(settle,4000);
+if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db){{settle();return;}}state.db=db;
+db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d){{if(Array.isArray(d.products))state.selected=d.products.slice();if(typeof d.hours==='number'){{state.hours=d.hours;$('cadence').value=String(d.hours);}}}}settle();renderBoard();if(!$('add').hidden)renderRows();}},function(){{settle();}});}});
+claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false)status('You can view this board; only its owner can change it.');}});}});}}else settle();
 }})();
 </script></body></html>"""

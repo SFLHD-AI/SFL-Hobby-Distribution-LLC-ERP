@@ -11,7 +11,7 @@ import sys
 import time
 from decimal import Decimal
 from pathlib import Path
-from typing import Optional
+from typing import Sequence, Optional
 
 import typer
 import yaml
@@ -252,9 +252,10 @@ def _watchlist_items(path: Path) -> list[dict]:
 
 
 def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Optional[Decimal], *,
-                   with_candles: bool, errors: Optional[list[str]] = None):
-    """Compare every watchlist product; returns the unranked assessments. Per-product
-    failures are printed (and collected into `errors`) and skipped."""
+                   with_candles: bool, errors: Optional[list[str]] = None, extra_items: Sequence[dict] = ()):
+    """Compare every watchlist product (plus `extra_items`, same shape, de-duplicated by
+    tpx_id); returns the unranked assessments. Per-product failures are printed (and
+    collected into `errors`) and skipped."""
     svc = _service(ctx)
     csv_src = CSVSource(dn_csv, matcher=lambda q, c: (best_match(q, c) or (None,))[0]) if dn_csv else None
     all_assessments = []
@@ -271,8 +272,16 @@ def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Opt
         except (RuntimeError, NotImplementedError) as exc:
             fail(f"Dealernet ({svc.settings.dealernet_access}): {exc}")
 
+    items = list(_watchlist_items(path))
+    seen_ids = {i.get("tpx_id") for i in items if i.get("tpx_id")}
+    seen_names = {i["name"].lower() for i in items}
+    for extra in extra_items:
+        if extra.get("tpx_id") in seen_ids or extra["name"].lower() in seen_names:
+            continue
+        items.append(extra)
+        seen_ids.add(extra.get("tpx_id"))
     try:
-        for item in _watchlist_items(path):
+        for item in items:
             name = item["name"]
             try:
                 prod = svc.resolve_product(name, exact_id=item.get("tpx_id"))
@@ -310,24 +319,37 @@ def dashboard(
     history_path: Path = typer.Option(Path(".cache/history.jsonl"), "--history", help="Snapshot log used for edge trends"),
     refresh: Optional[int] = typer.Option(None, "--refresh", help="Re-run every N seconds and rewrite the page (it reloads itself)"),
     open_browser: bool = typer.Option(False, "--open", help="Open the page in your browser"),
+    universe: int = typer.Option(0, "--universe", help="Also price the N hottest TPX products per vertical (30-day volume) "
+                                                       "and embed the full product catalogue for the page's search"),
     iterations: Optional[int] = typer.Option(None, "--iterations", hidden=True),
 ):
-    """Write a view-only HTML dashboard: ranked edges, TPX price trends, Dealernet levels, fair value."""
+    """Write a view-only HTML board: your products as tiles, TPX vs Dealernet, trends and outlook."""
     from . import dashboard as dash
     from . import history as hist
 
     s = _settings(ctx)
     source = "demo" if ctx.obj["demo"] is not None else "live"
     m = Decimal(str(margin)) if margin is not None else s.target_margin
+    uni_rows: list[dict] = []
+    hot: list[dict] = []
+    if universe > 0 and source == "live":
+        from .universe import Universe, hottest
+        svc = _service(ctx)
+        uni_rows = Universe(svc.client, svc.catalog, s.cache_dir).load()
+        for vertical in ("sealed_wax", "sealed_tcg"):
+            hot += [{"name": r["name"], "tpx_id": r["id"],
+                     "shipping": 4 if any(w in r["name"].lower() for w in ("pack", "tin", "blister")) else None}
+                    for r in hottest(uni_rows, universe, vertical)]
     i = 0
     try:
         while True:
             i += 1
             errors: list[str] = []
-            ranked = rank(_run_watchlist(ctx, path, dn_csv, m, with_candles=True, errors=errors))
+            ranked = rank(_run_watchlist(ctx, path, dn_csv, m, with_candles=True, errors=errors, extra_items=hot))
             hist.append(history_path, ranked, source)
             page = dash.render(ranked, source=source, actions_enabled=s.actions_enabled, margin=m,
-                               history=hist.load(history_path, source), refresh_s=refresh, warnings=errors)
+                               history=hist.load(history_path, source), refresh_s=refresh, warnings=errors,
+                               universe=uni_rows)
             out.write_text(page, encoding="utf-8")
             console.print(f"wrote {out} ({len(ranked)} product/market rows, {source} data)")
             if open_browser and i == 1:
