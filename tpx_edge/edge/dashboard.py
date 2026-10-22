@@ -612,7 +612,7 @@ h1{{font-size:17px;font-weight:700;margin:0;white-space:nowrap}}
 .strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:rgba(28,28,32,.8);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
 .cmp{{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}}.lbl{{font-size:11px;font-weight:600;color:var(--muted);margin-right:2px}}
 .cmp .pill{{background:var(--tile);color:var(--ink);font-weight:500}}.cmp .pill.best{{background:var(--best);border-color:var(--up);color:var(--up);font-weight:700}}
-.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}.cmp .pill i{{font-style:normal;color:var(--muted);margin-left:4px;font-size:.9em}}.cmp .pill.best i{{color:var(--up)}}
+.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}.cmp .pill i{{font-style:normal;color:var(--muted);margin-left:4px;font-size:.9em}}.cmp .vrow{{display:inline-flex;align-items:center;gap:4px;margin-right:6px}}.cmp .vrow .lbl{{min-width:58px}}.tile.m .cmp .vrow{{flex-wrap:wrap;margin-right:0}}.tile.m .cmp .vrow .lbl{{min-width:0}}.tile.m .cmp{{row-gap:2px}}.cmp .pill.best i{{color:var(--up)}}
 .act{{font-size:12px;font-weight:600;color:var(--muted)}}.act.edge,.act.thin{{color:var(--up)}}.act.post{{color:var(--accent)}}.act.behind{{color:var(--ink)}}
 .tile footer{{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;position:relative;z-index:2;margin-top:2px;text-shadow:0 1px 3px var(--bg)}}
 .tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}
@@ -729,8 +729,8 @@ var caseP=(dn.case_bid||dn.case_ask)?'<span class="pill case" title="Dealernet c
 var bids=[tpx.bid,dn.bid].filter(Boolean),asks=[tpx.ask,dn.ask].filter(Boolean),hb=bids.length?Math.max.apply(null,bids):null,la=asks.length?Math.min.apply(null,asks):null;
 var tm=p.group==='tcg'&&p.tcg&&p.tcg.market;var pc=function(v){{return tm&&v?'<i>'+(v/tm*100).toFixed(0)+'%</i>':'';}};
 var cell=function(l,v,b,t){{return '<span class="pill'+(b?' best':'')+'" title="'+t+'">'+l+' '+usd(v)+pc(v)+'</span>';}};
-var h='<span class="lbl">Tradepost</span>'+cell('pays',tpx.bid,tpx.bid&&tpx.bid===hb,'Highest Tradepost buy order')+cell('sells',tpx.ask,tpx.ask&&tpx.ask===la,'Lowest Tradepost sell order')
-+'<span class="lbl">Dealernet</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb,'Dealernet buy price')+cell('sells',dn.ask,dn.ask&&dn.ask===la,'Dealernet sell price')+caseP;
+var h='<span class="vrow"><span class="lbl">Tradepost</span>'+cell('pays',tpx.bid,tpx.bid&&tpx.bid===hb,'Highest Tradepost buy order')+cell('sells',tpx.ask,tpx.ask&&tpx.ask===la,'Lowest Tradepost sell order')+'</span>'
++'<span class="vrow"><span class="lbl">Dealernet</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb,'Dealernet buy price')+cell('sells',dn.ask,dn.ask&&dn.ask===la,'Dealernet sell price')+'</span>'+caseP;
 if(p.group==='tcg')h+='<span class="lbl'+(tm?'':' muted')+'">'+(tm?'vs TCGplayer market '+usd(tm)+' (% = share of market)':'TCGplayer: keys not set')+'</span>';
 return '<div class="strip"><div class="cmp">'+h+'</div><div class="act '+p.cls+'">'+esc(p.call)+'</div></div>';}}
 function tile(p,r,W,H){{var up=(p.chg30||0)>=0,wpx=r[2]/100*W,hpx=r[3]/100*H,size=(wpx>=420&&hpx>=300)?'xl':(wpx>=280&&hpx>=190)?'l':(wpx>=160&&hpx>=130)?'m':'s';
