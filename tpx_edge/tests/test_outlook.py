@@ -16,7 +16,7 @@ def test_rising_series_reads_rising():
 def test_falling_series_with_dealernet_discount():
     o = analyze(_series(20000, -120), dn_bid_cents=12000)
     assert o.label == "Falling"
-    assert any("below the last TPX sale" in r for r in o.reasons)
+    assert any("below the last Tradepost sale" in r for r in o.reasons)
 
 
 def test_flat_series_is_sideways_and_short_series_is_honest():

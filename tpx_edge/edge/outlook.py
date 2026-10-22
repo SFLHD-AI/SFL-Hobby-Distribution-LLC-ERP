@@ -1,6 +1,6 @@
 """Where a product's market looks to be heading, from its own past prices.
 
-Plain statistics over the TPX daily series (closes, VWAP, units): a 30-day
+Plain statistics over the Tradepost daily series (closes, VWAP, units): a 30-day
 trend line, short-term momentum, volatility, the volume trend, where the
 price sits in its 30-day range, plus what the two books say today. The
 output is a label (Rising / Falling / Sideways), a confidence, the reasons in
@@ -50,7 +50,7 @@ def analyze(closes: list[dict], *, tpx_bid_units: int = 0, tpx_ask_units: int = 
     pts = [(c.get("close"), c.get("vwap") or c.get("close"), c.get("volume") or 0)
            for c in closes if c.get("close")]
     if len(pts) < 5:
-        return Outlook("Not enough data", "Low", 0.0, ["Fewer than five days of TPX trades in the last 30 days."])
+        return Outlook("Not enough data", "Low", 0.0, ["Fewer than five days of Tradepost trades in the last 30 days."])
     prices = [float(p) for p, _, _ in pts]
     vols = [float(v) for _, _, v in pts]
     vwaps = [float(w) for _, w, _ in pts]
@@ -96,20 +96,20 @@ def analyze(closes: list[dict], *, tpx_bid_units: int = 0, tpx_ask_units: int = 
         reasons.append("Price is at the bottom of its 30-day range; sellers may be getting exhausted.")
         score += 0.05
 
-    # 5. Today's books: TPX bid/ask depth and where Dealernet sits.
+    # 5. Today's books: Tradepost bid/ask depth and where Dealernet sits.
     if tpx_bid_units + tpx_ask_units >= 10:
         imb = (tpx_bid_units - tpx_ask_units) / (tpx_bid_units + tpx_ask_units)
         if abs(imb) >= 0.3:
             score += 0.15 if imb > 0 else -0.15
-            reasons.append(f"TPX order book is {'buyer' if imb > 0 else 'seller'}-heavy: {tpx_bid_units:,} units bid vs {tpx_ask_units:,} offered.")
+            reasons.append(f"Tradepost order book is {'buyer' if imb > 0 else 'seller'}-heavy: {tpx_bid_units:,} units bid vs {tpx_ask_units:,} offered.")
     if dn_bid_cents and last:
         prem = (dn_bid_cents / last - 1) * 100
         if prem >= 5:
             score += 0.1
-            reasons.append(f"Dealernet is paying {prem:.0f}% above the last TPX sale, so TPX looks cheap to that market.")
+            reasons.append(f"Dealernet is paying {prem:.0f}% above the last Tradepost sale, so Tradepost looks cheap to that market.")
         elif prem <= -5:
             score -= 0.1
-            reasons.append(f"Dealernet is paying {abs(prem):.0f}% below the last TPX sale, so TPX looks rich to that market.")
+            reasons.append(f"Dealernet is paying {abs(prem):.0f}% below the last Tradepost sale, so Tradepost looks rich to that market.")
 
     # 6. Volatility and the 7-day band.
     rets = [math.log(b / a) for a, b in zip(prices[:-1], prices[1:]) if a > 0 and b > 0]

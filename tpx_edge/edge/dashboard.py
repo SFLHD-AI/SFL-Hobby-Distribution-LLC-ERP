@@ -213,7 +213,7 @@ class ProductView:
         # The two trades Ross cares about, each on its best TPX market:
         #   buy_tpx: post a bid on TPX, sell into the Dealernet bid
         #   buy_dn:  hit the Dealernet ask, post an ask on TPX
-        self.buy_tpx = Direction("Buy TPX → sell DN", self._pick_maker("bid", "Dealernet bid"), self._pick_arb("arb_b"), self.ref)
+        self.buy_tpx = Direction("Buy Tradepost → sell DN", self._pick_maker("bid", "Dealernet bid"), self._pick_arb("arb_b"), self.ref)
         self.buy_dn = Direction("Buy DN → sell TPX", self._pick_maker("ask", "Dealernet ask"), self._pick_arb("arb_a"), self.ref)
         self.maker = max((d.post for d in (self.buy_tpx, self.buy_dn) if d.post), key=lambda m: m.expected_edge_pct or -999, default=None)
 
@@ -347,11 +347,11 @@ def _unit(name: str) -> str:
 
 
 def _venue_word(venue: str) -> str:
-    return "Dealernet" if venue.startswith("Dealernet") else "TPX"
+    return "Dealernet" if venue.startswith("Dealernet") else "Tradepost"
 
 
 def _market_word(venue: str) -> str:
-    return "TPX vault market" if "[Vaulted]" in venue else "TPX shipped market"
+    return "Tradepost vault market" if "[Vaulted]" in venue else "Tradepost shipped market"
 
 
 class Story:
@@ -378,10 +378,10 @@ class Story:
         if self.cls == "post" and best and best.post:
             m = best.post
             if m.side == "bid":
-                return f"◆ Post TPX buy {_usd(m.rest_clean_cents)} → sell DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
-            return f"◆ Post TPX sell {_usd(m.rest_clean_cents)} → buy DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
+                return f"◆ Post Tradepost buy {_usd(m.rest_clean_cents)} → sell DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
+            return f"◆ Post Tradepost sell {_usd(m.rest_clean_cents)} → buy DN {_usd(m.counter_clean_cents)} · +{_usd(m.expected_edge_cents)}/{self.unit}"
         if self.cls == "behind" and best and best.post:
-            return f"Almost: TPX {best.post.side} {_usd(best.post.rest_clean_cents)} would work, someone is at {_usd(best.post.current_top_cents)}"
+            return f"Almost: Tradepost {best.post.side} {_usd(best.post.rest_clean_cents)} would work, someone is at {_usd(best.post.current_top_cents)}"
         if v.dn is None:
             return "No Dealernet listing matched"
         if best and best.post and not best.near_market:
@@ -406,29 +406,29 @@ class Story:
             m = best.post
             where = _market_word(m.venue)
             if m.side == "bid":
-                steps = [f"Post a buy order on TPX at {_usd(m.rest_clean_cents)} ({where})",
+                steps = [f"Post a buy order on Tradepost at {_usd(m.rest_clean_cents)} ({where})",
                          f"When it fills, sell to Dealernet at {_usd(m.counter_clean_cents)} (their current buying price)"]
-                headline = "Buy on TPX, sell to Dealernet"
-                top = (f"Your {_usd(m.rest_clean_cents)} would be the highest buy order on TPX "
+                headline = "Buy on Tradepost, sell to Dealernet"
+                top = (f"Your {_usd(m.rest_clean_cents)} would be the highest buy order on Tradepost "
                        + (f"(the next best is {_usd(m.current_top_cents)})" if m.current_top_cents else "(nobody else is bidding there yet)")
                        + ", so you are first in line when someone sells.")
-                why = f"Dealernet is paying {_usd(m.counter_clean_cents)} per {u}, more than TPX sellers are getting. {top}"
+                why = f"Dealernet is paying {_usd(m.counter_clean_cents)} per {u}, more than Tradepost sellers are getting. {top}"
             else:
-                steps = [f"Post a sell order on TPX at {_usd(m.rest_clean_cents)} ({where})",
+                steps = [f"Post a sell order on Tradepost at {_usd(m.rest_clean_cents)} ({where})",
                          f"When it fills, buy from Dealernet at {_usd(m.counter_clean_cents)} (their current selling price) to cover it"]
-                headline = "Sell on TPX, buy from Dealernet"
-                top = (f"Your {_usd(m.rest_clean_cents)} would be the lowest sell order on TPX "
+                headline = "Sell on Tradepost, buy from Dealernet"
+                top = (f"Your {_usd(m.rest_clean_cents)} would be the lowest sell order on Tradepost "
                        + (f"(the next best is {_usd(m.current_top_cents)})" if m.current_top_cents else "(nobody else is selling there yet)")
                        + ", so you are first in line when someone buys.")
-                why = f"Dealernet sells this for {_usd(m.counter_clean_cents)} per {u}, less than TPX buyers will pay. {top}"
+                why = f"Dealernet sells this for {_usd(m.counter_clean_cents)} per {u}, less than Tradepost buyers will pay. {top}"
             profit = f"You make about {_usd(m.expected_edge_cents)} per {u} ({_pct(m.expected_edge_pct, False)}) after fees and shipping, once your order fills."
             return "post", "Post and wait", headline, steps, profit, why
         if sig == "behind":
             m = best.post
             verb = "buy" if m.side == "bid" else "sell"
-            steps = [f"A TPX {verb} order at {_usd(m.rest_clean_cents)} would make {_pct(v.margin * 100, False)}",
+            steps = [f"A Tradepost {verb} order at {_usd(m.rest_clean_cents)} would make {_pct(v.margin * 100, False)}",
                      f"But someone is already at {_usd(m.current_top_cents)}, ahead of you"]
-            why = f"Watch this one. If the TPX {verb} orders thin out, it becomes a trade."
+            why = f"Watch this one. If the Tradepost {verb} orders thin out, it becomes a trade."
             return "behind", "Almost", "Someone is ahead of you", steps, "No profit yet.", why
         # Nothing to do: say why in one line.
         if v.dn is None:
@@ -437,12 +437,12 @@ class Story:
             m = best.post
             verb = "sell" if m.side == "ask" else "buy"
             return ("none", "No profit right now", "", [], "",
-                    f"Fees and shipping eat the gap: you would have to {verb} at {_usd(m.rest_clean_cents)} on TPX, "
+                    f"Fees and shipping eat the gap: you would have to {verb} at {_usd(m.rest_clean_cents)} on Tradepost, "
                     f"but it trades around {_usd(v.ref)}.")
         if v.edge is not None:
             return ("none", "No profit right now", "", [], "",
                     f"Prices are too close. Dealernet pays {_usd(v.dn_bid)} and sells at {_usd(v.dn_ask)}; "
-                    f"TPX pays {_usd(v.tpx_bid)} and sells at {_usd(v.tpx_ask)}.")
+                    f"Tradepost pays {_usd(v.tpx_bid)} and sells at {_usd(v.tpx_ask)}.")
         return "none", "No prices to trade against", "", [], "", "One side has no buyers or sellers right now."
 
 
@@ -535,7 +535,7 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
     views = [ProductView(p, items, margin, history) for p, items in by_product.items()]
     stories = [Story(v) for v in views]
     products = [product_payload(st) for st in stories]
-    # The search/hottest catalogue: every product TPX lists, ranked by 30-day dollar volume.
+    # The search/hottest catalogue: every product Tradepost lists, ranked by 30-day dollar volume.
     uni = [{"id": r["id"], "name": r["name"], "group": "sports" if "wax" in str(r.get("asset_type", "")) else "tcg",
             "vol": r.get("volume_cents") or 0, "units": r.get("units") or 0, "last": r.get("last_cents"),
             "chg": _num(r.get("change_pct")), "set": r.get("set")} for r in (universe or [])]
@@ -549,7 +549,7 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
     banner = ""
     if source != "live":
         banner = ('<div class="banner">Sample data: these prices come from the built-in demo fixtures, '
-                  'not from TPX or Dealernet. Run without <code>--demo</code> once TPX access is set up.</div>')
+                  'not from Tradepost or Dealernet. Run without <code>--demo</code> once Tradepost access is set up.</div>')
     warn_html = "".join(f'<div class="banner warn">{_e(w)}</div>' for w in warnings)
     actions = ('<span class="pill on">Actions: ON</span>' if actions_enabled
                else '<span class="pill" title="Set ACTIONS_ENABLED=true to allow features that act on a marketplace">Actions: OFF (view only)</span>')
@@ -568,7 +568,7 @@ def render(ranked: Sequence[Assessment], *, source: str, actions_enabled: bool =
 
 TEMPLATE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-{meta_refresh}<title>TPX Dealernet Edges</title>
+{meta_refresh}<title>Live Sealed Product Radar</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
 <style>
@@ -612,7 +612,7 @@ h1{{font-size:17px;font-weight:700;margin:0;white-space:nowrap}}
 .strip{{margin-top:auto;position:relative;z-index:2;display:flex;flex-direction:column;gap:4px;background:rgba(28,28,32,.8);border-radius:8px;padding:6px 8px;margin-left:-4px;margin-right:-4px;backdrop-filter:blur(2px)}}
 .cmp{{display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}}.lbl{{font-size:11px;font-weight:600;color:var(--muted);margin-right:2px}}
 .cmp .pill{{background:var(--tile);color:var(--ink);font-weight:500}}.cmp .pill.best{{background:var(--best);border-color:var(--up);color:var(--up);font-weight:700}}
-.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}
+.cmp .pill.case{{color:var(--accent);border-color:var(--accent)}}.cmp .pill i{{font-style:normal;color:var(--muted);margin-left:4px;font-size:.9em}}.cmp .pill.best i{{color:var(--up)}}
 .act{{font-size:12px;font-weight:600;color:var(--muted)}}.act.edge,.act.thin{{color:var(--up)}}.act.post{{color:var(--accent)}}.act.behind{{color:var(--ink)}}
 .tile footer{{display:flex;justify-content:space-between;gap:10px;font-size:13px;font-weight:600;position:relative;z-index:2;margin-top:2px;text-shadow:0 1px 3px var(--bg)}}
 .tile footer i{{display:block;font:500 10px/1.3 var(--sans);color:var(--muted)}}
@@ -661,26 +661,26 @@ html.tv .top .tb,html.tv .counts,html.tv .seg{{display:none}}html.tv h1{{font-si
 <linearGradient id="g-up" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3ddc84" stop-opacity=".45"/><stop offset="1" stop-color="#3ddc84" stop-opacity="0"/></linearGradient>
 <linearGradient id="g-down" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff4d6a" stop-opacity=".45"/><stop offset="1" stop-color="#ff4d6a" stop-opacity="0"/></linearGradient>
 </defs></svg>
-<div class="top"><div class="top-l"><h1>TPX × Dealernet edge board</h1>{live}<span class="muted small">Updated {generated}</span><span class="counts" id="counts"></span></div>
+<div class="top"><div class="top-l"><h1>Live Sealed Product Radar</h1>{live}<span class="muted small">Updated {generated}</span><span class="counts" id="counts"></span></div>
 <div class="top-r"><span class="seg" id="groupSeg"><button type="button" class="tb on" data-g="all">All</button><button type="button" class="tb" data-g="tcg">Pokémon &amp; One Piece</button><button type="button" class="tb" data-g="sports">Sports</button></span>
-<button type="button" class="tb primary" id="btnAdd">+ Add products</button><button type="button" class="tb" id="btnHelp">? How to read</button>{actions}</div></div>
+<button type="button" class="tb" id="btnRefresh" title="Pull fresh prices now">↻ Refresh</button><button type="button" class="tb primary" id="btnAdd">+ Add products</button><button type="button" class="tb" id="btnHelp">? How to read</button>{actions}</div></div>
 {banner}
 <div id="board"></div>
 <div class="overlay" id="help" hidden><div class="panel">
 <div class="ph"><h3>How to read this board</h3><button type="button" class="tb" data-close="help">Close</button></div>
 <ol class="guide">
-<li><b>Each tile is one product you chose.</b> Bigger tile = more money traded on TPX in the last 30 days. The chart behind it is the TPX price over 30 days; the faint bars are daily units sold. <span class="up">Green</span> = up over 30 days, <span class="down">red</span> = down. <b>Click a tile</b> for the full chart, the numbers and the outlook.</li>
-<li><b>Top right of a tile:</b> last TPX sale price and the 30-day change.</li>
-<li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy TPX $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
+<li><b>Each tile is one product you chose.</b> Bigger tile = more money traded on Tradepost in the last 30 days. The chart behind it is the Tradepost price over 30 days; the faint bars are daily units sold. <span class="up">Green</span> = up over 30 days, <span class="down">red</span> = down. <b>Click a tile</b> for the full chart, the numbers and the outlook.</li>
+<li><b>Top right of a tile:</b> last Tradepost sale price and the 30-day change.</li>
+<li><b>Pokémon &amp; One Piece tiles</b> show <i>Buy Tradepost $x</i> and <i>Buy DN $y</i>: the cheapest place to buy one now. The <span class="up">green pill</span> is the cheaper one. With TCGplayer keys set, each also shows as a % of TCGplayer market (under 100% = cheaper than market).</li>
 <li><b>Sports tiles</b> show what each venue <i>pays</i> (their best buy offer, where you would sell) and what it <i>sells</i> for (their best sell offer, where you would buy). The <span class="up">green pill</span> is the best price on each side.</li>
 <li><b>Amber "Case" pill:</b> Dealernet case-only offers, shown per box. A case needs a full case to fill and usually pays more than singles, so it never sets the box price.</li>
-<li><b>The line under the pills is the call:</b> <span class="act edge">▲ Buy … → sell … · +$ now</span> both prices are live, you can do the round trip now. <span class="act post">◆ Post TPX buy $x → sell DN $y · +$z/box</span> post that order on TPX; when it fills, sell to Dealernet for the profit shown. <span class="muted">No profit: …</span> nothing to do, and why.</li>
-<li><b>Outlook</b> (inside a tile): Rising / Falling / Sideways from the last 30 days of TPX trades: trend, momentum, volume, range position and today's order book. It describes the past; it is not advice.</li>
+<li><b>The line under the pills is the call:</b> <span class="act edge">▲ Buy … → sell … · +$ now</span> both prices are live, you can do the round trip now. <span class="act post">◆ Post Tradepost buy $x → sell DN $y · +$z/box</span> post that order on Tradepost; when it fills, sell to Dealernet for the profit shown. <span class="muted">No profit: …</span> nothing to do, and why.</li>
+<li><b>Outlook</b> (inside a tile): Rising / Falling / Sideways from the last 30 days of Tradepost trades: trend, momentum, volume, range position and today's order book. It describes the past; it is not advice.</li>
 <li><b>Every dollar figure is after fees and shipping</b>, aiming for the {margin} target. Nothing on this page places an order. Add <code>#tv</code> to the link for the big-screen view.</li>
 </ol></div></div>
 <div class="overlay" id="add" hidden><div class="panel">
 <div class="ph"><h3>Add products</h3><div><span class="seg" id="addSeg"><button type="button" class="tb on" data-tab="hot">🔥 Hottest</button><button type="button" class="tb" data-tab="search">Search</button><button type="button" class="tb" data-tab="mine">On my board</button></span> <button type="button" class="tb" data-close="add">Done</button></div></div>
-<div class="srch"><input type="search" id="q" placeholder="Search every product TPX lists…" aria-label="Search products"><span class="seg" id="addGroup"><button type="button" class="tb on" data-g="all">All</button><button type="button" class="tb" data-g="tcg">Pokémon &amp; OP</button><button type="button" class="tb" data-g="sports">Sports</button></span></div>
+<div class="srch"><input type="search" id="q" placeholder="Search every product Tradepost lists…" aria-label="Search products"><span class="seg" id="addGroup"><button type="button" class="tb on" data-g="all">All</button><button type="button" class="tb" data-g="tcg">Pokémon &amp; OP</button><button type="button" class="tb" data-g="sports">Sports</button></span></div>
 <div class="rows" id="rows"></div>
 <div class="cadence"><b>Refresh the board</b> <select id="cadence" aria-label="Refresh cadence"><option value="1">every hour</option><option value="2">every 2 hours</option><option value="4">every 4 hours</option><option value="12">every 12 hours</option><option value="24">once a day</option><option value="0">paused</option></select>
 <span class="muted small">Hourly is the fastest the cloud scheduler allows; for a 2-minute live feed run <code>edge dashboard --refresh 120 --open</code> on your own machine.</span></div>
@@ -724,14 +724,14 @@ var xs=pr.map(function(_,i){{return i*step;}}),ys=pr.map(function(p){{return 92-
 var bars=vo.map(function(v,i){{return v?'<rect x="'+(xs[i]-bw/2).toFixed(1)+'" y="'+(100-v/vmax*40).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*40).toFixed(1)+'"/>':'';}}).join('');
 var line=xs.map(function(x,i){{return (i?'L':'M')+x.toFixed(1)+','+ys[i].toFixed(1);}}).join(' ');
 return '<svg class="'+cls+' '+(up?'up':'down')+'" viewBox="0 0 300 100" preserveAspectRatio="none" role="img" aria-label="price trend"><g class="vol">'+bars+'</g><path class="area" d="'+line+' L300,100 L0,100 Z"/><path class="line" d="'+line+'" vector-effect="non-scaling-stroke"/></svg>';}}
-function strip(p){{var dn=p.dn||{{}},h='';
+function strip(p){{var dn=p.dn||{{}},tpx=p.tpx||{{}};
 var caseP=(dn.case_bid||dn.case_ask)?'<span class="pill case" title="Dealernet case offers, per box; a case needs a full case to fill">Case'+(dn.bpc?' ×'+dn.bpc:'')+': pays '+usd(dn.case_bid)+' · sells '+usd(dn.case_ask)+'</span>':'';
-if(p.group==='tcg'){{var ta=p.tpx.ask,da=dn.ask,best=(ta&&da)?(ta<=da?'tpx':'dn'):(ta?'tpx':(da?'dn':null));var tm=p.tcg&&p.tcg.market;
-var pc=function(v){{return tm&&v?' · '+(v/tm*100).toFixed(0)+'%':'';}};
-h='<span class="lbl'+(tm?'':' muted')+'">'+(tm?'vs TCGplayer '+usd(tm):'TCGplayer market: keys not set')+'</span><span class="pill'+(best==='tpx'?' best':'')+'">Buy TPX '+usd(ta)+pc(ta)+'</span><span class="pill'+(best==='dn'?' best':'')+'">Buy DN '+usd(da)+pc(da)+'</span>'+caseP;}}
-else{{var bids=[p.tpx.bid,dn.bid].filter(Boolean),asks=[p.tpx.ask,dn.ask].filter(Boolean),hb=bids.length?Math.max.apply(null,bids):null,la=asks.length?Math.min.apply(null,asks):null;
-var cell=function(l,v,b){{return '<span class="pill'+(b?' best':'')+'">'+l+' '+usd(v)+'</span>';}};
-h='<span class="lbl">TPX</span>'+cell('pays',p.tpx.bid,p.tpx.bid&&p.tpx.bid===hb)+cell('sells',p.tpx.ask,p.tpx.ask&&p.tpx.ask===la)+'<span class="lbl">DN</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb)+cell('sells',dn.ask,dn.ask&&dn.ask===la)+caseP;}}
+var bids=[tpx.bid,dn.bid].filter(Boolean),asks=[tpx.ask,dn.ask].filter(Boolean),hb=bids.length?Math.max.apply(null,bids):null,la=asks.length?Math.min.apply(null,asks):null;
+var tm=p.group==='tcg'&&p.tcg&&p.tcg.market;var pc=function(v){{return tm&&v?'<i>'+(v/tm*100).toFixed(0)+'%</i>':'';}};
+var cell=function(l,v,b,t){{return '<span class="pill'+(b?' best':'')+'" title="'+t+'">'+l+' '+usd(v)+pc(v)+'</span>';}};
+var h='<span class="lbl">Tradepost</span>'+cell('pays',tpx.bid,tpx.bid&&tpx.bid===hb,'Highest Tradepost buy order')+cell('sells',tpx.ask,tpx.ask&&tpx.ask===la,'Lowest Tradepost sell order')
++'<span class="lbl">Dealernet</span>'+cell('pays',dn.bid,dn.bid&&dn.bid===hb,'Dealernet buy price')+cell('sells',dn.ask,dn.ask&&dn.ask===la,'Dealernet sell price')+caseP;
+if(p.group==='tcg')h+='<span class="lbl'+(tm?'':' muted')+'">'+(tm?'vs TCGplayer market '+usd(tm)+' (% = share of market)':'TCGplayer: keys not set')+'</span>';
 return '<div class="strip"><div class="cmp">'+h+'</div><div class="act '+p.cls+'">'+esc(p.call)+'</div></div>';}}
 function tile(p,r,W,H){{var up=(p.chg30||0)>=0,wpx=r[2]/100*W,hpx=r[3]/100*H,size=(wpx>=420&&hpx>=300)?'xl':(wpx>=280&&hpx>=190)?'l':(wpx>=160&&hpx>=130)?'m':'s';
 var a=el('article','tile '+size+' '+p.cls);a.tabIndex=0;a.style.cssText='left:'+r[0]+'%;top:'+r[1]+'%;width:'+r[2]+'%;height:'+r[3]+'%';a.dataset.id=p.id;
@@ -748,7 +748,7 @@ else{{var u=(s.tpx_id&&uniById[s.tpx_id])||null;var g=u?u.group:null;if(state.gr
 function renderBoard(){{var b=$('board');b.innerHTML='';var list=selectedProducts();
 var now=0,post=0;list.forEach(function(x){{if(x.p){{if(x.p.cls==='edge'||x.p.cls==='thin')now++;else if(x.p.cls==='post')post++;}}}});
 $('counts').innerHTML=list.length?'<span class="up">'+now+' ready now</span><span class="warn">'+post+' post &amp; wait</span><span class="muted">'+(list.length-now-post)+' nothing to do</span>':'';
-if(!list.length){{var e=el('div','empty');e.innerHTML='<h2>'+(state.loaded?'Your board is empty':'Loading your board…')+'</h2><p>'+(state.loaded?'Add the products you trade. Pick from the hottest products on TPX by 30-day volume, or search every product TPX lists.':'')+'</p>';
+if(!list.length){{var e=el('div','empty');e.innerHTML='<h2>'+(state.loaded?'Your board is empty':'Loading your board…')+'</h2><p>'+(state.loaded?'Add the products you trade. Pick from the hottest products on Tradepost by 30-day volume, or search every product Tradepost lists.':'')+'</p>';
 if(state.loaded){{var btn=el('button','tb primary','+ Add products');btn.type='button';btn.addEventListener('click',function(){{openAdd('hot');}});e.appendChild(btn);}}b.appendChild(e);return;}}
 var W=b.clientWidth||1400,H=b.clientHeight||700;var rects=layout(list,W,H);
 list.forEach(function(x){{var r=rects[x.id];if(!r)return;var pr=[r[0]/W*100,r[1]/H*100,r[2]/W*100,r[3]/H*100];b.appendChild(x.p?tile(x.p,pr,W,H):pendingTile(x.u,pr));}});}}
@@ -756,29 +756,29 @@ window.addEventListener('resize',function(){{clearTimeout(window.__rt);window.__
 /* ---- detail ---- */
 function bigChart(p){{var pts=p.closes.filter(function(c){{return c.close!=null;}});if(pts.length<2)return '<div class="muted" style="padding:30px;text-align:center">No price history in the last 30 days</div>';
 var W=640,H=240,L=46,R=10,T=12,B=28;var pr=pts.map(function(c){{return c.close;}}),vo=pts.map(function(c){{return c.volume||0;}});
-var refs=[];if(p.dn&&p.dn.bid)refs.push({{v:p.dn.bid,c:'dn',l:'DN pays'}});if(p.dn&&p.dn.ask)refs.push({{v:p.dn.ask,c:'dn',l:'DN sells'}});if(p.tcg&&p.tcg.market)refs.push({{v:p.tcg.market,c:'tcg',l:'TCGplayer market'}});if(p.fv)refs.push({{v:p.fv,c:'fv',l:'TPX fair value'}});
+var refs=[];if(p.dn&&p.dn.bid)refs.push({{v:p.dn.bid,c:'dn',l:'DN pays'}});if(p.dn&&p.dn.ask)refs.push({{v:p.dn.ask,c:'dn',l:'DN sells'}});if(p.tcg&&p.tcg.market)refs.push({{v:p.tcg.market,c:'tcg',l:'TCGplayer market'}});if(p.fv)refs.push({{v:p.fv,c:'fv',l:'Tradepost fair value'}});
 var all=pr.concat(refs.map(function(r){{return r.v;}}));var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all);var pad=(hi-lo)*0.08||1;lo-=pad;hi+=pad;
 var x=function(i){{return L+i/(pts.length-1)*(W-L-R);}},y=function(v){{return T+(hi-v)/(hi-lo)*(H-T-B);}};
 var vmax=Math.max.apply(null,vo)||1,bw=Math.max((W-L-R)/pts.length*0.6,2);
-var s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="30-day TPX price and volume">';
+var s='<svg viewBox="0 0 '+W+' '+H+'" role="img" aria-label="30-day Tradepost price and volume">';
 for(var g=0;g<4;g++){{var v=lo+(hi-lo)*g/3;s+='<line class="grid" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'"/><text class="axis" x="'+(L-4)+'" y="'+(y(v)+3).toFixed(1)+'" text-anchor="end">'+usd(v,0)+'</text>';}}
 s+='<g class="vol">'+vo.map(function(v,i){{return v?'<rect x="'+(x(i)-bw/2).toFixed(1)+'" y="'+(H-B-v/vmax*60).toFixed(1)+'" width="'+bw.toFixed(1)+'" height="'+(v/vmax*60).toFixed(1)+'"/>':'';}}).join('')+'</g>';
 refs.forEach(function(r){{s+='<line class="ref '+r.c+'" x1="'+L+'" x2="'+(W-R)+'" y1="'+y(r.v).toFixed(1)+'" y2="'+y(r.v).toFixed(1)+'"/>';}});
 var up=(p.chg30||0)>=0;s+='<path class="line" stroke="'+(up?'#3ddc84':'#ff4d6a')+'" d="'+pr.map(function(v,i){{return (i?'L':'M')+x(i).toFixed(1)+','+y(v).toFixed(1);}}).join(' ')+'"/>';
 [0,Math.floor((pts.length-1)/2),pts.length-1].forEach(function(i){{s+='<text class="axis" x="'+x(i).toFixed(1)+'" y="'+(H-8)+'" text-anchor="'+(i===0?'start':i===pts.length-1?'end':'middle')+'">'+esc((pts[i].t||'').slice(5))+'</text>';}});
-s+='</svg><div class="legend"><span><i style="background:'+(up?'#3ddc84':'#ff4d6a')+'"></i>TPX daily close</span>'+refs.map(function(r){{return '<span><i style="background:'+(r.c==='dn'?'#f5b63a':r.c==='tcg'?'#bc8cff':'#8c8c95')+'"></i>'+r.l+' '+usd(r.v)+'</span>';}}).join('')+'<span><i style="background:#8c8c95;opacity:.5"></i>units sold</span></div>';return s;}}
+s+='</svg><div class="legend"><span><i style="background:'+(up?'#3ddc84':'#ff4d6a')+'"></i>Tradepost daily close</span>'+refs.map(function(r){{return '<span><i style="background:'+(r.c==='dn'?'#f5b63a':r.c==='tcg'?'#bc8cff':'#8c8c95')+'"></i>'+r.l+' '+usd(r.v)+'</span>';}}).join('')+'<span><i style="background:#8c8c95;opacity:.5"></i>units sold</span></div>';return s;}}
 function openDetail(p){{var o=p.outlook||{{}},dn=p.dn,st=p.story||{{}};var up=(p.chg30||0)>=0;
 var img=p.image?'<img class="thumb" src="'+p.image+'" alt="">':'<span class="thumb ph">'+esc(p.initials)+'</span>';
-var ms=[['Last TPX sale',usd(p.last),p.last_at?new Date(p.last_at).toLocaleString():'no trades in 30d'],['30-day change',pct(p.chg30,2),''],['30-day volume',compact(p.notional,true),(p.vol30||0).toLocaleString()+' units · '+(p.trades30||0).toLocaleString()+' trades'],['30-day avg price',usd(p.vwap30),'volume-weighted'],
-['TPX pays / sells',usd(p.tpx.bid)+' / '+usd(p.tpx.ask),(p.tpx.bid_units||0).toLocaleString()+' bid × '+(p.tpx.ask_units||0).toLocaleString()+' offered'],
+var ms=[['Last Tradepost sale',usd(p.last),p.last_at?new Date(p.last_at).toLocaleString():'no trades in 30d'],['30-day change',pct(p.chg30,2),''],['30-day volume',compact(p.notional,true),(p.vol30||0).toLocaleString()+' units · '+(p.trades30||0).toLocaleString()+' trades'],['30-day avg price',usd(p.vwap30),'volume-weighted'],
+['Tradepost pays / sells',usd(p.tpx.bid)+' / '+usd(p.tpx.ask),(p.tpx.bid_units||0).toLocaleString()+' bid × '+(p.tpx.ask_units||0).toLocaleString()+' offered'],
 ['Dealernet pays / sells',dn?usd(dn.bid)+' / '+usd(dn.ask):'no listing',dn?((dn.bid_qty||0)+' × '+(dn.ask_qty||0)+(dn.case_bid||dn.case_ask?' · case '+usd(dn.case_bid)+' / '+usd(dn.case_ask)+'/box':'')):''],
-['TCGplayer market',p.tcg?usd(p.tcg.market):'—',p.tcg?('TPX '+(p.tpx.bid?(p.tpx.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' · DN '+(dn&&dn.bid?(dn.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' of market'):'keys not set'],
-['TPX fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
+['TCGplayer market',p.tcg?usd(p.tcg.market):'—',p.tcg?('Tradepost '+(p.tpx.bid?(p.tpx.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' · DN '+(dn&&dn.bid?(dn.bid/p.tcg.market*100).toFixed(0)+'%':'—')+' of market'):'keys not set'],
+['Tradepost fair value',p.fv?usd(p.fv):'—',''],['24h range',p.lo24&&p.hi24?usd(p.lo24)+' – '+usd(p.hi24):'—','']];
 var h='<div class="ph"><div class="dhead">'+img+'<div><div class="series">'+esc(p.series)+'</div><h3 style="margin:0">'+esc(p.name)+'</h3></div><div class="dprice"><b>'+usd(p.price)+'</b><span class="chg '+(up?'up':'down')+'">'+(up?'↗':'↘')+' '+Math.abs(p.chg30||0).toFixed(2)+'% · 30d</span></div></div><div><button type="button" class="tb x" id="btnRemove">Remove from board</button> <button type="button" class="tb" data-close="detail">Close</button></div></div>';
 h+='<div class="dgrid"><div><div class="dchart">'+bigChart(p)+'</div>';
 h+='<div class="callbox '+p.cls+'"><b>'+esc(st.badge||'')+'</b>'+(st.headline?' · '+esc(st.headline):'')+(st.steps&&st.steps.length?'<ol>'+st.steps.map(function(x){{return '<li>'+esc(x)+'</li>';}}).join('')+'</ol>':'')+(st.profit?'<div class="profit">'+esc(st.profit)+'</div>':'')+'<div class="muted small">'+esc(st.why||'')+'</div></div></div>';
 h+='<div><div class="metrics">'+ms.map(function(m){{return '<div class="m"><i>'+m[0]+'</i><b>'+m[1]+'</b><div class="sub">'+esc(m[2])+'</div></div>';}}).join('')+'</div>';
-h+='<div class="outlook"><h4>Outlook · next 7 days</h4><div class="olabel '+esc(o.label||'')+'">'+esc(o.label||'—')+'</div><div class="small muted">'+esc(o.confidence||'')+' confidence'+(o.range_low_cents?' · likely range '+usd(o.range_low_cents)+' – '+usd(o.range_high_cents):'')+'</div><ul>'+(o.reasons||[]).map(function(r){{return '<li>'+esc(r)+'</li>';}}).join('')+'</ul><div class="fine">Based only on the last 30 days of TPX trades and today\\'s order books. A description of the past, not advice.</div></div></div></div>';
+h+='<div class="outlook"><h4>Outlook · next 7 days</h4><div class="olabel '+esc(o.label||'')+'">'+esc(o.label||'—')+'</div><div class="small muted">'+esc(o.confidence||'')+' confidence'+(o.range_low_cents?' · likely range '+usd(o.range_low_cents)+' – '+usd(o.range_high_cents):'')+'</div><ul>'+(o.reasons||[]).map(function(r){{return '<li>'+esc(r)+'</li>';}}).join('')+'</ul><div class="fine">Based only on the last 30 days of Tradepost trades and today\\'s order books. A description of the past, not advice.</div></div></div></div>';
 $('detailBody').innerHTML=h;$('detail').hidden=false;
 $('btnRemove').addEventListener('click',function(){{removeProduct(p.id,p.name);$('detail').hidden=true;}});
 Array.prototype.forEach.call($('detailBody').querySelectorAll('[data-close]'),function(b){{b.addEventListener('click',function(){{$('detail').hidden=true;}});}});}}
@@ -789,7 +789,7 @@ function renderRows(){{var box=$('rows');box.innerHTML='';Array.prototype.forEac
 var q=$('q').value.trim().toLowerCase();var list;
 if(state.tab==='mine'){{list=state.selected.map(function(s){{var u=(s.tpx_id&&uniById[s.tpx_id])||null;return u||{{id:s.tpx_id||s.name,name:s.name,group:null,vol:null}};}});}}
 else{{list=U.filter(function(u){{return state.addGroup==='all'||u.group===state.addGroup;}});if(state.tab==='search'||q){{if(!q){{list=list.slice(0,60);}}else{{var terms=q.split(/\\s+/);list=list.filter(function(u){{var n=u.name.toLowerCase()+' '+(u.set||'').toLowerCase();return terms.every(function(t){{return n.indexOf(t)>=0;}});}}).slice(0,80);}}}}else list=list.slice(0,25);}}
-if(!list.length){{box.appendChild(el('div','muted small',q?'No TPX product matches "'+$('q').value+'".':'Nothing here yet.'));return;}}
+if(!list.length){{box.appendChild(el('div','muted small',q?'No Tradepost product matches "'+$('q').value+'".':'Nothing here yet.'));return;}}
 list.forEach(function(u,i){{var on=isSelected(u.id,u.name);var r=el('div','r'+(on?' on':''));
 r.innerHTML='<div class="rn"><b>'+(state.tab==='hot'?(i+1)+'. ':'')+esc(u.name)+'</b><div class="rs">'+esc(u.set||'')+(u.group?' · '+(u.group==='tcg'?'Pokémon/OP':'Sports'):'')+'</div></div><div class="num hide-sm"><div>'+compact(u.vol,true)+'</div><div class="rs">30d volume</div></div><div class="num hide-sm">'+(u.last?usd(u.last):'—')+'</div><div class="num"></div>';
 var b=el('button','tb'+(on?' x':' primary'),on?'Remove':'+ Add');b.type='button';b.addEventListener('click',function(){{if(on)removeProduct(u.id,u.name);else addProduct(u);}});r.lastChild.appendChild(b);box.appendChild(r);}});}}
@@ -813,6 +813,7 @@ try{{if(!localStorage.getItem('seenHelp')&&location.hash!=='#tv'){{$('help').hid
 renderBoard();
 var settled=false;function settle(){{if(settled)return;settled=true;state.loaded=true;renderBoard();}}
 setTimeout(settle,4000);
+$('btnRefresh').onclick=function(){{var b=this;b.disabled=true;b.textContent='↻ Refreshing…';var done=function(msg){{b.textContent=msg;setTimeout(function(){{b.disabled=false;b.textContent='↻ Refresh';}},6000);}};var fallback=function(){{done('↻ Reloading…');setTimeout(function(){{location.reload();}},800);}};if(!(window.claude&&claude.use))return fallback();claude.use('comments').then(function(c){{if(!c||!c.canSendToClaude)return fallback();return Promise.resolve(c.canSendToClaude()).then(function(st){{if(st!=='available')return fallback();return c.anchorFor(b).then(function(a){{return c.sendToClaude({{anchor:a,text:'Refresh the board now: pull fresh Tradepost, Dealernet and TCGplayer prices and republish.'}});}}).then(function(){{done('✓ Refresh requested · new prices in ~10 min');}});}});}}).catch(function(){{fallback();}});}};
 if(window.claude&&claude.use){{claude.use('db').then(function(db){{if(!db){{settle();return;}}state.db=db;
 db.doc('settings/board').onSnapshot(function(snap){{var d=snap.exists?snap.data():null;if(d){{if(Array.isArray(d.products))state.selected=d.products.slice();if(typeof d.hours==='number'){{state.hours=d.hours;$('cadence').value=String(d.hours);}}}}settle();renderBoard();if(!$('add').hidden)renderRows();}},function(){{settle();}});}});
 claude.use('user').then(function(u){{if(!u)return;Promise.resolve(u.can('data.write')).then(function(w){{state.canWrite=w;if(w===false)status('You can view this board; only its owner can change it.');}});}});}}else settle();

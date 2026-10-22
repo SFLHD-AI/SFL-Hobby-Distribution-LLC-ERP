@@ -23,7 +23,7 @@ def _run(tmp_path, *extra, env=None):
 
 def test_dashboard_renders_demo(tmp_path):
     page, hist = _run(tmp_path)
-    assert "<title>TPX Dealernet Edges</title>" in page
+    assert "<title>Live Sealed Product Radar</title>" in page
     assert "Sample data" in page  # demo is always labelled
     assert "Actions: OFF" in page
     assert "2024 Topps Chrome Baseball Hobby Box" in page
