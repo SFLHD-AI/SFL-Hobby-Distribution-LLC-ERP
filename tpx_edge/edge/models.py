@@ -128,6 +128,10 @@ class VenueQuote(BaseModel):
     tcg_product_id: Optional[str] = None
     tcg_market: Optional[int] = None
     tcg_low: Optional[int] = None
+    tcg_last: Optional[int] = None  # most recent TCGplayer sale (page source)
+    tcg_last_at: Optional[str] = None
+    tcg_trend: Optional[list] = None  # [{t, market, sold}]
+    tcg_trend_pct: Optional[float] = None
 
     fetched_at: datetime = Field(default_factory=utcnow)
     source: str = ""

@@ -43,6 +43,8 @@ class Settings(BaseSettings):
     tcgplayer_public_key: Optional[str] = None
     tcgplayer_private_key: Optional[SecretStr] = None
     tcgplayer_api_url: str = "https://api.tcgplayer.com"
+    # Without API keys, read the public product page data (market price, last sale, trend).
+    tcgplayer_pages: bool = True
 
     # Dealernet fee schedule: listed-price trades are free; name-your-price /
     # counter offers cost 3% on the Vendor plan. We model the *taker* (hit a

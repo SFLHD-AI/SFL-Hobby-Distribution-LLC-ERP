@@ -15,7 +15,7 @@ from .matching import Mappings, best_match, resolve_dealernet_name, score
 from .models import CostModel, Product, VenueQuote
 from .tpx.catalog import Catalog
 from .tpx.client import FixtureRecorder, TPXClient
-from .tcgplayer import TCGplayerClient, TCGplayerIdMap, TCGPrice
+from .tcgplayer import TCGplayerPages, TCGplayerClient, TCGplayerIdMap, TCGPrice
 from .tpx.market import MarketData
 
 log = logging.getLogger("edge.service")
@@ -62,26 +62,41 @@ class EdgeService:
         self.market = MarketData(self.client)
         self.mappings = Mappings(settings.mappings_path)
         self.tcg: Optional[TCGplayerClient] = None
+        self.tcg_pages: Optional[TCGplayerPages] = None
         self.tcg_ids = TCGplayerIdMap(self.client, settings.cache_dir)
         if settings.tcgplayer_public_key and settings.tcgplayer_private_key:
             self.tcg = TCGplayerClient(settings.tcgplayer_public_key, settings.tcgplayer_private_key.get_secret_value(),
                                        settings.tcgplayer_api_url, settings.cache_dir)
+        if settings.tcgplayer_pages:  # no keys: read the public product page data instead
+            self.tcg_pages = TCGplayerPages(settings.cache_dir)
 
     def close(self) -> None:
         self.client.close()
         if self.tcg:
             self.tcg.close()
+        if self.tcg_pages:
+            self.tcg_pages.close()
 
     # --- TCGplayer reference ----------------------------------------------
     def tcgplayer_price(self, product: Product, tcgplayer_id: Optional[str] = None) -> Optional[TCGPrice]:
         """TCGplayer market/low for the product, or None (no keys, no mapping, unpriced, or API down)."""
-        if self.tcg is None:
+        if self.tcg is None and self.tcg_pages is None:
             return None
         pid = tcgplayer_id or self.tcg_ids.get(product.asset_configuration_id)
         if not pid:
             return None
         try:
-            return self.tcg.prices([pid]).get(str(pid))
+            if self.tcg is not None:
+                api = self.tcg.prices([pid]).get(str(pid))
+                if api and self.tcg_pages is None:
+                    return api
+            else:
+                api = None
+            page = self.tcg_pages.price(pid) if self.tcg_pages is not None else None
+            if api and page:  # keys give the market price; the page adds the last sale and trend
+                api.last_sale_cents, api.last_sale_at, api.trend, api.trend_pct = page.last_sale_cents, page.last_sale_at, page.trend, page.trend_pct
+                return api
+            return api or page
         except Exception as exc:  # noqa: BLE001 - a reference price must never break the compare
             log.warning("TCGplayer price unavailable for %s: %s", product.name, exc)
             return None
@@ -209,6 +224,7 @@ class EdgeService:
         if tcg:
             for q, _ in tpx:
                 q.tcg_product_id, q.tcg_market, q.tcg_low = tcg.product_id, tcg.market_cents, tcg.low_cents
+                q.tcg_last, q.tcg_last_at, q.tcg_trend, q.tcg_trend_pct = tcg.last_sale_cents, tcg.last_sale_at, tcg.trend, tcg.trend_pct
         dn_q = dn_cm = None
         how = None
         if dn_source is not None:
