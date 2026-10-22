@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     dealernet_api_key: Optional[SecretStr] = None
     dealernet_api_url: str = "https://www.dealernetx.com/api"
 
+    # TCGplayer market price as a reference (sealed TCG only). Read-only.
+    tcgplayer_public_key: Optional[str] = None
+    tcgplayer_private_key: Optional[SecretStr] = None
+    tcgplayer_api_url: str = "https://api.tcgplayer.com"
+
     # Dealernet fee schedule: listed-price trades are free; name-your-price /
     # counter offers cost 3% on the Vendor plan. We model the *taker* (hit a
     # listed price) as 0 bps and the *maker* (name your price) as 300 bps.

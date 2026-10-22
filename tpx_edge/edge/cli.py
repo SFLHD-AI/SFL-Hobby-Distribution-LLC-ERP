@@ -287,7 +287,8 @@ def _run_watchlist(ctx: typer.Context, path: Path, dn_csv: Optional[str], m: Opt
             try:
                 _, assessments = svc.compare(prod, src, margin=m, shipping_cents=_usd_cents(ship) if ship is not None else None,
                                              dn_name=item.get("dn_name"), dn_candidates=csv_src.products() if csv_src else None,
-                                             with_candles=with_candles)
+                                             with_candles=with_candles,
+                                             tcgplayer_id=str(item["tcgplayer_id"]) if item.get("tcgplayer_id") else None)
             except (TPXError, NotImplementedError) as exc:
                 fail(f"{name}: {exc}")
                 continue

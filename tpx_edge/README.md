@@ -118,6 +118,16 @@ product,side,price,qty,member,observed_at
 Wide (one row per product): `product,bid,bid_qty,ask,ask_qty[,observed_at]`.
 Prices in dollars; `-` as the path reads stdin. See `dealernet.example.csv`.
 
+### TCGplayer reference (sealed TCG)
+
+Set `TCGPLAYER_PUBLIC_KEY` and `TCGPLAYER_PRIVATE_KEY` and the dashboard adds a
+**vs TCGplayer mkt** column: TCGplayer market price, then the TPX and Dealernet
+high bid / low ask as a percent of it (100% = at market). The TCGplayer product
+is found by id from TPX's own catalog feed (`externalIds.TCG_PLAYER_ID`), so no
+name matching; override per product with `tcgplayer_id:` in the watchlist.
+Sports wax has no TCGplayer listing and shows "—". Read-only (token + pricing
+GETs only); the hosts `api.tcgplayer.com` must be reachable.
+
 ## How the numbers are built
 
 Everything is computed in integer/Decimal **cents**; output is $ and % of

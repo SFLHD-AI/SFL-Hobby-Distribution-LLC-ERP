@@ -14,6 +14,7 @@ from decimal import Decimal
 from typing import Optional, Sequence
 
 from .edge import Assessment
+from .tcgplayer import pct_of
 
 MARKET_COLORS = ["var(--s1)", "var(--s2)", "var(--s3)", "var(--s4)"]
 
@@ -28,6 +29,24 @@ def _usd(c) -> str:
 
 def _pct(v) -> str:
     return "—" if v is None else f"{Decimal(v):+.1f}%"
+
+
+def _pct_mkt(price, ref) -> str:
+    p = pct_of(price, ref)
+    return "—" if p is None else f"{p:.0f}%"
+
+
+def _tcg_cell(a: Assessment) -> str:
+    """Bid/ask on each venue as % of TCGplayer market price (100% == at market)."""
+    ref = a.tpx.tcg_market
+    if ref is None:
+        return '<td class="num muted" data-v="-1e12">—</td>'
+    lines = [f'<b>{_usd(ref)}</b>',
+             f'<span class="small">TPX {_pct_mkt(a.tpx.best_bid, ref)} / {_pct_mkt(a.tpx.best_ask, ref)}</span>']
+    if a.dn:
+        lines.append(f'<span class="small">DN {_pct_mkt(a.dn.best_bid, ref)} / {_pct_mkt(a.dn.best_ask, ref)}</span>')
+    sort = pct_of(a.tpx.best_bid, ref)
+    return f'<td class="num" data-v="{float(sort) if sort is not None else -1e12}">{"<br>".join(lines)}</td>'
 
 
 def _e(s) -> str:
@@ -66,7 +85,7 @@ def price_chart(series: dict[str, list[dict]], refs: dict[str, Optional[int]], w
     if dates:
         parts.append(f'<text x="{left}" y="{h - 4}" class="axis">{_e(dates[0][5:])}</text>')
         parts.append(f'<text x="{right}" y="{h - 4}" class="axis" text-anchor="end">{_e(dates[-1][5:])}</text>')
-    ref_style = {"DN bid": "ref-bid", "DN ask": "ref-ask", "Fair value": "ref-fv"}
+    ref_style = {"DN bid": "ref-bid", "DN ask": "ref-ask", "Fair value": "ref-fv", "TCG market": "ref-tcg"}
     for label, v in refs.items():
         if v is None:
             continue
@@ -88,7 +107,7 @@ def price_chart(series: dict[str, list[dict]], refs: dict[str, Optional[int]], w
     parts.append("</svg>")
     legend = [f'<span class="key"><i style="background:{MARKET_COLORS[i % len(MARKET_COLORS)]}"></i>{_e(n)} close</span>'
               for i, n in enumerate(series)]
-    for label, cls in (("DN bid", "k-bid"), ("DN ask", "k-ask"), ("Fair value", "k-fv")):
+    for label, cls in (("DN bid", "k-bid"), ("DN ask", "k-ask"), ("Fair value", "k-fv"), ("TCG market", "k-tcg")):
         if refs.get(label) is not None:
             legend.append(f'<span class="key"><i class="{cls}"></i>{label} {_usd(refs[label])}</span>')
     return "".join(parts) + f'<div class="legend">{"".join(legend)}</div>'
@@ -130,6 +149,7 @@ def _row(a: Assessment, hist: list[dict]) -> str:
         f'<td class="num" data-v="{float(a.risk_adjusted_score)}">{_usd(a.risk_adjusted_score * 100)}</td>'
         f'<td class="num">{_usd(a.tpx.best_bid)} / {_usd(a.tpx.best_ask)}</td>'
         f'<td class="num">{(_usd(a.dn.best_bid) + " / " + _usd(a.dn.best_ask)) if a.dn else "—"}</td>'
+        f'{_tcg_cell(a)}'
         f'<td class="num">{_usd(a.fv.fair_value_cents) if a.fv.has_fv else "no FV"}</td>'
         f'<td class="num" data-v="{float(chg) if chg is not None else -1e12}">{_pct(chg)}</td>'
         f'<td>{spark}</td>'
@@ -141,8 +161,9 @@ def _card(product: str, items: list[Assessment]) -> str:
     series = {a.tpx_market: a.tpx.raw.get("candles_d1") or [] for a in items}
     dn = next((a.dn for a in items if a.dn), None)
     fv = next((a.fv.fair_value_cents for a in items if a.fv.has_fv), None)
+    tcg = next((a.tpx.tcg_market for a in items if a.tpx.tcg_market is not None), None)
     chart = price_chart(series, {"DN bid": dn.best_bid if dn else None, "DN ask": dn.best_ask if dn else None,
-                                 "Fair value": fv})
+                                 "Fair value": fv, "TCG market": tcg})
     best = max((a for a in items if a.best_arb), key=lambda a: a.best_arb.edge_per_unit_cents, default=None)
     if best and best.best_arb.edge_per_unit_cents > 0:
         tag = f'<span class="pill pos">edge {_usd(best.best_arb.edge_per_unit_cents)}/unit</span>'
@@ -235,9 +256,10 @@ td:nth-child(2){{min-width:200px}}td:first-child{{min-width:190px}}
 .axis{{fill:var(--muted);font-size:10px}}
 .ref-bid{{stroke:var(--bid);stroke-dasharray:5 4;stroke-width:1.5}}.ref-ask{{stroke:var(--ask);stroke-dasharray:5 4;stroke-width:1.5}}
 .ref-fv{{stroke:var(--fv);stroke-dasharray:2 3;stroke-width:1.5}}
+.ref-tcg{{stroke:var(--s3);stroke-dasharray:6 3;stroke-width:1.5}}
 .legend{{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--muted)}}
 .key i{{display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:middle;border-radius:2px}}
-.k-bid{{background:var(--bid)}}.k-ask{{background:var(--ask)}}.k-fv{{background:var(--fv)}}
+.k-bid{{background:var(--bid)}}.k-ask{{background:var(--ask)}}.k-fv{{background:var(--fv)}}.k-tcg{{background:var(--s3)}}
 .stats{{margin:8px 0 0;padding-left:18px}}.spark{{width:120px;height:28px}}
 .spark-pos{{stroke:var(--pos)}}.spark-neg{{stroke:var(--neg)}}
 code{{font-size:12px}}footer{{margin-top:28px}}
@@ -252,7 +274,7 @@ code{{font-size:12px}}footer{{margin-top:28px}}
 <span class="muted small">Click a column to sort.</span></div>
 <div class="tablewrap"><table id="edges"><thead><tr>
 <th>Product / TPX market</th><th>Best move</th><th class="num">Edge / unit</th><th class="num">Edge %</th><th class="num">Size</th>
-<th class="num">Score</th><th class="num">TPX bid / ask (clean)</th><th class="num">DN bid / ask</th><th class="num">Fair value</th>
+<th class="num">Score</th><th class="num">TPX bid / ask (clean)</th><th class="num">DN bid / ask</th><th class="num" title="High bid / low ask as % of TCGplayer market price">vs TCGplayer mkt<br><span class="muted small">bid / ask</span></th><th class="num">Fair value</th>
 <th class="num">TPX 30d</th><th>Edge trend</th><th>Flags</th></tr></thead><tbody>{rows}</tbody></table></div>
 <h2>Price trends</h2>
 <div class="cards">{cards}</div>

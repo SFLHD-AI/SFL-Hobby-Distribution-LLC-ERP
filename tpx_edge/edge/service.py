@@ -15,6 +15,7 @@ from .matching import Mappings, best_match, resolve_dealernet_name, score
 from .models import CostModel, Product, VenueQuote
 from .tpx.catalog import Catalog
 from .tpx.client import FixtureRecorder, TPXClient
+from .tcgplayer import TCGplayerClient, TCGplayerIdMap, TCGPrice
 from .tpx.market import MarketData
 
 log = logging.getLogger("edge.service")
@@ -58,9 +59,30 @@ class EdgeService:
         )
         self.market = MarketData(self.client)
         self.mappings = Mappings(settings.mappings_path)
+        self.tcg: Optional[TCGplayerClient] = None
+        self.tcg_ids = TCGplayerIdMap(self.client, settings.cache_dir)
+        if settings.tcgplayer_public_key and settings.tcgplayer_private_key:
+            self.tcg = TCGplayerClient(settings.tcgplayer_public_key, settings.tcgplayer_private_key.get_secret_value(),
+                                       settings.tcgplayer_api_url, settings.cache_dir)
 
     def close(self) -> None:
         self.client.close()
+        if self.tcg:
+            self.tcg.close()
+
+    # --- TCGplayer reference ----------------------------------------------
+    def tcgplayer_price(self, product: Product, tcgplayer_id: Optional[str] = None) -> Optional[TCGPrice]:
+        """TCGplayer market/low for the product, or None (no keys, no mapping, unpriced, or API down)."""
+        if self.tcg is None:
+            return None
+        pid = tcgplayer_id or self.tcg_ids.get(product.asset_configuration_id)
+        if not pid:
+            return None
+        try:
+            return self.tcg.prices([pid]).get(str(pid))
+        except Exception as exc:  # noqa: BLE001 - a reference price must never break the compare
+            log.warning("TCGplayer price unavailable for %s: %s", product.name, exc)
+            return None
 
     # --- products ---------------------------------------------------------
     def search(self, text: str, limit: int = 10, *, enrich: bool = False) -> list[Product]:
@@ -155,9 +177,14 @@ class EdgeService:
     # --- full compare -----------------------------------------------------
     def compare(self, product: Product, dn_source: Optional[DealernetSource], *, margin: Optional[Decimal] = None,
                 shipping_cents: Optional[int] = None, dn_name: Optional[str] = None,
-                dn_candidates: Optional[list[str]] = None, with_candles: bool = True) -> tuple[ProductQuotes, list[Assessment]]:
+                dn_candidates: Optional[list[str]] = None, with_candles: bool = True,
+                tcgplayer_id: Optional[str] = None) -> tuple[ProductQuotes, list[Assessment]]:
         s = self.settings
         tpx = self.tpx_quotes(product, shipping_cents, with_candles=with_candles)
+        tcg = self.tcgplayer_price(product, tcgplayer_id)
+        if tcg:
+            for q, _ in tpx:
+                q.tcg_product_id, q.tcg_market, q.tcg_low = tcg.product_id, tcg.market_cents, tcg.low_cents
         dn_q = dn_cm = None
         how = None
         if dn_source is not None:

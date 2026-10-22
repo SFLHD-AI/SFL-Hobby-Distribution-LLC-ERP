@@ -200,6 +200,17 @@ query EdgeFairValues($input: GetKeyFairValuesByAssetConfigInput!) {
 }
 """ % ERROR_FRAGMENT
 
+# --- Catalog feed (daily bulk catalog; carries TCGplayer product ids) ----
+
+GET_CATALOG_FEEDS = """
+query EdgeCatalogFeeds($input: GetCatalogFeedsInput!) {
+  getCatalogFeeds(input: $input) {
+    %s
+    feeds { assetType uri uriExpiresAt recordCount lastUpdated }
+  }
+}
+""" % ERROR_FRAGMENT
+
 # --- Quotes (read-only pricing check, NOT a submission) ------------------
 
 GET_ORDER_QUOTE = """

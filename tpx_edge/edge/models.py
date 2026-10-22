@@ -124,6 +124,10 @@ class VenueQuote(BaseModel):
     fair_value_model: Optional[str] = None
     candles_7d: Optional["CandleSummary"] = None
     candles_30d: Optional["CandleSummary"] = None
+    # TCGplayer reference price for the same product (sealed TCG only); cents.
+    tcg_product_id: Optional[str] = None
+    tcg_market: Optional[int] = None
+    tcg_low: Optional[int] = None
 
     fetched_at: datetime = Field(default_factory=utcnow)
     source: str = ""
