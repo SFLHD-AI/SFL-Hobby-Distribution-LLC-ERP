@@ -1,5 +1,6 @@
 # Starter watchlist: the most liquid sealed products on TPX (scanned 2026-10-21).
-# Add dn_bid/dn_ask here or pass --dn-csv to bring in Dealernet.
+# Dealernet prices come from DEALERNET_ACCESS=scrape (or --dn-csv). `shipping:` is $ per physical
+# move of one unit; it defaults to $15/box, $45/case, so packs and tins get a lower figure here.
 products:
   - name: "2025/26 Topps Chrome Update Basketball Jumbo Box"
     tpx_id: 815daa7f-2781-40c8-853c-1f33d870b54a
@@ -30,16 +31,20 @@ products:
   - name: "Chaos Rising Elite Trainer Box"
     tpx_id: 4675af6b-63e8-4701-a9a4-63af808bc593
   - name: "Destined Rivals Sleeved Booster Pack"
+    shipping: 4
     tpx_id: 0d873d05-af09-48b9-8934-557d6ff7ab6e
   - name: "30th Celebration Elite Trainer Box Case"
     tpx_id: e648d6a9-7bcb-4dd6-a4b3-9f458d73d224
   - name: "Phantasmal Flames Booster Pack"
+    shipping: 4
     tpx_id: c86234ea-5a41-4fce-8660-32d05fa96570
   - name: "Mega Charizard Tin (Mega Charizard X)"
+    shipping: 4
     tpx_id: a819904a-712a-41e9-a402-dc9d870561c8
   - name: "30th Celebration Ultra-Premium Collection Case"
     tpx_id: 83fcfd29-5df8-4a23-bcb6-10871e709bfd
   - name: "30th Celebration Pack"
+    shipping: 4
     tpx_id: eb1d3ce4-fc1a-45b9-b736-8b130a3f79fb
   - name: "Perfect Order Elite Trainer Box"
     tpx_id: 87870b69-b667-4715-8072-a6f89270198c

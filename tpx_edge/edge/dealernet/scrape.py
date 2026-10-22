@@ -37,7 +37,7 @@ from .base import DealernetLevel, DealernetQuote, DealernetSource, dollars_to_ce
 log = logging.getLogger("edge.dealernet.scrape")
 
 BASE = "https://www.dealernetx.com/"
-MATCH_THRESHOLD = 70.0
+MATCH_THRESHOLD = 65.0
 _PRICE_RE = re.compile(r"\$\s*([\d,]+(?:\.\d+)?)")
 _ROW_RE = re.compile(r"(?is)<tr\b[^>]*>(.*?)</tr>")
 _TD_RE = re.compile(r"(?is)<td\b([^>]*)>(.*?)</td>")
@@ -129,13 +129,19 @@ _SERIES = re.compile(r"\b(mega evolution|scarlet (and|&) violet|sword (and|&) sh
                      r"nba|mlb|nfl|nhl|split year|single year)\b")
 _SYNONYMS = [(re.compile(r"\belite trainer box\b"), "etb"), (re.compile(r"\bpokemon center\b|\bpkc\b"), "pc"),
              (re.compile(r"\btins\b"), "tin"), (re.compile(r"\bbreakers?'? delight\b"), "breakers delight"),
-             (re.compile(r"\bsuper[- ]premium\b"), "spc"), (re.compile(r"\bultra[- ]premium\b"), "upc")]
-_STOP = {"box", "boxes", "edition", "the", "of", "and", "factory", "sealed", "pack", "packs", "cards", "set", "v1", "v2", "v3"}
+             (re.compile(r"\bsuper[- ]premium\b"), "spc"), (re.compile(r"\bultra[- ]premium\b"), "upc"),
+             (re.compile(r"\bbooster \(sleeved\)|\bsleeved booster packs?\b"), "sleeved pack"),
+             (re.compile(r"\bbooster \(bundle\)"), "bundle"), (re.compile(r"\bbooster \(unlimited\)"), "booster box"),
+             (re.compile(r"\bbooster packs?\b"), "pack")]
+_STOP = {"box", "boxes", "edition", "the", "of", "and", "factory", "sealed", "cards", "set", "v1", "v2", "v3"}
+_MCODE = re.compile(r"^m\d+$")
 # Words that name a different product format; one side having it and the other not is a mismatch.
 _FORMAT_WORDS = {"hobby", "jumbo", "blaster", "mega", "hanger", "cello", "retail", "breakers", "delight", "fotl", "choice",
-                 "binder", "blister", "bundle", "display", "tin", "mini", "etb", "pc", "spc", "upc", "collection",
-                 "build", "battle", "sleeved", "unlimited", "booster", "sapphire", "logofractor", "black", "update",
-                 "cosmic", "definitive", "pristine", "finest", "museum", "x", "ex"}
+                 "binder", "blister", "bundle", "display", "tin", "mini", "etb", "pc", "pack", "poster", "stickers",
+                 "build", "battle", "sleeved", "booster", "sapphire", "logofractor", "black", "update",
+                 "cosmic", "definitive", "pristine", "finest", "museum", "spc", "upc"}
+_SOFT_FORMAT_WORDS = {"collection", "x", "ex"}
+_BOX_FORMATS = _FORMAT_WORDS - {"hobby", "black", "update", "cosmic", "definitive", "pristine", "finest", "museum", "sapphire", "logofractor"}
 _SPORTS = {"baseball", "basketball", "football", "soccer", "hockey", "golf", "racing", "tennis", "wrestling", "ufc"}
 _CASE_WORDS = re.compile(r"\b(\d+\s*-?\s*box(es)?\s*)?case\b")
 _YEAR = re.compile(r"\b(?:(19|20)(\d{2})(?:[-/]\d{2,4})?|(\d{2})/\d{1,2})\b")
@@ -152,7 +158,7 @@ def _page_tokens(name: str) -> tuple[Optional[int], set[str]]:
     s = _SERIES.sub(" ", s)
     for pat, rep in _SYNONYMS:
         s = pat.sub(rep, s)
-    toks = {t for t in re.split(r"[^\w]+", s) if t and t not in _STOP}
+    toks = {t for t in re.split(r"[^\w]+", s) if t and t not in _STOP and not _MCODE.match(t)}
     return y, toks
 
 
@@ -167,9 +173,19 @@ def page_match_score(tpx_name: str, dn_name: str) -> float:
     sa, sb = a & _SPORTS, b & _SPORTS
     if sa and sb and sa != sb:
         return 0.0
-    cov = max(len(a & b) / len(a), len(a & b) / len(b))
-    fmt_mismatch = len((a ^ b) & _FORMAT_WORDS)
-    return max(0.0, 100.0 * cov - 30.0 * fmt_mismatch)
+    inter = len(a & b)
+    cov = (inter / len(a) + inter / len(b)) / 2
+    mism = (a ^ b) & _FORMAT_WORDS
+    if "hobby" in mism:
+        # Dealernet says "Hobby Jumbo" / "Sapphire Baseball Hobby" where TPX says "Jumbo Box" /
+        # "Sapphire Edition Box": a lone "hobby" only matters against a different box format.
+        other = b if "hobby" in a else a
+        if not (other & _BOX_FORMATS) or ("jumbo" in a and "jumbo" in b):
+            mism = mism - {"hobby"}
+            a, b = a - {"hobby"}, b - {"hobby"}
+            inter = len(a & b)
+            cov = (inter / len(a) + inter / len(b)) / 2 if a and b else 0.0
+    return max(0.0, 100.0 * cov - 30.0 * len(mism) - 10.0 * len((a ^ b) & _SOFT_FORMAT_WORDS))
 
 
 def search_queries(name: str) -> list[str]:
@@ -235,13 +251,25 @@ class ScrapeSource(DealernetSource):
         if not self._logged_in:
             self._login()
         self._wait()
-        r = self._http.get(url)
+        r = self._fetch(url)
         if not _logged_in(r.text):  # session expired
             self._login()
             self._wait()
-            r = self._http.get(url)
+            r = self._fetch(url)
         r.raise_for_status()
         return r.text
+
+    def _fetch(self, url: str) -> httpx.Response:
+        # Dealernet drops the odd keep-alive connection mid-run; one retry is enough.
+        for attempt in range(3):
+            try:
+                return self._http.get(url)
+            except httpx.TransportError as exc:
+                if attempt == 2:
+                    raise
+                log.debug("retrying %s after %s", url, exc)
+                time.sleep(2 * (attempt + 1))
+        raise AssertionError("unreachable")
 
     # --- product -> page ----------------------------------------------------
     def resolve_url(self, product: str) -> Optional[str]:
