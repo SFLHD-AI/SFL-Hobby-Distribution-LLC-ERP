@@ -6,7 +6,14 @@ from inventory.models import (CycleCount, PriceList, PriceListItem, Product,
 
 
 class ProductForm(forms.ModelForm):
+    """SKU and UPC fields get a camera-scan button (see static/js/scanner.js)."""
     new_category = forms.CharField(required=False, label="…or new category")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name in ("sku", "upc"):
+            if name in self.fields:
+                self.fields[name].widget.attrs["data-scan"] = ""
     new_brand = forms.CharField(required=False, label="…or new brand")
     # Opening stock (new products only): enter what you have and what it cost you
     initial_qty = forms.IntegerField(

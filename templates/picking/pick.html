@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>Pick {{ po.number }}</title>
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <script src="{% static 'js/scanner.js' %}" defer></script>
   <style>
     .flash-red { animation: flashred 0.6s ease 3; }
     @keyframes flashred { 0%,100% { background:#fff } 50% { background:#fecaca } }
@@ -37,7 +38,7 @@
 <div class="fixed bottom-0 inset-x-0 bg-white border-t border-slate-200 p-3 z-20">
   <div class="max-w-2xl mx-auto flex gap-2">
     <input id="scan" autocomplete="off" autocapitalize="none" spellcheck="false"
-           placeholder="⌨ scan barcode…"
+           placeholder="⌨ scan or 📷 camera…" data-scan data-scan-enter data-scan-continuous
            class="flex-1 rounded-xl border-2 border-indigo-400 px-4 py-3.5 text-lg font-mono focus:ring-4 focus:ring-indigo-200">
     <button id="completeBtn" disabled
             class="rounded-xl bg-emerald-600 disabled:bg-slate-300 text-white font-bold px-5 py-3.5 text-lg">

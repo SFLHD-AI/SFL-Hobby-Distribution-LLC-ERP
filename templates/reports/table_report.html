@@ -30,7 +30,7 @@
   {% endif %}
   {% if show_sku_filter %}
     <div><label class="text-xs text-slate-500 block mb-1">SKU contains</label>
-      <input type="text" name="sku" value="{{ sku }}"></div>
+      <input type="text" name="sku" value="{{ sku }}" data-scan></div>
     <div><label class="text-xs text-slate-500 block mb-1">Type</label>
       <select name="type"><option value="">All</option>
         {% for v, l in movement_types %}<option value="{{ v }}" {% if mtype == v %}selected{% endif %}>{{ l }}</option>{% endfor %}

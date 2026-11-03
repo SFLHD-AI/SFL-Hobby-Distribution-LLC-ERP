@@ -18,7 +18,7 @@
 
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
   <input type="text" name="q" value="{{ request.GET.q }}" placeholder="SKU / name / UPC / bin — scan here"
-         class="w-64" autofocus>
+         class="w-64" autofocus data-scan data-scan-submit>
   <select name="category"><option value="">All categories</option>
     {% for c in categories %}<option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
   <select name="brand"><option value="">All brands</option>

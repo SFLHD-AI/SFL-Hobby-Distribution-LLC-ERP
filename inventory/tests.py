@@ -262,3 +262,43 @@ class SupplierBillTests(TestCase):
         page = self.client.get(f"/inventory/receiving/{self.r.pk}/")
         self.assertContains(page, "Supplier bill")
         self.assertContains(page, "Unpaid")
+
+
+class CameraScannerWiringTests(TestCase):
+    """Every place a SKU can be typed offers the phone-camera scan button."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from decimal import Decimal
+        from inventory.models import PriceList, Product, Receipt
+        from orders.tests import make_customer
+        from orders.models import PurchaseOrder
+        self.client.force_login(User.objects.create_superuser("scan", password="x"))
+        self.p = Product.objects.create(sku="SCAN-1", name="Box", upc="012345678905",
+                                        default_price=Decimal("10"))
+        self.receipt = Receipt.objects.create()
+        self.pl = PriceList.objects.create(name="Wholesale")
+        self.po = PurchaseOrder.objects.create(customer=make_customer("Scan Shop"))
+
+    def test_scanner_script_loads_on_app_pages_and_pick_screen(self):
+        self.assertContains(self.client.get("/inventory/"), "js/scanner.js")
+        self.assertContains(self.client.get(f"/pick/{self.po.pk}/"), "js/scanner.js")
+
+    def test_inputs_opt_in(self):
+        html = self.client.get("/inventory/").content.decode()
+        self.assertIn('name="q"', html)
+        self.assertRegex(html, r'name="q"[^>]*data-scan')          # product search
+        form = self.client.get("/inventory/new/").content.decode()
+        self.assertRegex(form, r'name="sku"[^>]*data-scan')
+        self.assertRegex(form, r'name="upc"[^>]*data-scan')
+        pick = self.client.get(f"/pick/{self.po.pk}/").content.decode()
+        self.assertIn("data-scan-continuous", pick)
+        po = self.client.get(f"/orders/{self.po.pk}/").content.decode()
+        self.assertRegex(po, r'name="barcode"[^>]*data-scan-submit')
+
+    def test_product_selects_carry_sku_and_upc(self):
+        for url in (f"/inventory/receiving/{self.receipt.pk}/", f"/inventory/price-lists/{self.pl.pk}/",
+                    f"/orders/{self.po.pk}/"):
+            html = self.client.get(url).content.decode()
+            self.assertIn("data-scan-select", html, url)
+            self.assertIn('data-upc="012345678905"', html, url)

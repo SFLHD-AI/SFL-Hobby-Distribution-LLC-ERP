@@ -66,9 +66,9 @@
          class="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg flex items-center justify-center hover:bg-slate-50">🏠</a>
       {% if not u_warehouse_only %}
       <form action="{% url 'global_search' %}" method="get" class="flex-1 max-w-xl">
-        <input name="q" value="{{ request.GET.q }}" placeholder="Search…"
+        <input name="q" value="{{ request.GET.q }}" placeholder="Search… (📷 scans a barcode)"
                class="w-full rounded-lg border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-               autocomplete="off">
+               autocomplete="off" data-scan data-scan-submit>
       </form>
       {% endif %}
       <div class="ml-auto flex items-center gap-3">
@@ -98,6 +98,7 @@ function toggleMenu(open) {
   if (m) m.classList.toggle('hidden', !open);
 }
 </script>
+<script src="{% static 'js/scanner.js' %}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

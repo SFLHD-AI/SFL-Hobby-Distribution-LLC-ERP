@@ -254,6 +254,21 @@ dimensions, assign items into it, and the box weight auto-sums from unit
 weights (override it after weighing the packed box). Box dims + weights are
 what you feed to Pirate Ship / ShipStation / uShip quotes.
 
+## Scanning barcodes with your phone
+
+Every field where you can type a SKU has a **📷** button next to it: the pick
+screen, the PO "scan barcode" box and product picker, the Receiving and
+price-list product pickers, the SKU and UPC fields on a product, the
+Inventory search, the search bar at the top of every page, and the SKU filter
+on the movements report. Tap it, allow camera access once, and point the
+phone at the barcode. The code is filled in (and submitted where that makes
+sense); on the pick screen the camera stays open so you can scan item after
+item. UPC-A/EAN, Code 128/39 and QR codes are read. The camera only works on
+an https:// address (your Railway or nginx deployment, or localhost) — plain
+http:// over the LAN will show the button but the browser will block the
+camera. A Bluetooth or USB scanner still works as before by typing into the
+same fields.
+
 ## Inventory
 
 - **Starting from an existing business?** Enter opening stock at *your* costs:

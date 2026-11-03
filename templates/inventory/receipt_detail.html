@@ -121,9 +121,9 @@
     <form method="post" class="flex flex-wrap gap-3 items-end field-inline bg-slate-50 rounded-lg p-3">
       {% csrf_token %}<input type="hidden" name="action" value="add_line">
       <div><label class="text-xs text-slate-500 block mb-1">Product (type SKU)</label>
-        <select name="product" required class="w-72">
+        <select name="product" required class="w-72" data-scan-select data-scan-next="qty">
           <option value="">— pick product —</option>
-          {% for p in products %}<option value="{{ p.pk }}">{{ p.sku }} — {{ p.name|truncatechars:40 }}</option>{% endfor %}
+          {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name|truncatechars:40 }}</option>{% endfor %}
         </select></div>
       <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
         <input type="number" name="qty" min="1" required class="w-24"></div>
