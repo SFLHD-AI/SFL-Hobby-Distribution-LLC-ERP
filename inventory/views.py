@@ -5,6 +5,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import models
+from django.utils import timezone
 from django.shortcuts import get_object_or_404, redirect, render
 
 from core.csvutils import csv_response
@@ -339,6 +340,25 @@ def receipt_detail(request, pk):
     line_form = ReceiptLineForm()
     header_form = ReceiptForm(instance=receipt)
     bill_form = ReceiptBillForm(instance=receipt)
+    if request.method == "POST" and request.POST.get("action") == "mark_paid":
+        # One tap: paid today from the default bank account (or personally
+        # if none is set). Details can be edited afterwards; matching a bank
+        # transaction later replaces these values.
+        from banking.models import BankAccount
+        if receipt.is_paid:
+            messages.info(request, "This bill is already marked paid.")
+        else:
+            receipt.paid_date = timezone.localdate()
+            receipt.paid_from = BankAccount.objects.filter(active=True, is_default=True).first()
+            receipt.save(update_fields=["paid_date", "paid_from"])
+            log_activity(request.user, "supplier_bill_paid", receipt,
+                         note=f"Marked paid {receipt.paid_date}"
+                              + (f" from {receipt.paid_from}" if receipt.paid_from else " (paid personally)"))
+            messages.success(request, f"RCV-{receipt.pk} marked paid today"
+                                      + (f" from {receipt.paid_from}." if receipt.paid_from
+                                         else ". No default bank account is set, so it counts as paid personally."))
+        nxt = request.POST.get("next")
+        return redirect(nxt if nxt and nxt.startswith("/") else "receipt_detail", *([] if nxt and nxt.startswith("/") else [pk]))
     if request.method == "POST" and request.POST.get("action") == "save_bill":
         # Bill / payment details stay editable after receiving
         bill_form = ReceiptBillForm(request.POST, instance=receipt)

@@ -3,67 +3,31 @@
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
   <h1 class="page-title">Accounting</h1>
-  <div class="inline-flex rounded-lg border border-slate-300 overflow-hidden text-sm">
-    <a href="?basis=cash" class="px-3 py-2 {% if basis == 'cash' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">Cash basis</a>
-    <a href="?basis=accrual" class="px-3 py-2 border-l border-slate-300 {% if basis == 'accrual' %}bg-indigo-600 text-white font-semibold{% else %}bg-white text-slate-700 hover:bg-slate-50{% endif %}">Accrual basis</a>
-  </div>
+  <a href="{% url 'accounting_tax_summary' %}" class="btn-primary">📄 Tax summary for my accountant</a>
 </div>
 
 <div class="rounded-xl border border-sky-200 bg-sky-50 text-sky-900 text-sm px-4 py-3 mb-5">
-  <b>Cash basis</b> = what your tax return uses. <b>Accrual</b> = the true picture of whether you're building equity.
-  Both are built from the same documents; only the timing differs. Showing <b>{{ basis_label|lower }}</b> first.
+  Your books run on the <b>cash basis</b>: money counts when it moves, which is what your tax return uses.
+  The <b>accrual</b> view is kept for one question only — <b>am I building equity?</b> — because it counts inventory on the shelf and invoices waiting to be paid.
 </div>
 
-{# ---- headline numbers, both bases side by side ---- #}
-<div class="card overflow-x-auto mb-5">
-  <table class="tbl">
-    <thead>
-      <tr>
-        <th>As of {{ today|date:"M j, Y" }}</th>
-        <th class="num {% if basis == 'cash' %}text-indigo-700{% endif %}">Cash</th>
-        <th class="num {% if basis == 'accrual' %}text-indigo-700{% endif %}">Accrual</th>
-        <th class="num hidden sm:table-cell">Accrual − cash</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td>Net income this month <span class="block text-xs text-slate-400">{{ month_start|date:"M j" }} – {{ today|date:"M j" }}</span></td>
-        <td class="num font-semibold {% if basis == 'cash' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_cash.net_income_mtd %}</td>
-        <td class="num font-semibold {% if basis == 'accrual' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_accrual.net_income_mtd %}</td>
-        <td class="num text-slate-500 hidden sm:table-cell">{% include "accounting/_money.html" with v=mtd_gap %}</td>
-      </tr>
-      <tr>
-        <td>Net income, fiscal year to date <span class="block text-xs text-slate-400">since {{ fy_start|date:"M j, Y" }}</span></td>
-        <td class="num font-semibold {% if basis == 'cash' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_cash.net_income_ytd %}</td>
-        <td class="num font-semibold {% if basis == 'accrual' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_accrual.net_income_ytd %}</td>
-        <td class="num text-slate-500 hidden sm:table-cell">{% include "accounting/_money.html" with v=ytd_gap %}</td>
-      </tr>
-      <tr class="font-semibold">
-        <td>Equity <span class="block text-xs text-slate-400 font-normal">what the business is worth on paper</span></td>
-        <td class="num text-lg {% if basis == 'cash' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_cash.total_equity %}</td>
-        <td class="num text-lg {% if basis == 'accrual' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_accrual.total_equity %}</td>
-        <td class="num text-slate-500 hidden sm:table-cell">{% include "accounting/_money.html" with v=equity_gap %}</td>
-      </tr>
-      <tr>
-        <td>Assets</td>
-        <td class="num {% if basis == 'cash' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_cash.total_assets %}</td>
-        <td class="num {% if basis == 'accrual' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_accrual.total_assets %}</td>
-        <td class="num hidden sm:table-cell"></td>
-      </tr>
-      <tr>
-        <td>Liabilities</td>
-        <td class="num {% if basis == 'cash' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_cash.total_liabilities %}</td>
-        <td class="num {% if basis == 'accrual' %}bg-indigo-50{% endif %}">{% include "accounting/_money.html" with v=snap_accrual.total_liabilities %}</td>
-        <td class="num hidden sm:table-cell"></td>
-      </tr>
-    </tbody>
-  </table>
-  <p class="text-xs text-slate-500 px-4 py-3 border-t border-slate-100">
-    {% if equity_gap > 0 %}Accrual equity is <b>{% include "accounting/_money.html" with v=equity_gap_abs %}</b> higher than cash: mostly inventory on the shelf and invoices waiting to be paid.
-    {% elif equity_gap < 0 %}Accrual equity is <b>{% include "accounting/_money.html" with v=equity_gap_abs %}</b> lower than cash: mostly bills you have received but not paid yet.
-    {% else %}Both bases agree right now.{% endif %}
-    <a href="{% url 'accounting_compare' %}" class="text-indigo-600 hover:underline">See exactly why →</a>
-  </p>
+{# ---- your books: cash basis ---- #}
+<h2 class="font-semibold text-slate-700 mb-2">Your books <span class="text-slate-400 font-normal text-sm">(cash basis — taxes)</span></h2>
+<div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+  <div class="stat"><p class="lbl">Net income this month</p><p class="val">{% include "accounting/_money.html" with v=snap_cash.net_income_mtd %}</p><p class="text-xs text-slate-400">{{ month_start|date:"M j" }} – {{ today|date:"M j" }}</p></div>
+  <div class="stat"><p class="lbl">Net income, year to date</p><p class="val">{% include "accounting/_money.html" with v=snap_cash.net_income_ytd %}</p><p class="text-xs text-slate-400">since {{ fy_start|date:"M j, Y" }}</p></div>
+  <a href="{% url 'accounting_pnl' %}?basis=cash&preset=ytd" class="stat hover:border-indigo-300"><p class="lbl">Income statement</p><p class="text-sm mt-1 text-indigo-600">Revenue, cost of goods, expenses →</p></a>
+  <a href="{% url 'expense_report_by_month' %}" class="stat hover:border-indigo-300"><p class="lbl">Spend by category</p><p class="text-sm mt-1 text-indigo-600">Month by month →</p></a>
+</div>
+
+{# ---- equity check: accrual ---- #}
+<h2 class="font-semibold text-slate-700 mb-2">Am I building equity? <span class="text-slate-400 font-normal text-sm">(accrual basis)</span></h2>
+<div class="grid sm:grid-cols-3 gap-3 mb-3">
+  <div class="stat border-indigo-200"><p class="lbl">Equity today</p><p class="val">{% include "accounting/_money.html" with v=snap_accrual.total_equity %}</p>
+    <p class="text-xs text-slate-400">assets {% include "accounting/_money.html" with v=snap_accrual.total_assets %} − owed {% include "accounting/_money.html" with v=snap_accrual.total_liabilities %}</p></div>
+  <div class="stat"><p class="lbl">Change this month</p><p class="val">{% include "accounting/_money.html" with v=snap_accrual.net_income_mtd %}</p><p class="text-xs text-slate-400">profit earned, accrual</p></div>
+  <div class="stat"><p class="lbl">Cash books say</p><p class="val">{% include "accounting/_money.html" with v=snap_cash.total_equity %}</p>
+    <p class="text-xs text-slate-400">{% if equity_gap > 0 %}{% include "accounting/_money.html" with v=equity_gap_abs %} is inventory + unpaid invoices{% elif equity_gap < 0 %}{% include "accounting/_money.html" with v=equity_gap_abs %} of bills not yet paid{% else %}both bases agree{% endif %} · <a href="{% url 'accounting_compare' %}?preset=ytd" class="text-indigo-600 hover:underline">why →</a></p></div>
 </div>
 
 <div class="grid lg:grid-cols-3 gap-4 mb-5">
@@ -73,7 +37,7 @@
       <h2 class="font-semibold">Equity, last 6 months <span class="text-slate-400 font-normal text-sm">(accrual basis)</span></h2>
       <a href="{% url 'accounting_equity_trend' %}?basis=accrual" class="text-sm text-indigo-600 hover:underline">Full trend & chart →</a>
     </div>
-    <p class="text-xs text-slate-500 px-4 mt-1">Always shown on the accrual basis, whatever the toggle says: inventory on the shelf and invoices waiting to be paid count, so this is the honest answer to "am I building equity?"</p>
+    <p class="text-xs text-slate-500 px-4 mt-1">Inventory on the shelf and invoices waiting to be paid count, so this is the honest answer. Up month after month = you are building equity.</p>
     <table class="tbl mt-2">
       <thead><tr><th>Month</th><th class="num">Equity</th><th class="num">Change</th><th class="num hidden sm:table-cell">Net income</th></tr></thead>
       <tbody>
@@ -112,48 +76,55 @@
           <dd class="font-medium">{% if lock.locked_through %}<span class="badge bg-amber-100 text-amber-800">{{ lock.locked_through|date:"M j, Y" }}</span>{% else %}<span class="badge bg-emerald-100 text-emerald-700">Open</span>{% endif %}</dd></div>
         <div class="flex justify-between gap-2"><dt class="text-slate-500">Accounts</dt><dd class="font-medium">{{ account_count }}</dd></div>
       </dl>
-      <p class="text-xs text-slate-400 mt-3">Change the basis or fiscal year in <a href="{% url 'settings_edit' %}" class="text-indigo-600 hover:underline">Settings</a>.</p>
+      <p class="text-xs text-slate-400 mt-3">Change the fiscal year in <a href="{% url 'settings_edit' %}" class="text-indigo-600 hover:underline">Settings</a>.</p>
     </div>
   </div>
 </div>
 
 {# ---- report cards ---- #}
-<h2 class="font-semibold text-slate-700 mb-3">Statements & tools</h2>
-<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-  <a href="{% url 'accounting_pnl' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
+<h2 class="font-semibold text-slate-700 mb-3">For taxes (cash basis)</h2>
+<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+  <a href="{% url 'accounting_tax_summary' %}" class="card-pad border-indigo-200 bg-indigo-50/40 hover:border-indigo-400 transition-colors">
+    <p class="text-2xl mb-2">📄</p><h3 class="font-semibold">Tax summary PDF</h3>
+    <p class="text-sm text-slate-500 mt-1">One page for your accountant: revenue, cost of goods, expenses by Schedule C line, mileage, sales tax, 1099 vendors.</p></a>
+  <a href="{% url 'accounting_pnl' %}?basis=cash" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">💰</p><h3 class="font-semibold">Income statement</h3>
-    <p class="text-sm text-slate-500 mt-1">Income, cost of goods, expenses and net income for any period. Profit & loss.</p></a>
-  <a href="{% url 'accounting_balance_sheet' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">⚖️</p><h3 class="font-semibold">Balance sheet</h3>
-    <p class="text-sm text-slate-500 mt-1">What you own, what you owe and your equity on any date.</p></a>
-  <a href="{% url 'accounting_compare' %}" class="card-pad border-indigo-200 bg-indigo-50/40 hover:border-indigo-400 transition-colors">
-    <p class="text-2xl mb-2">🔀</p><h3 class="font-semibold">Cash vs. accrual</h3>
-    <p class="text-sm text-slate-500 mt-1">Both bases side by side with a plain-words bridge explaining every dollar of difference. Your key report.</p></a>
-  <a href="{% url 'accounting_equity_trend' %}?basis=accrual" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">📈</p><h3 class="font-semibold">Equity trend <span class="text-xs font-normal text-slate-400">(accrual basis)</span></h3>
-    <p class="text-sm text-slate-500 mt-1">Month-end equity, assets and liabilities over time. Am I building equity?</p></a>
-  <a href="{% url 'accounting_trial_balance' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🧮</p><h3 class="font-semibold">Trial balance</h3>
-    <p class="text-sm text-slate-500 mt-1">Every account's debit or credit balance. Proves the books balance.</p></a>
-  <a href="{% url 'accounting_general_ledger' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">📖</p><h3 class="font-semibold">General ledger</h3>
-    <p class="text-sm text-slate-500 mt-1">Every line that hit one account, with a link back to the document.</p></a>
-  <a href="{% url 'accounting_journal' %}?basis={{ basis }}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🧾</p><h3 class="font-semibold">Journal export</h3>
-    <p class="text-sm text-slate-500 mt-1">Flat list of all journal lines for a period. CSV for your accountant.</p></a>
-  <a href="{% url 'accounting_accounts' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🗂️</p><h3 class="font-semibold">Chart of accounts</h3>
-    <p class="text-sm text-slate-500 mt-1">The list of accounts money lands in, with current balances.</p></a>
+    <p class="text-sm text-slate-500 mt-1">Revenue, cost of goods, expenses and net income for any period, on the cash basis.</p></a>
+  <a href="{% url 'expense_report_unpaid_bills' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📬</p><h3 class="font-semibold">Unpaid bills</h3>
+    <p class="text-sm text-slate-500 mt-1">Bills and supplier orders you still owe, with one-click Mark paid.</p></a>
+  <a href="{% url 'expense_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🗃️</p><h3 class="font-semibold">Expenses year-end ZIP</h3>
+    <p class="text-sm text-slate-500 mt-1">Every expense, the receipts folder, mileage log and 1099 list.</p></a>
   <a href="{% url 'accounting_year_end' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">📦</p><h3 class="font-semibold">Year-end package</h3>
-    <p class="text-sm text-slate-500 mt-1">One ZIP with every statement on both bases (CSV + PDF), trial balances, ledgers and journals. Also available per month.</p></a>
+    <p class="text-2xl mb-2">📦</p><h3 class="font-semibold">Statements year-end ZIP</h3>
+    <p class="text-sm text-slate-500 mt-1">Statements, ledgers and journals (cash and accrual, CSV + PDF) if your accountant asks for the detail.</p></a>
   <a href="{% url 'accounting_month_close' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">✅</p><h3 class="font-semibold">Month close</h3>
-    <p class="text-sm text-slate-500 mt-1">The monthly checklist: inbox empty, receipts attached, bills paid, statements checked. Close the month when it is done.</p></a>
-  {% if u_is_admin %}
-  <a href="{% url 'accounting_period_lock' %}" class="card-pad hover:border-indigo-300 transition-colors">
-    <p class="text-2xl mb-2">🔒</p><h3 class="font-semibold">Close the books</h3>
-    <p class="text-sm text-slate-500 mt-1">{% if lock.locked_through %}Closed through {{ lock.locked_through|date:"M j, Y" }}.{% else %}No period is closed yet.{% endif %} Lock a period once it is filed.</p></a>
-  {% endif %}
+    <p class="text-sm text-slate-500 mt-1">Ten-minute monthly checklist so year end is just a download.</p></a>
 </div>
+
+<h2 class="font-semibold text-slate-700 mb-3">Equity check (accrual basis)</h2>
+<div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
+  <a href="{% url 'accounting_equity_trend' %}?basis=accrual" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">📈</p><h3 class="font-semibold">Equity trend</h3>
+    <p class="text-sm text-slate-500 mt-1">Month-end equity, assets and liabilities over time, with a chart. PDF for a lender.</p></a>
+  <a href="{% url 'accounting_balance_sheet' %}?basis=accrual" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">⚖️</p><h3 class="font-semibold">Balance sheet</h3>
+    <p class="text-sm text-slate-500 mt-1">What you own (cash, inventory, invoices due to you), what you owe, and equity on any date.</p></a>
+  <a href="{% url 'accounting_compare' %}" class="card-pad hover:border-indigo-300 transition-colors">
+    <p class="text-2xl mb-2">🔀</p><h3 class="font-semibold">Cash vs. accrual</h3>
+    <p class="text-sm text-slate-500 mt-1">Why the equity view differs from the tax books, dollar by dollar.</p></a>
+</div>
+
+<details class="card-pad">
+  <summary class="font-semibold text-slate-700 cursor-pointer">More tools <span class="text-slate-400 font-normal text-sm">(trial balance, general ledger, journal, chart of accounts{% if u_is_admin %}, closing the books{% endif %})</span></summary>
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3 mt-4 text-sm">
+    <a href="{% url 'accounting_trial_balance' %}?basis=cash" class="text-indigo-600 hover:underline">Trial balance</a>
+    <a href="{% url 'accounting_general_ledger' %}?basis=cash" class="text-indigo-600 hover:underline">General ledger</a>
+    <a href="{% url 'accounting_journal' %}?basis=cash" class="text-indigo-600 hover:underline">Journal export (CSV)</a>
+    <a href="{% url 'accounting_accounts' %}" class="text-indigo-600 hover:underline">Chart of accounts</a>
+    {% if u_is_admin %}<a href="{% url 'accounting_period_lock' %}" class="text-indigo-600 hover:underline">Close the books{% if lock.locked_through %} (closed through {{ lock.locked_through|date:"M j, Y" }}){% endif %}</a>{% endif %}
+  </div>
+</details>
 {% endblock %}

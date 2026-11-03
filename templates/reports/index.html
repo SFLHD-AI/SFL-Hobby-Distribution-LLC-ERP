@@ -7,6 +7,9 @@
 <h2 class="font-semibold text-slate-700 mb-3">Financial statements</h2>
 <p class="text-sm text-slate-500 mb-3">Built from a double-entry ledger that is rebuilt from your documents on demand. Every statement can be viewed on the <b>cash basis</b> (what the tax return uses) or the <b>accrual basis</b> (the true picture).</p>
 <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+  <a href="{% url 'accounting_tax_summary' %}" class="card-pad border-indigo-200 bg-indigo-50/40 hover:border-indigo-400 transition-colors">
+    <p class="text-2xl mb-2">📄</p><h2 class="font-semibold">Tax summary (cash basis)</h2>
+    <p class="text-sm text-slate-500 mt-1">The one-page PDF for your accountant: revenue, cost of goods, expenses by Schedule C line, mileage, sales tax, 1099s.</p></a>
   <a href="{% url 'accounting_pnl' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📊</p><h2 class="font-semibold">Income statement (P&amp;L)</h2>
     <p class="text-sm text-slate-500 mt-1">Income, cost of goods, every expense category and net profit for any period — cash or accrual.</p></a>

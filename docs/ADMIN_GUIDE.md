@@ -254,6 +254,25 @@ dimensions, assign items into it, and the box weight auto-sums from unit
 weights (override it after weighing the packed box). Box dims + weights are
 what you feed to Pirate Ship / ShipStation / uShip quotes.
 
+## How the money side is meant to be used
+
+- **Your books are cash basis.** Categorize what the bank feed brings in (or
+  type expenses in), mark supplier orders paid, and the cash-basis statements
+  are your tax books. At year end, open **Accounting → Tax summary PDF**: one
+  page with revenue, cost of goods, every expense category mapped to its
+  Schedule C line with the deductible share, mileage, sales tax collected vs.
+  sent to the state, and 1099 vendors. Send that (plus the two year-end ZIPs
+  if your accountant wants detail) and you are done.
+- **Accrual is only for "am I building equity?"** The Accounting hub shows
+  equity today, the change this month and a 6-month trend on the accrual
+  basis, because inventory on the shelf and invoices waiting to be paid count.
+  You never need accrual for taxes.
+- **Supplier orders:** on a Receiving document, **✓ Mark paid today** records
+  the payment with no other details (default bank account, today's date; or
+  "paid personally" if no default account is set). The same one-click button
+  is on the Receiving list and the Unpaid bills report. Match the bank
+  transaction later if you want the exact date and account.
+
 ## Scanning barcodes with your phone
 
 Every field where you can type a SKU has a **📷** button next to it: the pick

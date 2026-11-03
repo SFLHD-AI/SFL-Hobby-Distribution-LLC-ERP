@@ -96,7 +96,10 @@
             </form>
           </details>
           {% elif row.action.kind == 'bill' %}
-          <a href="{{ row.action.url }}" class="text-indigo-600 hover:underline" title="Supplier bills are paid from the receiving document">Record payment there →</a>
+          <form method="post" action="{{ row.action.url }}" class="inline">{% csrf_token %}
+            <input type="hidden" name="action" value="mark_paid"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <button class="text-xs text-emerald-700 hover:underline" title="Paid today from your default bank account">Mark paid</button></form>
+          <a href="{{ row.action.url }}" class="text-xs text-indigo-600 hover:underline ml-2">details</a>
           {% endif %}
         </td>
       {% endif %}</tr>

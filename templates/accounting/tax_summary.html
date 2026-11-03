@@ -1,0 +1,79 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Tax summary{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Tax summary <span class="text-slate-400 font-normal">{{ data.label }}</span></h1>
+    <p class="text-sm text-slate-500">Cash basis · {{ data.start|date:"M j, Y" }} – {{ data.end|date:"M j, Y" }}{% if in_progress %} · <span class="text-amber-700">year still in progress</span>{% endif %}</p>
+  </div>
+  <div class="flex flex-wrap gap-2 items-center">
+    <form method="get" class="field-inline"><select name="year" onchange="this.form.submit()">
+      {% for y in years %}<option value="{{ y }}" {% if y == year %}selected{% endif %}>{{ y }}</option>{% endfor %}</select></form>
+    <a href="?year={{ year }}&export=pdf" target="_blank" class="btn-primary">📄 Download PDF for my accountant</a>
+    <a href="{% url 'accounting_index' %}" class="text-sm text-indigo-600 hover:underline">← Accounting</a>
+  </div>
+</div>
+
+{% if data.unreviewed or data.uncat_expense or data.uncat_income %}
+<div class="rounded-xl border border-amber-200 bg-amber-50 text-amber-900 text-sm px-4 py-3 mb-4">
+  <b>Before you send this:</b>
+  {% if data.unreviewed %}{{ data.unreviewed }} bank transaction{{ data.unreviewed|pluralize }} in this year still need{{ data.unreviewed|pluralize:"s," }} review (<a href="{% url 'bank_inbox' %}?status=unreviewed&start={{ data.start|date:'Y-m-d' }}&end={{ data.end|date:'Y-m-d' }}" class="underline">open the inbox</a>).{% endif %}
+  {% if data.uncat_expense %} ${{ data.uncat_expense|floatformat:2|intcomma }} of spending is uncategorized.{% endif %}
+  {% if data.uncat_income %} ${{ data.uncat_income|floatformat:2|intcomma }} of deposits is uncategorized.{% endif %}
+  Your accountant can't deduct what isn't categorized.
+</div>
+{% else %}
+<div class="rounded-xl border border-emerald-200 bg-emerald-50 text-emerald-900 text-sm px-4 py-3 mb-4">Every bank transaction in this year is reviewed and categorized. This summary is ready to send.</div>
+{% endif %}
+
+<div class="grid sm:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">Revenue received</p><p class="val">{% include "accounting/_money.html" with v=data.stmt.total_income %}</p></div>
+  <div class="stat"><p class="lbl">Net income (books)</p><p class="val">{% include "accounting/_money.html" with v=data.stmt.net_income %}</p></div>
+  <div class="stat border-indigo-200"><p class="lbl">Est. net after deductibility + mileage</p><p class="val">{% include "accounting/_money.html" with v=data.net_after_deductions %}</p></div>
+</div>
+
+<div class="card overflow-x-auto mb-4">
+  <table class="tbl">
+    <thead><tr><th>Line</th><th>Schedule C</th><th class="num">Books $</th><th class="num">Deductible $</th></tr></thead>
+    <tbody>
+      <tr class="bg-slate-50"><td colspan="4" class="text-xs font-bold uppercase tracking-wider text-slate-500">Revenue (money received)</td></tr>
+      {% for r in data.stmt.income %}<tr><td>{{ r.account.name }}</td><td class="text-xs text-slate-500">Part I</td><td class="num">{% include "accounting/_money.html" with v=r.amount %}</td><td></td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td>Total revenue</td><td></td><td class="num">{% include "accounting/_money.html" with v=data.stmt.total_income %}</td><td></td></tr>
+      <tr class="bg-slate-50"><td colspan="4" class="text-xs font-bold uppercase tracking-wider text-slate-500">Cost of goods (inventory paid for)</td></tr>
+      {% for r in data.stmt.cogs %}<tr><td>{{ r.account.name }}</td><td class="text-xs text-slate-500">Part III</td><td class="num">{% include "accounting/_money.html" with v=r.amount %}</td><td></td></tr>{% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td>Gross profit</td><td></td><td class="num">{% include "accounting/_money.html" with v=data.stmt.gross_profit %}</td><td></td></tr>
+      <tr class="bg-slate-50"><td colspan="4" class="text-xs font-bold uppercase tracking-wider text-slate-500">Expenses by category</td></tr>
+      {% for e in data.expenses %}
+      <tr class="{% if e.uncategorized %}text-amber-800{% endif %}">
+        <td>{{ e.account.name }}{% if e.pct != 100 %} <span class="text-xs text-slate-400">({{ e.pct }}% deductible)</span>{% endif %}</td>
+        <td class="text-xs text-slate-500">{{ e.tax_line|default:"—" }}</td>
+        <td class="num">{% include "accounting/_money.html" with v=e.amount %}</td>
+        <td class="num">{% include "accounting/_money.html" with v=e.deductible %}</td></tr>
+      {% endfor %}
+      <tr class="font-semibold border-t border-slate-300"><td>Total expenses</td><td></td><td class="num">{% include "accounting/_money.html" with v=data.stmt.total_expenses %}</td><td class="num">{% include "accounting/_money.html" with v=data.total_deductible %}</td></tr>
+      <tr class="!bg-indigo-50 font-bold"><td>Net income per the books</td><td></td><td class="num">{% include "accounting/_money.html" with v=data.stmt.net_income %}</td><td></td></tr>
+      <tr><td>Standard mileage deduction <span class="text-xs text-slate-400">{{ data.mileage.total_miles }} mi, {{ data.mileage.count }} trips</span></td><td class="text-xs text-slate-500">Line 9</td><td></td><td class="num">{% include "accounting/_money.html" with v=data.mileage.total_deduction %}</td></tr>
+      <tr class="!bg-indigo-50 font-bold"><td>Estimated net after deductibility and mileage</td><td></td><td></td><td class="num">{% include "accounting/_money.html" with v=data.net_after_deductions %}</td></tr>
+    </tbody>
+  </table>
+  <p class="text-xs text-slate-500 px-4 py-3 border-t border-slate-100">Estimate only. Your preparer applies the actual rules (home office, depreciation, self-employment tax). Sales tax is never income: collected ${{ data.sales_tax_collected|floatformat:2|intcomma }}, sent to the state ${{ data.sales_tax_remitted|floatformat:2|intcomma }}, still owed ${{ data.sales_tax_owed|floatformat:2|intcomma }}.</p>
+</div>
+
+<div class="grid lg:grid-cols-2 gap-4">
+  <div class="card-pad">
+    <h2 class="font-semibold mb-2">1099-NEC contractors <span class="text-xs text-slate-400 font-normal">paid ≥ ${{ data.threshold|floatformat:0|intcomma }} in {{ data.end.year }}</span></h2>
+    {% if data.nec.qualifying %}
+    <table class="tbl"><tbody>{% for r in data.nec.qualifying %}<tr><td>{{ r.vendor.name }}</td><td class="num">{% include "accounting/_money.html" with v=r.total %}</td></tr>{% endfor %}</tbody></table>
+    {% else %}<p class="text-sm text-slate-500">None this year.</p>{% endif %}
+    <a href="{% url 'expense_report_1099' %}?year={{ data.end.year }}" class="text-sm text-indigo-600 hover:underline">Full vendor list →</a>
+  </div>
+  <div class="card-pad">
+    <h2 class="font-semibold mb-2">Also send your accountant</h2>
+    <ul class="text-sm space-y-1.5">
+      <li><a href="{% url 'expense_year_end' %}?year={{ data.end.year }}" class="text-indigo-600 hover:underline">Expenses year-end ZIP</a> — every expense, receipts folder, mileage log, 1099 list.</li>
+      <li><a href="{% url 'accounting_year_end' %}?year={{ year }}" class="text-indigo-600 hover:underline">Accounting year-end ZIP</a> — statements, ledgers and journals (cash and accrual).</li>
+      <li><a href="{% url 'report_sales_tax' %}?start={{ data.start|date:'Y-m-d' }}&end={{ data.end|date:'Y-m-d' }}" class="text-indigo-600 hover:underline">Sales tax report</a> — taxable vs. exempt sales by invoice.</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}

@@ -1015,7 +1015,7 @@ class UnpaidBillsMarkPaidTests(UnpaidBillsTests):
         self.assertContains(r, 'name="paid_date"')
         self.assertContains(r, f'<option value="{self.checking.pk}" selected>Checking</option>')
         self.assertContains(r, reverse("receipt_detail", args=[rcv.pk]))
-        self.assertContains(r, "Record payment there")
+        self.assertContains(r, "Mark paid")
         self.assertContains(r, "<th class=\"text-right\">Action</th>")
         r = self.client.post(url, {"action": "mark_paid", "id": e.pk, "paid_date": "2025-06-25",
                                    "paid_from": self.card.pk})

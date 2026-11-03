@@ -29,7 +29,13 @@
             {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</td>
         <td>{% if r.is_paid %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>
             {% elif r.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue {{ r.due_date|date:"M j" }}</span>
+              <form method="post" action="{% url 'receipt_detail' r.pk %}" class="inline ml-1">{% csrf_token %}
+                <input type="hidden" name="action" value="mark_paid"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button class="text-xs text-emerald-700 hover:underline">Mark paid</button></form>
             {% elif r.posted %}<span class="badge bg-amber-100 text-amber-700">Unpaid{% if r.due_date %} · due {{ r.due_date|date:"M j" }}{% endif %}</span>
+              <form method="post" action="{% url 'receipt_detail' r.pk %}" class="inline ml-1">{% csrf_token %}
+                <input type="hidden" name="action" value="mark_paid"><input type="hidden" name="next" value="{{ request.get_full_path }}">
+                <button class="text-xs text-emerald-700 hover:underline">Mark paid</button></form>
             {% else %}<span class="text-xs text-slate-400">—</span>{% endif %}</td>
       </tr>
     {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">No supplier orders yet.</td></tr>{% endfor %}

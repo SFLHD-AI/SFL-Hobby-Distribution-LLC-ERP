@@ -646,3 +646,37 @@ def period_lock(request):
            "suggest_month": last_month_end, "suggest_year": prev_fy_start,
            "today": today}
     return render(request, "accounting/period_lock.html", ctx)
+
+
+
+# ---------------------------------------------------------------------------
+# Tax summary — the accountant's one-pager (cash basis)
+# ---------------------------------------------------------------------------
+@module_required("accounting")
+@costs_required
+def tax_summary(request):
+    from accounting import tax_summary as ts
+    today = timezone.localdate()
+    settings_row = CompanySettings.get()
+    start_month = settings_row.fiscal_year_start_month or 1
+    last_year = rp.last_complete_fiscal_year(today, start_month)
+    try:
+        year = int(request.GET.get("year", last_year))
+    except (TypeError, ValueError):
+        year = last_year
+    year = max(2000, min(year, today.year))
+    start, end = rp.fiscal_year_bounds(year, start_month)
+    data = ts.build(start, end)
+    title = f"Tax summary {data['label']} — cash basis"
+    subtitle = f"{start:%b %-d, %Y} – {end:%b %-d, %Y} · prepared {data['generated']:%b %-d, %Y}"
+    if request.GET.get("export") == "pdf":
+        log_activity(request.user, "export", None, model="TaxSummary", object_id=str(year),
+                     note=title)
+        return _pdf(request, title, subtitle, ts.pdf_sections(data), ["Books", "Deductible"],
+                    f"tax_summary_{data['label'].replace(' ', '_')}.pdf",
+                    extra={"badge": f"{data['unreviewed']} bank items unreviewed" if data["unreviewed"] else "Books reviewed",
+                           "badge_ok": data["unreviewed"] == 0})
+    years = list(range(today.year, max(2000, today.year - 6) - 1, -1))
+    ctx = _common(request, CASH, data=data, year=year, years=years, title=title,
+                  in_progress=end >= today, hide_period=True)
+    return render(request, "accounting/tax_summary.html", ctx)

@@ -395,8 +395,8 @@ class AccountingPagesRender(AccountingUISetup):
 
     def test_index_shows_both_bases_and_plain_english_box(self):
         html = self.client.get(reverse("accounting_index")).content.decode()
-        self.assertIn("Cash basis</b> = what your tax return uses", html)
-        self.assertIn("Accrual</b> = the true picture", html)
+        self.assertIn("cash basis</b>: money counts when it moves", html)
+        self.assertIn("am I building equity?", html)
         for name in ("accounting_pnl", "accounting_balance_sheet", "accounting_compare",
                      "accounting_equity_trend", "accounting_trial_balance", "accounting_general_ledger",
                      "accounting_journal", "accounting_accounts", "accounting_year_end",
@@ -1485,3 +1485,43 @@ class MonthCloseTests(TestCase):
         self.assertEqual(by_key["months_closed"]["progress"], "9 of 12 months")
         self.assertIn(f"month={y}-10", by_key["months_closed"]["url"])
         self.assertIn("10 of 12 months", r.content.decode())
+
+
+
+class TaxSummaryTests(TestCase):
+    def setUp(self):
+        Account.ensure_system_accounts()
+        self.admin = User.objects.create_superuser("taxboss", password="x")
+        self.client.force_login(self.admin)
+        checking = BankAccount.objects.create(name="Checking", opening_balance=D("500.00"),
+                                              opening_date=TODAY - timedelta(days=400))
+        cat = ExpenseCategory.objects.create(name="Meals (50% deductible)", deductible_pct=50, tax_line="24b")
+        Expense.objects.create(date=TODAY, category=cat, vendor="Diner", amount=D("100.00"),
+                               paid_date=TODAY, paid_from=checking)
+        BankTransaction.objects.create(account=checking, date=TODAY, amount=D("-7.00"), description="MYSTERY")
+
+    def test_page_and_pdf(self):
+        r = self.client.get(f"/accounting/tax-summary/?year={TODAY.year}")
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("Meals (50% deductible)", html)
+        self.assertIn("1 bank transaction in this year still need", html)   # unreviewed warning
+        r = self.client.get(f"/accounting/tax-summary/?year={TODAY.year}&export=pdf")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.content.startswith(b"%PDF"))
+
+    def test_deductible_share(self):
+        from accounting import tax_summary as ts
+        from accounting.reports import fiscal_year_bounds
+        start, end = fiscal_year_bounds(TODAY.year, 1)
+        data = ts.build(start, end)
+        meals = [e for e in data["expenses"] if e["pct"] == 50][0]
+        self.assertEqual(meals["amount"], D("100.00"))
+        self.assertEqual(meals["deductible"], D("50.00"))
+        self.assertEqual(data["uncat_expense"], D("7.00"))
+
+    def test_hub_links_tax_summary_and_has_no_basis_toggle(self):
+        html = self.client.get("/accounting/").content.decode()
+        self.assertIn("/accounting/tax-summary/", html)
+        self.assertNotIn("?basis=accrual\" class=\"px-3 py-2", html)
+        self.assertIn("Am I building equity?", html)

@@ -65,6 +65,12 @@
         <div class="flex justify-between"><dt class="text-slate-500">Paid so far</dt><dd>${{ receipt.amount_paid|floatformat:2|intcomma }}</dd></div>
         <div class="flex justify-between font-semibold"><dt class="text-slate-500">Balance</dt><dd>${{ receipt.balance_due|floatformat:2|intcomma }}</dd></div>
       </dl>
+      {% if not receipt.is_paid and not linked_payments %}
+      <form method="post" class="mb-3">{% csrf_token %}<input type="hidden" name="action" value="mark_paid">
+        <button class="btn-success w-full justify-center">✓ Mark paid today</button>
+        <p class="text-xs text-slate-400 mt-1">Uses your default bank account; nothing else to fill in. You can adjust the details below later.</p>
+      </form>
+      {% endif %}
       {% if linked_payments %}
       <p class="text-xs text-slate-500 mb-1">Paid from the bank feed:</p>
       <ul class="text-xs space-y-0.5 mb-3">

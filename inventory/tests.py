@@ -263,6 +263,25 @@ class SupplierBillTests(TestCase):
         self.assertContains(page, "Supplier bill")
         self.assertContains(page, "Unpaid")
 
+    def test_one_click_mark_paid_uses_default_account(self):
+        from banking.models import BankAccount
+        from django.utils import timezone
+        acct = BankAccount.objects.create(name="Checking", is_default=True)
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "mark_paid"})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.paid_date, timezone.localdate())
+        self.assertEqual(self.r.paid_from, acct)
+        self.assertTrue(self.r.is_paid)
+        # second click is harmless
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "mark_paid", "next": "/inventory/receiving/"})
+        self.r.refresh_from_db(); self.assertEqual(self.r.paid_from, acct)
+
+    def test_mark_paid_without_default_account_counts_as_personal(self):
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "mark_paid"})
+        self.r.refresh_from_db()
+        self.assertTrue(self.r.is_paid); self.assertIsNone(self.r.paid_from)
+
 
 class CameraScannerWiringTests(TestCase):
     """Every place a SKU can be typed offers the phone-camera scan button."""
@@ -302,3 +321,5 @@ class CameraScannerWiringTests(TestCase):
             html = self.client.get(url).content.decode()
             self.assertIn("data-scan-select", html, url)
             self.assertIn('data-upc="012345678905"', html, url)
+
+
