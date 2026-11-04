@@ -400,3 +400,40 @@ class InboundTrackingTests(TestCase):
     def test_hourly_task_skips_without_token(self):
         from inventory.tasks import refresh_inbound_tracking
         self.assertIn("not configured", refresh_inbound_tracking())
+
+
+
+class IncomingStockTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from datetime import date
+        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        self.client.force_login(User.objects.create_superuser("inc", password="x"))
+        self.p = Product.objects.create(sku="INC-1", name="Prismatic Bundle", default_price=Decimal("50"))
+        gts = Supplier.objects.create(name="GTS")
+        r1 = Receipt.objects.create(supplier=gts, date=date(2026, 11, 1), expected_date=date(2026, 11, 20))
+        ReceiptLine.objects.create(receipt=r1, product=self.p, qty=6, unit_cost=Decimal("1824.3125"))
+        r2 = Receipt.objects.create(supplier=gts, date=date(2026, 11, 2), expected_date=date(2026, 11, 10),
+                                    tracking_number="1Z999AA10123456784", tracking_carrier="ups",
+                                    tracking_status="TRANSIT", tracking_eta=date(2026, 11, 9))
+        ReceiptLine.objects.create(receipt=r2, product=self.p, qty=4, unit_cost=Decimal("1800.00"))
+        posted = Receipt.objects.create(supplier=gts)                 # already received: not incoming
+        ReceiptLine.objects.create(receipt=posted, product=self.p, qty=2, unit_cost=Decimal("1700"))
+        posted.post()
+
+    def test_summary_counts_only_open_orders(self):
+        inc = self.p.incoming_summary
+        self.assertEqual(inc["qty"], 10)
+        self.assertEqual(inc["cost"], Decimal("18145.88"))       # 6×1824.3125 + 4×1800
+        self.assertEqual(inc["avg_cost"], Decimal("1814.5880"))
+        self.assertEqual(inc["orders"], 2)
+        self.assertEqual(str(inc["next_eta"]), "2026-11-09")     # carrier ETA beats typed date
+
+    def test_detail_and_list_show_incoming(self):
+        html = self.client.get(f"/inventory/{self.p.pk}/").content.decode()
+        self.assertIn('id="incoming"', html)
+        self.assertIn("18,145.88", html)
+        self.assertIn("1824.3125", html)
+        self.assertIn("In transit", html)
+        lst = self.client.get("/inventory/?q=INC-1").content.decode()
+        self.assertIn(">10</a>", lst)

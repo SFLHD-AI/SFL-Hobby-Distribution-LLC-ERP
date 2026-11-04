@@ -132,6 +132,38 @@ class Product(SoftDeleteModel):
     def inventory_value(self):
         return (Decimal(self.qty_on_hand) * self.avg_cost).quantize(CENTS, ROUND_HALF_UP)
 
+    # --- incoming (open supplier orders) ------------------------------------
+    def incoming_lines(self):
+        """Receipt lines on supplier orders not yet received, newest ETA first."""
+        return (self.receipt_lines.filter(is_deleted=False, receipt__is_deleted=False,
+                                          receipt__posted=False)
+                .select_related("receipt", "receipt__supplier")
+                .order_by("receipt__expected_date", "receipt__date"))
+
+    @property
+    def incoming_summary(self):
+        """{'qty', 'cost', 'avg_cost', 'orders', 'next_eta'} across open supplier orders.
+        Cost = merchandise cost (freight/duties are allocated when the order posts)."""
+        qty = 0
+        cost = Decimal("0.00")
+        orders = set()
+        next_eta = None
+        for line in self.incoming_lines():
+            qty += line.qty
+            cost += Decimal(line.qty) * line.unit_cost
+            orders.add(line.receipt_id)
+            eta = line.receipt.tracking_eta or line.receipt.expected_date
+            if eta and (next_eta is None or eta < next_eta):
+                next_eta = eta
+        cost = cost.quantize(CENTS, ROUND_HALF_UP)
+        return {"qty": qty, "cost": cost,
+                "avg_cost": (cost / qty).quantize(FOURPLACES, ROUND_HALF_UP) if qty else None,
+                "orders": len(orders), "next_eta": next_eta}
+
+    @property
+    def qty_incoming(self):
+        return self.incoming_summary["qty"]
+
     def barcode_value(self):
         return self.upc or self.sku
 

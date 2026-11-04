@@ -34,7 +34,7 @@
     <thead><tr>
       <th><input type="checkbox" onclick="document.querySelectorAll('.rowck').forEach(c=>c.checked=this.checked)" class="rounded"></th>
       <th>SKU</th><th>Name</th><th>Brand</th><th>Category</th><th>Bin</th>
-      <th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th>
+      <th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th><th class="num">Incoming</th>
       {% if u_can_see_costs %}<th class="num">Avg cost</th>{% endif %}
       <th class="num">Price</th><th></th>
     </tr></thead>
@@ -50,11 +50,12 @@
         <td class="num">{{ p.qty_on_hand }}</td>
         <td class="num text-slate-500">{{ p.qty_committed }}</td>
         <td class="num font-semibold {% if p.is_low_stock and p.active %}text-red-600{% endif %}">{{ p.qty_available }}</td>
+        <td class="num">{% with inc=p.incoming_summary %}{% if inc.qty %}<a href="{% url 'product_detail' p.pk %}#incoming" class="text-sky-700 font-medium hover:underline" title="{{ inc.orders }} open order(s){% if u_can_see_costs %} · ${{ inc.cost|floatformat:2 }}{% endif %}">{{ inc.qty }}</a>{% else %}<span class="text-slate-300">—</span>{% endif %}{% endwith %}</td>
         {% if u_can_see_costs %}<td class="num">${{ p.avg_cost|floatformat:2 }}</td>{% endif %}
         <td class="num">${{ p.default_price|floatformat:2 }}</td>
         <td>{% if p.is_low_stock and p.active %}<span class="badge bg-red-100 text-red-700">LOW</span>{% endif %}</td>
       </tr>
-    {% empty %}<tr><td colspan="12" class="text-center text-slate-400 py-8">No products. Add one or import a CSV.</td></tr>{% endfor %}
+    {% empty %}<tr><td colspan="13" class="text-center text-slate-400 py-8">No products. Add one or import a CSV.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>

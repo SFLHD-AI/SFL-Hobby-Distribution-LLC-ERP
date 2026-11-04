@@ -273,6 +273,17 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## What's coming in for a product
+
+Search the product (Inventory search, the top search bar, or 📷 scan) and open
+it. The **Incoming** tile shows how many units are on open supplier orders
+and the next expected date; the **Incoming** section below lists each open
+order with supplier, expected date (the carrier's ETA when tracking is on),
+tracking status, quantity, unit cost and line total, plus the total cost and
+average cost per unit of everything on the way. The Inventory list has an
+**Incoming** column too. Freight and duties are added to the cost when the
+order is marked received.
+
 ## Tracking an inbound supplier order
 
 On a Receiving document, the **Shipment tracking** card takes an optional

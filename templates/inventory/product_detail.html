@@ -24,13 +24,49 @@
   </div>
 </div>
 
-<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-6">
   <div class="stat"><p class="lbl">On hand</p><p class="val">{{ product.qty_on_hand }}</p></div>
   <div class="stat"><p class="lbl">Committed</p><p class="val">{{ product.qty_committed }}</p></div>
   <div class="stat"><p class="lbl">Available</p><p class="val {% if product.is_low_stock %}text-red-600{% endif %}">{{ product.qty_available }}</p></div>
+  <a href="#incoming" class="stat hover:border-indigo-300 {% if incoming_summary.qty %}border-sky-200 bg-sky-50/40{% endif %}">
+    <p class="lbl">Incoming</p><p class="val">{{ incoming_summary.qty }}</p>
+    <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p></a>
   {% if show_costs %}
-  <div class="stat"><p class="lbl">Avg landed cost</p><p class="val">${{ product.avg_cost|floatformat:4 }}</p></div>
-  <div class="stat"><p class="lbl">Inventory value</p><p class="val">${{ product.inventory_value|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Avg landed cost</p><p class="val !text-xl">${{ product.avg_cost|floatformat:4 }}</p></div>
+  <div class="stat"><p class="lbl">Inventory value</p><p class="val !text-xl">${{ product.inventory_value|intcomma }}</p></div>
+  {% endif %}
+</div>
+
+{# ---------- Incoming: open supplier orders for this SKU ---------- #}
+<div id="incoming" class="card-pad mb-4">
+  <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+    <h2 class="font-semibold">Incoming <span class="text-xs text-slate-400 font-normal">(on open supplier orders, not received yet)</span></h2>
+    {% if incoming_summary.qty %}
+    <p class="text-sm text-slate-600"><b>{{ incoming_summary.qty }}</b> units{% if show_costs %} · <b>${{ incoming_summary.cost|floatformat:2|intcomma }}</b> total · avg <b>${{ incoming_summary.avg_cost|floatformat:4 }}</b>/unit{% endif %}
+      <span class="text-xs text-slate-400">(merchandise cost; freight is added when received)</span></p>
+    {% endif %}
+  </div>
+  {% if incoming %}
+  <div class="overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Order</th><th>Supplier</th><th>Expected</th><th>Tracking</th><th class="num">Qty</th>{% if show_costs %}<th class="num">Unit cost</th><th class="num">Line total</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for l in incoming %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'receipt_detail' l.receipt.pk %}">RCV-{{ l.receipt.pk }}</a>
+          <span class="block text-xs text-slate-400">ordered {{ l.receipt.date|date:"M j" }}</span></td>
+        <td>{{ l.receipt.supplier|default:"—" }}</td>
+        <td>{% if l.receipt.tracking_eta %}{{ l.receipt.tracking_eta|date:"M j, Y" }} <span class="text-xs text-slate-400">carrier ETA</span>{% elif l.receipt.expected_date %}{{ l.receipt.expected_date|date:"M j, Y" }}{% else %}<span class="text-slate-400">no ETA</span>{% endif %}</td>
+        <td>{% if l.receipt.tracking_badge %}<a href="{{ l.receipt.tracking_url }}" target="_blank" class="badge {{ l.receipt.tracking_badge.1 }}">{{ l.receipt.tracking_badge.0 }}</a>{% else %}<span class="text-xs text-slate-400">—</span>{% endif %}</td>
+        <td class="num font-semibold">{{ l.qty }}</td>
+        {% if show_costs %}<td class="num">${{ l.unit_cost|floatformat:4 }}</td><td class="num">${{ l.line_total|floatformat:2|intcomma }}</td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="text-sm text-slate-400">Nothing on order. <a href="{% url 'receipt_create' %}" class="text-indigo-600 hover:underline">Start a supplier order →</a></p>
   {% endif %}
 </div>
 

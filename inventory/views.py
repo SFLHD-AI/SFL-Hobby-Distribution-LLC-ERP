@@ -246,9 +246,11 @@ def product_detail(request, pk):
             except ValidationError as e:
                 messages.error(request, "; ".join(e.messages))
     movements = product.movements.select_related("user")[:200]
+    incoming = list(product.incoming_lines())
     return render(request, "inventory/product_detail.html", {
         "product": product, "movements": movements, "adj_form": adj_form,
         "show_costs": can_see_costs(request.user),
+        "incoming": incoming, "incoming_summary": product.incoming_summary,
     })
 
 
