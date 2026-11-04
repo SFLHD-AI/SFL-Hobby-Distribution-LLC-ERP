@@ -215,7 +215,18 @@ def invoice_pdf(request, pk):
     return pdf_response(template,
                         invoice_context(invoice, company,
                                         include_balance=include_balance),
-                        f"{invoice.number}.pdf")
+                        f"{invoice.number}.pdf",
+                        inline=request.GET.get("download") != "1")
+
+
+@module_required("invoices")
+def invoice_pdf_view(request, pk):
+    """The PDF with a toolbar: Save to this phone / Share / Open full screen."""
+    invoice = get_object_or_404(Invoice, pk=pk)
+    qs = "?balance=1" if request.GET.get("balance") == "1" else ""
+    return render(request, "invoicing/invoice_pdf_view.html", {
+        "invoice": invoice, "qs": qs, "filename": f"{invoice.number}.pdf",
+    })
 
 
 @module_required("invoices")

@@ -302,6 +302,15 @@ type part of a SKU, UPC or name and the list narrows as you type, showing the
 full product name. Pick with a click, the arrow keys and Enter, or the 📷
 scanner.
 
+## Saving an invoice PDF to your phone
+
+On an invoice, **📄 PDF** opens the PDF with a toolbar: **⬇ Save to this
+phone** downloads it (on iPhone it lands in the Files app under Downloads),
+**📤 Share / AirDrop** opens the phone's share sheet so you can AirDrop it,
+save it to Files, or send it by text or email, and **Open full screen** shows
+the plain PDF. Tick "show account balance" first to include the customer's
+total balance on the PDF.
+
 ## Scanning barcodes with your phone
 
 Every field where you can type a SKU has a **📷** button next to it: the pick

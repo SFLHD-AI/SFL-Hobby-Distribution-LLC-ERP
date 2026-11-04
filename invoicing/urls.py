@@ -9,6 +9,7 @@ urlpatterns = [
     path("credits/", views.creditmemo_list, name="creditmemo_list"),
     path("<int:pk>/", views.invoice_detail, name="invoice_detail"),
     path("<int:pk>/pdf/", views.invoice_pdf, name="invoice_pdf"),
+    path("<int:pk>/pdf/view/", views.invoice_pdf_view, name="invoice_pdf_view"),
     path("<int:pk>/email/", views.invoice_email, name="invoice_email"),
     path("<int:invoice_pk>/credit/", views.creditmemo_create, name="creditmemo_create"),
 ]

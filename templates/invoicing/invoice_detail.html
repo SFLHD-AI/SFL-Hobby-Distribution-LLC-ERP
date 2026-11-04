@@ -19,10 +19,10 @@
     <label class="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-100 rounded-lg px-2.5 py-2 cursor-pointer select-none"
            title="Adds the customer's total account balance to the PDF">
       <input type="checkbox" id="balToggle" class="rounded"
-             onchange="document.getElementById('pdfBtn').href='{% url 'invoice_pdf' invoice.pk %}'+(this.checked?'?balance=1':'')">
+             onchange="document.getElementById('pdfBtn').href='{% url 'invoice_pdf_view' invoice.pk %}'+(this.checked?'?balance=1':'')">
       show account balance
     </label>
-    <a href="{% url 'invoice_pdf' invoice.pk %}" target="_blank" id="pdfBtn" class="btn-secondary">📄 PDF</a>
+    <a href="{% url 'invoice_pdf_view' invoice.pk %}" id="pdfBtn" class="btn-secondary">📄 PDF</a>
     <a href="{% url 'invoice_email' invoice.pk %}" class="btn-secondary"
        onclick="return confirm('Email invoice with PDF to {{ invoice.customer.email|default:'customer' }}?')">✉ Email</a>
     {% if invoice.status != 'void' %}

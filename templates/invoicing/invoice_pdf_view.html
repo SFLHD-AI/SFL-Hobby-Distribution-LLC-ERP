@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block title %}{{ invoice.number }} PDF{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+  <div>
+    <h1 class="page-title">{{ invoice.number }} <span class="text-slate-400 font-normal">PDF</span></h1>
+    <p class="text-sm text-slate-500">{{ invoice.customer.business_name }} · ${{ invoice.total }}</p>
+  </div>
+  <div class="flex flex-wrap gap-2">
+    <a href="{% url 'invoice_pdf' invoice.pk %}{{ qs }}{% if qs %}&{% else %}?{% endif %}download=1"
+       download="{{ filename }}" id="saveBtn" class="btn-primary">⬇ Save to this phone</a>
+    <button type="button" id="shareBtn" class="btn-secondary hidden">📤 Share / AirDrop</button>
+    <a href="{% url 'invoice_pdf' invoice.pk %}{{ qs }}" target="_blank" class="btn-secondary">Open full screen</a>
+    <a href="{% url 'invoice_detail' invoice.pk %}" class="btn-secondary">← Back</a>
+  </div>
+</div>
+<p class="text-xs text-slate-500 mb-3" id="saveHint">
+  On iPhone, <b>Save to this phone</b> downloads the PDF to the Files app (Downloads folder); <b>Share</b> lets you AirDrop it, save it to Files, or send it by text or email.
+</p>
+<div class="card overflow-hidden" style="height:calc(100vh - 14rem);min-height:24rem">
+  <iframe src="{% url 'invoice_pdf' invoice.pk %}{{ qs }}#toolbar=0" title="{{ invoice.number }}" style="width:100%;height:100%;border:0"></iframe>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  const url = "{% url 'invoice_pdf' invoice.pk %}{{ qs }}";
+  const name = "{{ filename }}";
+  const share = document.getElementById("shareBtn");
+  if (navigator.share && navigator.canShare) {
+    share.classList.remove("hidden");
+    share.addEventListener("click", async () => {
+      share.disabled = true; share.textContent = "Preparing…";
+      try {
+        const blob = await (await fetch(url, { credentials: "same-origin" })).blob();
+        const file = new File([blob], name, { type: "application/pdf" });
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({ files: [file], title: name });
+        } else {
+          window.open(url, "_blank");
+        }
+      } catch (e) {
+        if (!(e && e.name === "AbortError")) window.open(url, "_blank");
+      } finally { share.disabled = false; share.textContent = "📤 Share / AirDrop"; }
+    });
+  }
+})();
+</script>
+{% endblock %}

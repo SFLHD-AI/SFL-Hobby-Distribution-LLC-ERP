@@ -393,3 +393,40 @@ class BalanceOnPdfTests(TestCase):
         self.assertEqual(r["Content-Type"], "application/pdf")
         r = self.client.get(f"/invoices/{self.inv2.pk}/pdf/")
         self.assertEqual(r.status_code, 200)
+
+
+
+class InvoicePdfViewerTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from decimal import Decimal
+        from orders.tests import make_customer, stocked_product
+        from orders.models import POLine, PurchaseOrder
+        from invoicing.models import Invoice
+        self.client.force_login(User.objects.create_superuser("pdfv", password="x"))
+        p = stocked_product("PDF-1", qty=10, cost="4.00")
+        po = PurchaseOrder.objects.create(customer=make_customer("Viewer Co"))
+        POLine.objects.create(po=po, product=p, qty_ordered=1, unit_price=Decimal("10.00"))
+        po.confirm(); po.finalize()
+        self.inv = Invoice.build_from_pos([po])
+
+    def test_viewer_page_has_save_and_share(self):
+        r = self.client.get(f"/invoices/{self.inv.pk}/pdf/view/")
+        self.assertEqual(r.status_code, 200)
+        html = r.content.decode()
+        self.assertIn("Save to this phone", html)
+        self.assertIn('download="%s.pdf"' % self.inv.number, html)
+        self.assertIn("download=1", html)
+        self.assertIn("navigator.share", html)
+
+    def test_download_flag_forces_attachment(self):
+        r = self.client.get(f"/invoices/{self.inv.pk}/pdf/?download=1")
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r["Content-Disposition"].startswith("attachment;"))
+        self.assertTrue(r.content.startswith(b"%PDF"))
+        r = self.client.get(f"/invoices/{self.inv.pk}/pdf/")
+        self.assertTrue(r["Content-Disposition"].startswith("inline;"))
+
+    def test_detail_links_to_viewer(self):
+        html = self.client.get(f"/invoices/{self.inv.pk}/").content.decode()
+        self.assertIn(f"/invoices/{self.inv.pk}/pdf/view/", html)
