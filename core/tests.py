@@ -138,7 +138,7 @@ class DashboardMoneyTests(TestCase):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         html = r.content.decode()
-        for text in ["Money", "Cash position", "Net profit this month", "Net profit, year to date",
+        for text in ["Money", "Cash position", "Profit this month", "Net profit, year to date",
                      "Equity", "Needs attention", "Bank transactions to review",
                      "Bills due in 7 days", "missing a receipt", "Auto-created expenses to confirm",
                      "Bank &amp; card balances", "Operations", "Customers owe you"]:

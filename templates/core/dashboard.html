@@ -20,32 +20,32 @@
   {% if u_can_see_costs %}
   <div class="lg:col-span-2 space-y-4">
     {% if money %}
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+    <div class="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-5 gap-3">
       <a href="{% url 'report_inventory_valuation' %}" class="stat hover:border-indigo-300 transition-colors">
-        <p class="lbl">Inventory on hand</p>
-        <p class="val">{% include "core/_money.html" with v=money.inventory_value %}</p>
+        <p class="lbl whitespace-nowrap">Inventory on hand</p>
+        <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.inventory_value %}</p>
         <p class="text-xs text-slate-500 mt-1">{{ money.inventory_units|intcomma }} units at your cost</p>
       </a>
       <div class="stat">
         <p class="lbl">Cash position</p>
-        <p class="val">{% include "core/_money.html" with v=money.net %}</p>
+        <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.net %}</p>
         <p class="text-xs text-slate-500 mt-1">
           {% include "core/_money.html" with v=money.cash %} in the bank{% if money.cards %} · owe {% include "core/_money.html" with v=money.cards %} on cards{% endif %}
         </p>
       </div>
       <div class="stat">
-        <p class="lbl">Net profit this month</p>
-        <p class="val">{% include "core/_money.html" with v=money.snap.net_income_mtd %}</p>
+        <p class="lbl">Profit this month</p>
+        <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.snap.net_income_mtd %}</p>
         <p class="text-xs text-slate-500 mt-1">{{ money.basis_label }} basis · {{ money.other_label }}: {% include "core/_money.html" with v=money.snap_other.net_income_mtd %}</p>
       </div>
       <div class="stat">
-        <p class="lbl">Net profit, year to date</p>
-        <p class="val">{% include "core/_money.html" with v=money.snap.net_income_ytd %}</p>
+        <p class="lbl">Profit, year to date</p>
+        <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.snap.net_income_ytd %}</p>
         <p class="text-xs text-slate-500 mt-1">since {{ money.fy_start|date:"M j" }} · {{ money.other_label }}: {% include "core/_money.html" with v=money.snap_other.net_income_ytd %}</p>
       </div>
       <div class="stat">
         <p class="lbl">Equity <span class="normal-case font-normal">(accrual)</span></p>
-        <p class="val">{% include "core/_money.html" with v=money.equity %}</p>
+        <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.equity %}</p>
         <p class="text-xs mt-1 {% if money.equity_change is not None and money.equity_change < 0 %}text-red-600{% elif money.equity_change %}text-emerald-600{% else %}text-slate-500{% endif %}">
           {% if money.equity_change is None %}no prior month yet
           {% elif money.equity_change > 0 %}▲ {% include "core/_money.html" with v=money.equity_change %} since {{ money.equity_prev_label }}
