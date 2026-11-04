@@ -460,3 +460,22 @@ class IncomingStockTests(TestCase):
         self.assertIn(">10</a>", lst)
 
 
+
+
+
+class ReceiveOverridesTrackingTests(TestCase):
+    def test_marking_received_sets_expected_today_and_delivered(self):
+        from datetime import date
+        from django.utils import timezone
+        from inventory.models import Product, Receipt, ReceiptLine
+        p = Product.objects.create(sku="RCV-OVR", name="Box", default_price=Decimal("10"))
+        r = Receipt.objects.create(expected_date=date(2030, 1, 1), tracking_number="1Z999AA10123456784",
+                                   tracking_carrier="ups", tracking_status="TRANSIT",
+                                   tracking_eta=date(2030, 1, 1))
+        ReceiptLine.objects.create(receipt=r, product=p, qty=1, unit_cost=Decimal("5"))
+        r.post()
+        r.refresh_from_db()
+        self.assertEqual(r.expected_date, timezone.localdate())
+        self.assertEqual(r.tracking_status, "DELIVERED")
+        self.assertEqual(r.tracking_eta, timezone.localdate())
+        self.assertEqual(r.tracking_badge[0], "Delivered")

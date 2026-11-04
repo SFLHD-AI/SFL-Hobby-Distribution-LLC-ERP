@@ -456,7 +456,19 @@ class Receipt(SoftDeleteModel):
                     note=f"Received from {self.supplier or 'supplier'}")
             self.posted = True
             self.posted_at = timezone.now()
-            self.save(update_fields=["posted", "posted_at"])
+            # It's here: the arrival date is today and tracking is settled,
+            # whatever the carrier last said.
+            self.expected_date = timezone.localdate()
+            fields = ["posted", "posted_at", "expected_date"]
+            if self.tracking_number:
+                self.tracking_status = "DELIVERED"
+                self.tracking_detail = "Marked received"
+                self.tracking_event_at = self.posted_at
+                self.tracking_eta = self.expected_date
+                self.tracking_error = ""
+                fields += ["tracking_status", "tracking_detail", "tracking_event_at",
+                           "tracking_eta", "tracking_error"]
+            self.save(update_fields=fields)
             log_activity(user, "post", self, note=f"Posted receipt, {len(lines)} lines")
 
 
