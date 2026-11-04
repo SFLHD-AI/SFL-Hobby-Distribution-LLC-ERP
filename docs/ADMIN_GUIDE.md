@@ -293,7 +293,7 @@ token is set in Settings, the status, latest scan and the carrier's
 estimated delivery date are pulled automatically — on save, with **↻ Refresh
 now**, and every hour while the order is open — and the ETA fills in the
 order's "Expected" date. The Receiving list shows a tracking badge next to
-each expected date.
+each expected date, and its **↻ Refresh tracking** button updates every open order with a tracking number at once.
 
 ## Picking products
 

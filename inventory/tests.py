@@ -401,6 +401,27 @@ class InboundTrackingTests(TestCase):
         from inventory.tasks import refresh_inbound_tracking
         self.assertIn("not configured", refresh_inbound_tracking())
 
+    def test_receiving_list_refresh_all_button(self):
+        from unittest.mock import patch
+        from inventory.models import Receipt
+        self.r.tracking_number = "9400111899223456789012"; self.r.tracking_carrier = "usps"; self.r.save()
+        other = Receipt.objects.create(tracking_number="1Z999AA10123456784", tracking_carrier="ups")
+        fake = self.FakeShippo({"tracking_status": {"status": "TRANSIT", "status_details": "Moving",
+                                                    "status_date": "2026-11-04T10:00:00Z"},
+                                "eta": "2026-11-08T12:00:00Z"})
+        page = self.client.get("/inventory/receiving/")
+        self.assertContains(page, "Refresh tracking")
+        with patch("shipping.providers.get_provider", return_value=fake):
+            r = self.client.post("/inventory/receiving/", {"action": "refresh_tracking"})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db(); other.refresh_from_db()
+        self.assertEqual(str(self.r.expected_date), "2026-11-08")
+        self.assertEqual(str(other.expected_date), "2026-11-08")
+        self.assertEqual(len(fake.calls), 2)
+
+    def test_refresh_all_without_token_warns(self):
+        r = self.client.post("/inventory/receiving/", {"action": "refresh_tracking"}, follow=True)
+        self.assertContains(r, "Add a Shippo token")
 
 
 class IncomingStockTests(TestCase):
@@ -437,3 +458,5 @@ class IncomingStockTests(TestCase):
         self.assertIn("In transit", html)
         lst = self.client.get("/inventory/?q=INC-1").content.decode()
         self.assertIn(">10</a>", lst)
+
+

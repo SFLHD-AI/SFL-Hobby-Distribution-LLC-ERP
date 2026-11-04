@@ -1,9 +1,13 @@
 {% extends "base.html" %}{% load humanize %}
 {% block title %}Receiving{% endblock %}
 {% block content %}
-<div class="flex items-center justify-between mb-5">
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
   <h1 class="page-title">Receiving — supplier orders</h1>
-  <a href="{% url 'receipt_create' %}" class="btn-primary">+ New supplier order</a>
+  <div class="flex flex-wrap gap-2">
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="refresh_tracking">
+      <button class="btn-secondary" title="Pull the latest status and estimated delivery date for every open order with a tracking number">↻ Refresh tracking</button></form>
+    <a href="{% url 'receipt_create' %}" class="btn-primary">+ New supplier order</a>
+  </div>
 </div>
 <div class="mb-4 flex gap-2 text-sm">
   <a href="?" class="btn-secondary {% if not request.GET.status %}!bg-slate-200{% endif %}">All</a>

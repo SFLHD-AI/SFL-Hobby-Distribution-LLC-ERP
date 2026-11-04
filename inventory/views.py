@@ -312,6 +312,27 @@ def product_labels(request):
 # ---------------------------------------------------------------------------
 @module_required("receiving")
 def receipt_list(request):
+    if request.method == "POST" and request.POST.get("action") == "refresh_tracking":
+        from inventory.tracking import refresh_receipt
+        from shipping.providers import get_provider
+        provider = get_provider("shippo")
+        if not provider.is_configured():
+            messages.warning(request, "Add a Shippo token in Settings to refresh tracking automatically; "
+                                      "the tracking links still open the carrier's page.")
+            return redirect(request.get_full_path())
+        open_tracked = (Receipt.objects.filter(is_deleted=False, posted=False)
+                        .exclude(tracking_number="").exclude(tracking_status="DELIVERED"))
+        ok = failed = 0
+        for r in open_tracked:
+            good, _ = refresh_receipt(r, provider)
+            ok += good
+            failed += (not good)
+        if ok or failed:
+            messages.success(request, f"Tracking refreshed on {ok} order{'s' if ok != 1 else ''}"
+                                      + (f"; {failed} could not be updated (see each order)." if failed else "."))
+        else:
+            messages.info(request, "No open supplier orders have a tracking number yet.")
+        return redirect(request.get_full_path())
     qs = Receipt.objects.select_related("supplier")
     status = request.GET.get("status")
     if status == "open":
