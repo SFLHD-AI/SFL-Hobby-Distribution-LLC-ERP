@@ -14,6 +14,8 @@ class Command(BaseCommand):
          "HOURLY", None, None),
         ("low-stock-digest", "shipping.tasks.send_low_stock_digest",
          "CRON", "0 7 * * *", "DAILY"),
+        ("inbound-tracking", "inventory.tasks.refresh_inbound_tracking",
+         "HOURLY", None, None),
         ("bank-sync", "banking.tasks.sync_all_connections",
          "HOURLY", None, None),
         ("recurring-expenses", "expenses.tasks.generate_recurring_expenses",

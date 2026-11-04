@@ -301,6 +301,22 @@ class Receipt(SoftDeleteModel):
                                   help_text="Account the supplier was paid from")
     payment_reference = models.CharField(max_length=100, blank=True,
                                          help_text="Check # / wire confirmation")
+    # Inbound shipment tracking (optional). Status, ETA and last event are
+    # refreshed automatically through Shippo's free tracking API when a token
+    # is configured; otherwise the carrier link still works.
+    CARRIERS = [("", "—"), ("usps", "USPS"), ("ups", "UPS"), ("fedex", "FedEx"),
+                ("dhl_express", "DHL Express"), ("ontrac", "OnTrac"), ("lasership", "LaserShip"),
+                ("amazon", "Amazon Logistics"), ("other", "Other / freight")]
+    tracking_carrier = models.CharField(max_length=20, choices=CARRIERS, blank=True)
+    tracking_number = models.CharField(max_length=100, blank=True, db_index=True)
+    tracking_status = models.CharField(max_length=20, blank=True,
+                                       help_text="UNKNOWN / PRE_TRANSIT / TRANSIT / DELIVERED / RETURNED / FAILURE")
+    tracking_detail = models.CharField(max_length=300, blank=True, help_text="Latest scan, in the carrier's words")
+    tracking_location = models.CharField(max_length=150, blank=True)
+    tracking_event_at = models.DateTimeField(null=True, blank=True)
+    tracking_eta = models.DateField(null=True, blank=True, help_text="Carrier's estimated delivery date")
+    tracking_checked_at = models.DateTimeField(null=True, blank=True)
+    tracking_error = models.CharField(max_length=200, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="receipts_created")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -318,6 +334,25 @@ class Receipt(SoftDeleteModel):
     @property
     def landed_total(self):
         return self.merchandise_total + self.freight_cost + self.duties_cost
+
+    # --- inbound tracking ----------------------------------------------------
+    @property
+    def tracking_url(self):
+        from inventory.tracking import carrier_url
+        return carrier_url(self.tracking_carrier, self.tracking_number)
+
+    @property
+    def tracking_badge(self):
+        """(label, css) for list/detail badges."""
+        m = {"DELIVERED": ("Delivered", "bg-emerald-100 text-emerald-700"),
+             "TRANSIT": ("In transit", "bg-sky-100 text-sky-700"),
+             "PRE_TRANSIT": ("Label created", "bg-slate-100 text-slate-600"),
+             "RETURNED": ("Returned", "bg-red-100 text-red-700"),
+             "FAILURE": ("Problem", "bg-red-100 text-red-700"),
+             "UNKNOWN": ("No scans yet", "bg-slate-100 text-slate-500")}
+        if not self.tracking_number:
+            return None
+        return m.get(self.tracking_status, ("Tracking added", "bg-slate-100 text-slate-600"))
 
     # --- supplier bill state -------------------------------------------------
     @property

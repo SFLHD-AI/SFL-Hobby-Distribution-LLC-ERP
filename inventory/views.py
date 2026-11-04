@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from core.csvutils import csv_response
 from core.models import log_activity
 from core.roles import can_see_costs, module_required
-from inventory.forms import (ReceiptBillForm, AdjustmentForm, CycleCountForm, PriceListForm,
+from inventory.forms import (ReceiptBillForm, ReceiptTrackingForm, AdjustmentForm, CycleCountForm, PriceListForm,
                              PriceListItemForm, ProductForm, ReceiptForm,
                              ReceiptLineForm)
 from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
@@ -340,6 +340,31 @@ def receipt_detail(request, pk):
     line_form = ReceiptLineForm()
     header_form = ReceiptForm(instance=receipt)
     bill_form = ReceiptBillForm(instance=receipt)
+    tracking_form = ReceiptTrackingForm(instance=receipt)
+    if request.method == "POST" and request.POST.get("action") == "save_tracking":
+        from inventory.tracking import guess_carrier, refresh_receipt
+        tracking_form = ReceiptTrackingForm(request.POST, instance=receipt)
+        if tracking_form.is_valid():
+            obj = tracking_form.save(commit=False)
+            if obj.tracking_number and not obj.tracking_carrier:
+                obj.tracking_carrier = guess_carrier(obj.tracking_number)
+            if not obj.tracking_number:
+                obj.tracking_status = obj.tracking_detail = obj.tracking_location = obj.tracking_error = ""
+                obj.tracking_eta = obj.tracking_event_at = obj.tracking_checked_at = None
+            obj.save()
+            log_activity(request.user, "tracking_updated", receipt, note=obj.tracking_number)
+            if obj.tracking_number:
+                ok, msg = refresh_receipt(obj)
+                (messages.success if ok else messages.info)(request, f"Tracking saved. {msg}")
+            else:
+                messages.success(request, "Tracking cleared.")
+            return redirect("receipt_detail", pk)
+        messages.error(request, "Tracking not saved — check the fields.")
+    if request.method == "POST" and request.POST.get("action") == "refresh_tracking":
+        from inventory.tracking import refresh_receipt
+        ok, msg = refresh_receipt(receipt)
+        (messages.success if ok else messages.warning)(request, msg)
+        return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "mark_paid":
         # One tap: paid today from the default bank account (or personally
         # if none is set). Details can be edited afterwards; matching a bank
@@ -402,6 +427,7 @@ def receipt_detail(request, pk):
     return render(request, "inventory/receipt_detail.html", {
         "receipt": receipt, "line_form": line_form, "header_form": header_form,
         "bill_form": bill_form, "linked_payments": linked_payments,
+        "tracking_form": tracking_form,
         "lines": receipt.lines.filter(is_deleted=False).select_related("product"),
         "products": Product.objects.filter(active=True),
     })

@@ -273,6 +273,24 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## Tracking an inbound supplier order
+
+On a Receiving document, the **Shipment tracking** card takes an optional
+tracking number (the carrier is guessed from the number if you leave it
+blank). The number links to the carrier's own tracking page. When a Shippo
+token is set in Settings, the status, latest scan and the carrier's
+estimated delivery date are pulled automatically — on save, with **↻ Refresh
+now**, and every hour while the order is open — and the ETA fills in the
+order's "Expected" date. The Receiving list shows a tracking badge next to
+each expected date.
+
+## Picking products
+
+Product pickers (order lines, receiving lines, price lists) are search boxes:
+type part of a SKU, UPC or name and the list narrows as you type, showing the
+full product name. Pick with a click, the arrow keys and Enter, or the 📷
+scanner.
+
 ## Scanning barcodes with your phone
 
 Every field where you can type a SKU has a **📷** button next to it: the pick

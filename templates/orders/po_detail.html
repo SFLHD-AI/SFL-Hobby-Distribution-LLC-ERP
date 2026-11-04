@@ -134,9 +134,9 @@
       <form method="post" class="bg-slate-50 rounded-lg p-3 flex flex-wrap gap-2 items-end field-inline">
         {% csrf_token %}<input type="hidden" name="action" value="add_line">
         <div class="flex-1 min-w-[12rem]"><label class="text-xs font-semibold uppercase tracking-wide text-slate-500 block mb-1">Add by product</label>
-          <select name="product" required class="w-full" data-scan-select data-scan-next="qty">
+          <select name="product" required class="w-full" data-combobox data-scan-select data-scan-next="qty">
             <option value="">— pick product —</option>
-            {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name|truncatechars:36 }} ({{ p.qty_available }} avail)</option>{% endfor %}
+            {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name }} ({{ p.qty_available }} avail)</option>{% endfor %}
           </select></div>
         <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
           <input type="number" name="qty" value="1" min="1" class="w-20"></div>

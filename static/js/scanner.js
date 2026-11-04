@@ -182,6 +182,7 @@
     }
     select.value = match.value;
     fire(select, "change");
+    if (select._comboInput) select._comboInput.value = match.text;
     const nextName = select.getAttribute("data-scan-next");
     const next = nextName && select.form ? select.form.querySelector('[name="' + nextName + '"]') : null;
     (next || select).focus();
@@ -210,11 +211,12 @@
     if (target.dataset.scanReady) return;
     target.dataset.scanReady = "1";
     const btn = makeButton(target);
-    // keep the field and button on one line without disturbing existing layouts
+    // a searchable picker shows an input instead of the (hidden) select: sit next to that
+    const visible = (target.tagName === "SELECT" && target._comboInput) ? target._comboInput : target;
     const wrap = document.createElement("span");
-    wrap.style.cssText = "display:inline-flex;align-items:center;width:100%;";
-    target.parentNode.insertBefore(wrap, target);
-    wrap.appendChild(target);
+    wrap.style.cssText = "display:inline-flex;align-items:center;width:100%;min-width:0;";
+    visible.parentNode.insertBefore(wrap, visible);
+    wrap.appendChild(visible);
     wrap.appendChild(btn);
     if (!supportsCamera) btn.style.display = "none";
   }

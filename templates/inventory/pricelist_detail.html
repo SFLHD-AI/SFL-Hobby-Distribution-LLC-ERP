@@ -8,9 +8,9 @@
     <form method="post" class="space-y-3">
       {% csrf_token %}<input type="hidden" name="action" value="add">
       <div class="field"><label>Product</label>
-        <select name="product" required data-scan-select data-scan-next="price">
+        <select name="product" required data-combobox data-scan-select data-scan-next="price">
           <option value="">— pick product —</option>
-          {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name|truncatechars:38 }}</option>{% endfor %}
+          {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name }}</option>{% endfor %}
         </select></div>
       <div class="field"><label>Price $</label><input type="number" name="price" step="0.01" min="0" required></div>
       <button class="btn-primary w-full justify-center">Save price</button>

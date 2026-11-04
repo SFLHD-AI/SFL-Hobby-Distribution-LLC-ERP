@@ -124,3 +124,16 @@ class ReceiptBillForm(forms.ModelForm):
         from banking.models import BankAccount
         self.fields["paid_from"].queryset = BankAccount.objects.filter(active=True)
         self.fields["paid_from"].empty_label = "— paid personally / not from a tracked account —"
+
+
+class ReceiptTrackingForm(forms.ModelForm):
+    """Optional inbound tracking for a supplier order."""
+
+    class Meta:
+        model = Receipt
+        fields = ["tracking_carrier", "tracking_number"]
+        widgets = {"tracking_number": forms.TextInput(attrs={"placeholder": "paste the tracking number",
+                                                             "autocomplete": "off"})}
+
+    def clean_tracking_number(self):
+        return (self.cleaned_data.get("tracking_number") or "").strip()

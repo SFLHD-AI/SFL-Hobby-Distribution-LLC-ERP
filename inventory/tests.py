@@ -323,3 +323,80 @@ class CameraScannerWiringTests(TestCase):
             self.assertIn('data-upc="012345678905"', html, url)
 
 
+
+
+class InboundTrackingTests(TestCase):
+    """Optional tracking on supplier orders: Shippo fills status + ETA."""
+
+    class FakeShippo:
+        def __init__(self, payload=None, error=None):
+            self.payload, self.error = payload, error
+            self.calls = []
+
+        def is_configured(self):
+            return True
+
+        def _request(self, method, path, payload=None):
+            from shipping.providers import ProviderError
+            self.calls.append(path)
+            if self.error:
+                raise ProviderError(self.error)
+            return self.payload
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, Supplier
+        self.client.force_login(User.objects.create_superuser("trk", password="x"))
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="GTS"))
+
+    def test_guess_carrier(self):
+        from inventory.tracking import guess_carrier
+        self.assertEqual(guess_carrier("1Z999AA10123456784"), "ups")
+        self.assertEqual(guess_carrier("9400111899223456789012"), "usps")
+        self.assertEqual(guess_carrier("TBA123456789000"), "amazon")
+
+    def test_refresh_sets_status_eta_and_expected_date(self):
+        from inventory.tracking import refresh_receipt
+        self.r.tracking_number = "9400111899223456789012"
+        self.r.save()
+        fake = self.FakeShippo({"tracking_status": {"status": "TRANSIT", "status_details": "Arrived at USPS facility",
+                                                    "status_date": "2026-11-03T14:05:00Z",
+                                                    "location": {"city": "Tampa", "state": "FL"}},
+                                "eta": "2026-11-06T18:00:00Z"})
+        ok, msg = refresh_receipt(self.r, fake)
+        self.assertTrue(ok, msg)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.tracking_carrier, "usps")
+        self.assertEqual(self.r.tracking_status, "TRANSIT")
+        self.assertEqual(str(self.r.tracking_eta), "2026-11-06")
+        self.assertEqual(str(self.r.expected_date), "2026-11-06")   # ETA fills Expected
+        self.assertIn("Tampa", self.r.tracking_location)
+        self.assertEqual(fake.calls, ["/tracks/usps/9400111899223456789012"])
+        self.assertEqual(self.r.tracking_badge[0], "In transit")
+
+    def test_provider_error_is_recorded_not_raised(self):
+        from inventory.tracking import refresh_receipt
+        self.r.tracking_number = "1Z999AA10123456784"; self.r.save()
+        ok, msg = refresh_receipt(self.r, self.FakeShippo(error="Shippo 404: not found"))
+        self.assertFalse(ok)
+        self.r.refresh_from_db()
+        self.assertIn("404", self.r.tracking_error)
+
+    def test_save_tracking_via_page_and_clear(self):
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/",
+                             {"action": "save_tracking", "tracking_carrier": "", "tracking_number": " 1Z999AA10123456784 "})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.tracking_number, "1Z999AA10123456784")
+        self.assertEqual(self.r.tracking_carrier, "ups")
+        page = self.client.get(f"/inventory/receiving/{self.r.pk}/")
+        self.assertContains(page, "ups.com/track")
+        self.assertContains(page, "data-combobox")                 # searchable picker
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "save_tracking", "tracking_carrier": "", "tracking_number": ""})
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.tracking_number, "")
+        self.assertIsNone(self.r.tracking_eta)
+
+    def test_hourly_task_skips_without_token(self):
+        from inventory.tasks import refresh_inbound_tracking
+        self.assertIn("not configured", refresh_inbound_tracking())
