@@ -479,3 +479,25 @@ class ReceiveOverridesTrackingTests(TestCase):
         self.assertEqual(r.tracking_status, "DELIVERED")
         self.assertEqual(r.tracking_eta, timezone.localdate())
         self.assertEqual(r.tracking_badge[0], "Delivered")
+
+
+class BackfillReceivedTrackingTests(TestCase):
+    def test_old_received_orders_get_delivered_and_dated(self):
+        from datetime import date
+        from django.utils import timezone
+        from importlib import import_module
+        from django.apps import apps
+        from inventory.models import Product, Receipt, ReceiptLine
+        p = Product.objects.create(sku="BF-1", name="Box", default_price=Decimal("10"))
+        r = Receipt.objects.create(tracking_number="1Z999AA10123456784", tracking_carrier="ups")
+        ReceiptLine.objects.create(receipt=r, product=p, qty=1, unit_cost=Decimal("5"))
+        r.post()
+        # simulate an order received under the old rule
+        Receipt.objects.filter(pk=r.pk).update(expected_date=date(2030, 1, 1), tracking_status="TRANSIT",
+                                               tracking_eta=date(2030, 1, 1))
+        mig = import_module("inventory.migrations.0008_backfill_received_tracking")
+        mig.forwards(apps, None)
+        r.refresh_from_db()
+        self.assertEqual(r.tracking_status, "DELIVERED")
+        self.assertEqual(r.expected_date, timezone.localtime(r.posted_at).date())
+        self.assertEqual(r.tracking_eta, r.expected_date)
