@@ -20,7 +20,12 @@
   {% if u_can_see_costs %}
   <div class="lg:col-span-2 space-y-4">
     {% if money %}
-    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <a href="{% url 'report_inventory_valuation' %}" class="stat hover:border-indigo-300 transition-colors">
+        <p class="lbl">Inventory on hand</p>
+        <p class="val">{% include "core/_money.html" with v=money.inventory_value %}</p>
+        <p class="text-xs text-slate-500 mt-1">{{ money.inventory_units|intcomma }} units at your cost</p>
+      </a>
       <div class="stat">
         <p class="lbl">Cash position</p>
         <p class="val">{% include "core/_money.html" with v=money.net %}</p>

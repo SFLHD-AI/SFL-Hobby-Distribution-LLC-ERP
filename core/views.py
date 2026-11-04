@@ -76,12 +76,21 @@ def _money_widgets(user, today):
             else:
                 cash += bal
 
+        # Inventory on hand at weighted-average landed cost (what the stock is worth to you)
+        from inventory.models import Product
+        inv_units = inv_value = 0
+        for qty, cost in Product.objects.filter(qty_on_hand__gt=0).values_list("qty_on_hand", "avg_cost"):
+            inv_units += qty
+            inv_value += (Decimal(qty) * cost)
+        inv_value = Decimal(inv_value).quantize(Decimal("0.01"))
+
         snaps = {CASH: dashboard_snapshot(CASH, today),
                  ACCRUAL: dashboard_snapshot(ACCRUAL, today)}
         trend = equity_trend(ACCRUAL, 2, as_of=today)
         prev = trend[-2] if len(trend) >= 2 else None
         ctx["money"] = {
             "accounts": rows, "cash": cash, "cards": cards, "net": cash - cards,
+            "inventory_value": inv_value, "inventory_units": inv_units,
             "basis": default_basis, "other_basis": other_basis,
             "basis_label": "cash" if default_basis == CASH else "accrual",
             "other_label": "cash" if other_basis == CASH else "accrual",

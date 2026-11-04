@@ -596,3 +596,19 @@ class SeedDemoTests(TestCase):
         r = self.client.get("/")
         self.assertEqual(r.status_code, 200)
         self.assertIn("Cash position", r.content.decode())   # Bookkeeper role can see costs
+
+
+
+class DashboardInventoryTileTests(TestCase):
+    def test_inventory_on_hand_at_cost(self):
+        from decimal import Decimal
+        from django.contrib.auth.models import User
+        from inventory.models import Product
+        self.client.force_login(User.objects.create_superuser("invtile", password="x"))
+        p = Product.objects.create(sku="TILE-1", name="Box", default_price=Decimal("10"))
+        p.apply_movement(movement_type="receipt", qty_delta=12, unit_cost=Decimal("58.25"),
+                         new_avg_cost=Decimal("58.25"))
+        html = self.client.get("/").content.decode()
+        self.assertIn("Inventory on hand", html)
+        self.assertIn("$699.00", html)          # 12 × 58.25
+        self.assertIn("12 units at your cost", html)
