@@ -8,7 +8,7 @@
   <meta name="apple-mobile-web-app-title" content="{{ company.company_name }}">
   <title>{% block title %}SFL ERP System{% endblock %} · {{ company.company_name }}</title>
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
-  {% if company.logo %}<link rel="apple-touch-icon" href="{{ company.logo.url }}">{% endif %}
+  {% if company.has_logo %}<link rel="apple-touch-icon" href="{{ company.logo_src }}">{% endif %}
   {% block head %}{% endblock %}
 </head>
 <body class="h-full text-slate-800">
@@ -18,7 +18,7 @@
   {% if not u_warehouse_only %}
   <aside class="hidden lg:flex lg:flex-col w-60 shrink-0 bg-slate-900 text-slate-200">
     <a href="{% url u_home_url %}" class="flex items-center gap-2 px-5 h-16 border-b border-slate-800">
-      {% if company.logo %}<img src="{{ company.logo.url }}" class="h-8 max-w-[3.5rem] bg-white rounded p-0.5">{% endif %}
+      {% if company.has_logo %}<img src="{{ company.logo_src }}" alt="" class="h-8 max-w-[3.5rem] bg-white rounded p-0.5">{% endif %}
       <span class="font-bold text-white tracking-wide truncate">{{ company.company_name }}</span>
     </a>
     <nav class="flex-1 overflow-y-auto py-4 space-y-6 text-sm">

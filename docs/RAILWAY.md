@@ -37,7 +37,7 @@ Settings page instead).
 Then **Settings → Networking → Generate Domain** to get the public URL
 (the app also trusts `RAILWAY_PUBLIC_DOMAIN` automatically).
 
-**Uploads survive redeploys only with a volume:** Settings → Volumes →
+**Uploads survive redeploys only with a volume** (the company logo is the one exception: it is also kept in the database, so it never disappears)**:** Settings → Volumes →
 **Add Volume**, mount path `/app/media`. This stores receipts, logos,
 certificates and delivery photos.
 

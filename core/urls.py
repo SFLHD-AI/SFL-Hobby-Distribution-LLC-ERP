@@ -5,6 +5,7 @@ from core import users_views, views
 urlpatterns = [
     path("", views.dashboard, name="dashboard"),
     path("settings/", views.settings_edit, name="settings_edit"),
+    path("company-logo/", views.company_logo, name="company_logo"),
     path("activity/", views.activity_log, name="activity_log"),
     path("search/", views.global_search, name="global_search"),
 

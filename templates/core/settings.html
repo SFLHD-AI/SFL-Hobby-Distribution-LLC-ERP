@@ -18,8 +18,10 @@
     <div class="grid md:grid-cols-2 gap-4">
       <div class="field"><label>Company name</label>{{ form.company_name }}</div>
       <div class="field"><label>Logo (PNG)</label>
-        {% if company.logo %}<img src="{{ company.logo.url }}" class="h-12 mb-2 border rounded p-1 bg-white">{% endif %}
-        {{ form.logo }}</div>
+        {% if company.has_logo %}<img src="{{ company.logo_src }}" alt="" class="h-12 mb-2 border rounded p-1 bg-white">
+        {% elif company.logo %}<p class="text-xs text-amber-700 mb-2">The logo file is missing from the server (uploads are lost on redeploy without a storage volume). Upload it again — it is now also kept in the database, so this won't happen twice.</p>{% endif %}
+        {{ form.logo }}
+        <p class="text-xs text-slate-400 mt-1">PNG with a transparent or white background works best. Shown top-left, on the login page, and on invoices, POs, packing slips and statements.</p></div>
     </div>
     <div class="grid md:grid-cols-2 gap-4">
       <div class="field"><label>Address line 1</label>{{ form.address_line1 }}</div>

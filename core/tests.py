@@ -612,3 +612,58 @@ class DashboardInventoryTileTests(TestCase):
         self.assertIn("Inventory on hand", html)
         self.assertIn("$699.00", html)          # 12 × 58.25
         self.assertIn("12 units at your cost", html)
+
+
+class CompanyLogoTests(TestCase):
+    @staticmethod
+    def _png():
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGBA", (8, 8), (0, 0, 255, 255)).save(buf, format="PNG")
+        return buf.getvalue()
+
+    def setUp(self):
+        import tempfile
+        from django.contrib.auth.models import User
+        from django.test import override_settings
+        self.tmp = tempfile.mkdtemp()
+        self._ov = override_settings(MEDIA_ROOT=self.tmp); self._ov.enable()
+        self.client.force_login(User.objects.create_superuser("logo", password="x"))
+        self.PNG = self._png()
+
+    def tearDown(self):
+        self._ov.disable()
+
+    def _upload(self):
+        from django.core.files.uploadedfile import SimpleUploadedFile
+        from core.models import CompanySettings
+        data = {"company_name": "SFL", "default_tax_rate": "0", "invoice_template": "modern",
+                "default_payment_terms": "net30", "fiscal_year_start_month": "1",
+                "accounting_basis_default": "cash", "mileage_rate": "0.7",
+                "sales_tax_filing_frequency": "quarterly", "plaid_env": "sandbox",
+                "logo": SimpleUploadedFile("logo.png", self.PNG, content_type="image/png")}
+        for key, label in (("po", "PO-"), ("invoice", "INV-"), ("credit", "CM-")):
+            data.update({f"seq_{key}-prefix": label, f"seq_{key}-next_number": "1", f"seq_{key}-padding": "4"})
+        r = self.client.post("/settings/", data)
+        self.assertEqual(r.status_code, 302, getattr(r, "context", None) and r.context["form"].errors)
+        return CompanySettings.get()
+
+    def test_logo_kept_in_database_and_survives_losing_the_file(self):
+        import os
+        c = self._upload()
+        self.assertEqual(bytes(c.logo_data), self.PNG)
+        self.assertEqual(c.logo_content_type, "image/png")
+        r = self.client.get("/company-logo/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.content, self.PNG)
+        self.assertIn("/company-logo/?v=", self.client.get("/").content.decode())   # sidebar
+        self.assertIn("/company-logo/?v=", self.client.get("/accounts/login/").content.decode())
+        os.remove(c.logo.path)                              # a redeploy wiped the uploads
+        self.assertTrue(c.has_logo)
+        self.assertEqual(self.client.get("/company-logo/").content, self.PNG)
+        self.assertTrue(c.logo_data_uri.startswith("data:image/png;base64,"))
+
+    def test_no_logo_is_404_and_no_broken_image(self):
+        self.assertEqual(self.client.get("/company-logo/").status_code, 404)
+        self.assertNotIn("/company-logo/", self.client.get("/").content.decode())

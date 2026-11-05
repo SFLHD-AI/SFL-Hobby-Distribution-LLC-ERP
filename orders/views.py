@@ -205,7 +205,7 @@ def _scan_add(request, po):
 def po_pdf(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     company = CompanySettings.get()
-    logo = company.logo.path if company.logo else None
+    logo = company.logo_data_uri
     return pdf_response("pdf/po_confirmation.html", {
         "po": po, "company": company, "logo_url": logo,
         "lines": po.live_lines.select_related("product"),
@@ -216,7 +216,7 @@ def po_pdf(request, pk):
 def packing_slip_pdf(request, pk):
     po = get_object_or_404(PurchaseOrder, pk=pk)
     company = CompanySettings.get()
-    logo = company.logo.path if company.logo else None
+    logo = company.logo_data_uri
     return pdf_response("pdf/packing_slip.html", {
         "po": po, "company": company, "logo_url": logo,
         "lines": po.live_lines.select_related("product").order_by("product__bin_location"),

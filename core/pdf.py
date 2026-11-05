@@ -63,9 +63,7 @@ def invoice_context(invoice, company=None, include_balance=False):
             tax_note = (f"Tax exempt — resale certificate {cert.certificate_number} "
                         f"({cert.issuing_state}).")
 
-    logo_url = None
-    if company.logo:
-        logo_url = company.logo.path if hasattr(company.logo, "path") else None
+    logo_url = company.logo_data_uri
 
     account_balance = previous_balance = None
     if include_balance:

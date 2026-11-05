@@ -171,6 +171,18 @@ def plaid_configured(settings_row=None):
     return bool(client_id and secret)
 
 
+def company_logo(request):
+    """Serve the company logo from the database (falls back to the file)."""
+    from django.http import Http404, HttpResponse
+    company = CompanySettings.get()
+    data = company.logo_bytes
+    if not data:
+        raise Http404
+    resp = HttpResponse(data, content_type=company.logo_content_type or "image/png")
+    resp["Cache-Control"] = "public, max-age=3600"
+    return resp
+
+
 @admin_required
 def settings_edit(request):
     obj = CompanySettings.get()
@@ -185,6 +197,9 @@ def settings_edit(request):
                      for label, seq in seqs]
         if form.is_valid() and all(f.is_valid() for _, f in seq_forms):
             form.save()
+            if "logo" in request.FILES or form.cleaned_data.get("logo") is False:
+                obj.capture_logo()                     # keep a copy in the database
+                obj.save(update_fields=["logo_data", "logo_content_type"])
             for _, f in seq_forms:
                 f.save()
             log_activity(request.user, "settings_updated", obj)

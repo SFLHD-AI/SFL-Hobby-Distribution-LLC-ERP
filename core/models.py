@@ -79,6 +79,10 @@ class CompanySettings(models.Model):
     company_name = models.CharField(max_length=200, default="My Company")
     logo = models.ImageField(upload_to="company/", blank=True, null=True,
                              help_text="PNG logo used on invoices, POs and statements")
+    # The logo bytes also live in the database so they survive a redeploy
+    # that wipes uploaded files (e.g. a host without a persistent volume).
+    logo_data = models.BinaryField(null=True, blank=True, editable=False)
+    logo_content_type = models.CharField(max_length=60, blank=True, editable=False)
     address_line1 = models.CharField(max_length=200, blank=True)
     address_line2 = models.CharField(max_length=200, blank=True)
     city = models.CharField(max_length=100, blank=True)
@@ -156,6 +160,58 @@ class CompanySettings(models.Model):
     def get(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
         return obj
+
+    # --- logo ----------------------------------------------------------------
+    def capture_logo(self):
+        """Copy the uploaded logo file into logo_data (call after saving an upload)."""
+        if not self.logo:
+            self.logo_data, self.logo_content_type = None, ""
+            return
+        try:
+            self.logo.open("rb")
+            data = self.logo.read()
+            self.logo.close()
+        except (OSError, ValueError):
+            return
+        ext = (self.logo.name or "").rsplit(".", 1)[-1].lower()
+        ctype = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "gif": "image/gif",
+                 "webp": "image/webp", "svg": "image/svg+xml"}.get(ext, "image/png")
+        self.logo_data, self.logo_content_type = data, ctype
+
+    @property
+    def logo_bytes(self):
+        """Logo bytes from the database, else from the file if it still exists."""
+        if self.logo_data:
+            return bytes(self.logo_data)
+        if self.logo:
+            try:
+                self.logo.open("rb")
+                data = self.logo.read()
+                self.logo.close()
+                return data
+            except (OSError, ValueError):
+                return None
+        return None
+
+    @property
+    def has_logo(self):
+        return bool(self.logo_data) or bool(self.logo and self.logo_bytes)
+
+    @property
+    def logo_src(self):
+        """URL for <img> tags; cache-busted by the last update."""
+        from django.urls import reverse
+        stamp = int(self.updated_at.timestamp()) if self.updated_at else 0
+        return f"{reverse('company_logo')}?v={stamp}"
+
+    @property
+    def logo_data_uri(self):
+        """data: URI for PDFs (WeasyPrint), so the file need not exist on disk."""
+        import base64
+        data = self.logo_bytes
+        if not data:
+            return None
+        return f"data:{self.logo_content_type or 'image/png'};base64,{base64.b64encode(data).decode()}"
 
     @property
     def full_address(self):
