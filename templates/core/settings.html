@@ -42,6 +42,20 @@
   </div>
 
   <div class="card-pad space-y-4">
+    <h2 class="font-semibold">Appearance</h2>
+    <div class="grid md:grid-cols-2 gap-4 items-start">
+      <div class="field"><label>Theme</label>{{ form.theme }}
+        <p class="text-xs text-slate-400 mt-1">Applies to everyone who logs in, on phone and computer. Changes take effect on the next page load.</p></div>
+      <div class="grid grid-cols-4 gap-2 text-[11px] text-center" id="themeSwatches">
+        {% for key, label in form.fields.theme.choices %}
+        <button type="button" data-theme-pick="{{ key }}" class="rounded-lg border border-slate-200 p-1.5 hover:border-indigo-400 {% if company.theme == key %}ring-2 ring-indigo-500{% endif %}">
+          <span class="swatch block h-8 rounded-md mb-1" data-theme="{{ key }}"></span>{{ label|cut:" — "|truncatechars:9 }}</button>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div class="card-pad space-y-4">
     <h2 class="font-semibold">Invoicing & tax</h2>
     <div class="grid md:grid-cols-3 gap-4">
       <div class="field"><label>Default sales tax rate %</label>{{ form.default_tax_rate }}</div>
@@ -163,4 +177,12 @@
 
   <button class="btn-primary">Save settings</button>
 </form>
+<script>
+document.querySelectorAll('[data-theme-pick]').forEach(b => b.addEventListener('click', () => {
+  document.getElementById('id_theme').value = b.dataset.themePick;
+  document.documentElement.setAttribute('data-theme', b.dataset.themePick === 'auto'
+    ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'classic') : b.dataset.themePick);
+  document.querySelectorAll('[data-theme-pick]').forEach(x => x.classList.toggle('ring-2', x === b));
+}));
+</script>
 {% endblock %}

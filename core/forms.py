@@ -18,6 +18,7 @@ class CompanySettingsForm(forms.ModelForm):
                   "default_payment_terms", "low_stock_email_digest", "alert_email",
                   "shipstation_api_key", "shipstation_api_secret", "shippo_api_token", "uship_api_key",
                   "tcgplayer_public_key", "tcgplayer_private_key", "market_price_category",
+                  "theme",
                   # accounting
                   "fiscal_year_start_month", "accounting_basis_default", "books_start_date",
                   "mileage_rate", "sales_tax_filing_frequency",
@@ -83,6 +84,11 @@ class CompanySettingsForm(forms.ModelForm):
         super().__init__(*args, **kwargs)
         if "market_price_category" in self.fields:
             self.fields["market_price_category"].required = False
+        if "theme" in self.fields:
+            self.fields["theme"].required = False
+
+    def clean_theme(self):
+        return self.cleaned_data.get("theme") or "classic"
 
     def clean_market_price_category(self):
         return (self.cleaned_data.get("market_price_category") or "").strip() or "Sealed TCG Product"

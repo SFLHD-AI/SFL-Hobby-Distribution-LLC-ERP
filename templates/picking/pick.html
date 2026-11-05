@@ -1,9 +1,10 @@
 {% load static %}<!DOCTYPE html>
-<html lang="en" class="bg-slate-100">
+<html lang="en" class="bg-slate-100" data-theme="{{ theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
   <title>Pick {{ po.number }}</title>
+  <script>(function(){var h=document.documentElement;if(h.getAttribute('data-theme')==='auto'){h.setAttribute('data-theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'classic');}})();</script>
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
   <script src="{% static 'js/scanner.js' %}" defer></script>
   <style>

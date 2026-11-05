@@ -133,6 +133,20 @@ class CompanySettings(models.Model):
         max_length=10, default="quarterly",
         choices=[("monthly", "Monthly"), ("quarterly", "Quarterly"), ("annual", "Annual")])
 
+    # Appearance
+    THEMES = [
+        ("classic", "Classic — indigo on light grey (default)"),
+        ("ocean", "Ocean — blue & teal"),
+        ("forest", "Forest — green"),
+        ("sunset", "Sunset — orange & rose"),
+        ("slate", "Slate — neutral grey, minimal colour"),
+        ("dark", "Dark — easy on the eyes at night"),
+        ("midnight", "Midnight — dark with purple accents"),
+        ("auto", "Match the device — Classic by day, Dark at night"),
+    ]
+    theme = models.CharField(max_length=12, choices=THEMES, default="classic",
+                             help_text="Look and feel of the web app for everyone who logs in")
+
     # TCGplayer market prices
     tcgplayer_public_key = models.CharField(max_length=120, blank=True)
     tcgplayer_private_key = models.CharField(max_length=120, blank=True)

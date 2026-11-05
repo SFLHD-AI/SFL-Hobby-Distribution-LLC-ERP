@@ -1,5 +1,5 @@
 {% load static %}<!DOCTYPE html>
-<html lang="en" class="h-full bg-slate-100">
+<html lang="en" class="h-full bg-slate-100" data-theme="{{ theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -7,6 +7,7 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="{{ company.company_name }}">
   <title>{% block title %}SFL ERP System{% endblock %} · {{ company.company_name }}</title>
+  <script>(function(){var h=document.documentElement;if(h.getAttribute('data-theme')==='auto'){h.setAttribute('data-theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'classic');}})();</script>
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
   {% if company.has_logo %}<link rel="apple-touch-icon" href="{{ company.logo_src }}">{% endif %}
   {% block head %}{% endblock %}

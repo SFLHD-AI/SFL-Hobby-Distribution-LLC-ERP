@@ -5,7 +5,9 @@ from core.roles import (can_see_costs, home_url_name, is_admin, is_office,
 
 
 def company(request):
-    ctx = {"company": CompanySettings.get(), "app_version": APP_VERSION}
+    company = CompanySettings.get()
+    ctx = {"company": company, "app_version": APP_VERSION,
+           "theme": company.theme or "classic"}
     if request.user.is_authenticated:
         ctx.update({
             "u_is_admin": is_admin(request.user),

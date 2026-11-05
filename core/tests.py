@@ -667,3 +667,16 @@ class CompanyLogoTests(TestCase):
     def test_no_logo_is_404_and_no_broken_image(self):
         self.assertEqual(self.client.get("/company-logo/").status_code, 404)
         self.assertNotIn("/company-logo/", self.client.get("/").content.decode())
+
+
+
+class ThemeTests(TestCase):
+    def test_theme_attribute_rendered_and_saved(self):
+        from django.contrib.auth.models import User
+        from core.models import CompanySettings
+        self.client.force_login(User.objects.create_superuser("theme", password="x"))
+        self.assertIn('data-theme="classic"', self.client.get("/").content.decode())
+        cs = CompanySettings.get(); cs.theme = "dark"; cs.save()
+        self.assertIn('data-theme="dark"', self.client.get("/").content.decode())
+        self.assertIn('data-theme="dark"', self.client.get("/accounts/login/").content.decode())
+        self.assertIn("Appearance", self.client.get("/settings/").content.decode())

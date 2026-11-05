@@ -330,6 +330,13 @@ type part of a SKU, UPC or name and the list narrows as you type, showing the
 full product name. Pick with a click, the arrow keys and Enter, or the 📷
 scanner.
 
+## Themes
+
+**Settings → Appearance** picks the look for everyone who logs in: Classic
+(indigo), Ocean, Forest, Sunset, Slate, Dark, Midnight, or "Match the device"
+(Classic by day, Dark at night, following the phone's or computer's setting).
+Tap a swatch to preview it on the page, then Save.
+
 ## Saving an invoice PDF to your phone
 
 On an invoice, **📄 PDF** opens the PDF with a toolbar: **⬇ Save to this
