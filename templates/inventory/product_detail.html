@@ -35,7 +35,7 @@
   <div class="stat {% if product.market_badge %}border-indigo-200{% endif %}">
     <p class="lbl">TCGplayer market</p>
     {% if product.market_price %}<p class="val !text-xl">${{ product.market_price|floatformat:2|intcomma }}</p>
-      <p class="text-xs mt-1">{% if product.market_badge %}<span class="badge {{ product.market_badge.1 }}">your cost is {{ product.market_badge.0 }}</span>{% endif %}</p>
+      <p class="text-xs mt-1">{% if product.market_badge %}<span class="badge {{ product.market_badge.1 }}">cost = {{ product.cost_pct_of_market }}% of mkt</span>{% endif %}</p>
       <p class="text-xs text-slate-400 mt-1">margin at market ${{ product.market_margin_per_unit|floatformat:2 }}/unit · {{ product.market_updated_at|date:"M j, g:i A" }}</p>
     {% elif product.tcgplayer_id %}<p class="text-sm text-amber-700 mt-1">{{ product.market_error|default:"Not fetched yet" }}</p>
     {% else %}<p class="text-sm text-slate-500 mt-1">Add the TCGplayer link on <a href="{% url 'product_edit' product.pk %}" class="text-indigo-600 hover:underline">Edit</a></p>{% endif %}

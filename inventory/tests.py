@@ -616,7 +616,7 @@ class MarketPriceTests(TestCase):
             self.client.post(f"/inventory/{self.p.pk}/", {"action": "refresh_market"})
         detail = self.client.get(f"/inventory/{self.p.pk}/").content.decode()
         self.assertIn("TCGplayer market", detail)
-        self.assertIn("62.5% of market", detail)
+        self.assertIn("cost = 62.5% of mkt", detail)
         lst = self.client.get("/inventory/").content.decode()
         self.assertIn("62.5%", lst)
         rep = self.client.get("/reports/market-check/").content.decode()

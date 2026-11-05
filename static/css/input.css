@@ -24,7 +24,10 @@
     @apply w-full rounded-lg border-slate-300 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500;
   }
   .field-inline input, .field-inline select { @apply rounded-lg border-slate-300 text-sm; }
-  .stat { @apply card p-4; }
+  .stat { @apply card p-4 min-w-0 overflow-hidden; }
+  .stat .badge, .stat p { @apply max-w-full; }
+  .stat .badge { white-space: normal; }
+  .stat .val { @apply break-words; }
   .stat .lbl { @apply text-xs uppercase tracking-wide text-slate-500 font-semibold; }
   .stat .val { @apply mt-1 text-2xl font-bold text-slate-900 tabular-nums; }
   /* mobile-first tweaks: filter forms stack, tables scroll instead of pushing the page wider */
