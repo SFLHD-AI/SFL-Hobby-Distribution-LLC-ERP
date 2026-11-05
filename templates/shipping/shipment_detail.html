@@ -160,7 +160,7 @@
                 <option value="{{ r.line.pk }}">{{ r.line.product.sku }} ({{ r.remaining }} left)</option>
               {% endif %}{% endfor %}
             </select>
-            <input type="number" name="qty" value="1" min="1" class="w-20">
+            <input type="number" name="qty" value="1" min="1" class="w-full sm:w-20">
             <button class="btn-secondary">Add to box</button>
           </form>
           <form method="post" class="flex flex-wrap gap-2 items-end ml-auto">
@@ -169,7 +169,7 @@
             <input type="number" step="0.1" name="length_in" value="{{ pkg.length_in|default_if_none:'' }}" placeholder="L" class="w-14">
             <input type="number" step="0.1" name="width_in" value="{{ pkg.width_in|default_if_none:'' }}" placeholder="W" class="w-14">
             <input type="number" step="0.1" name="height_in" value="{{ pkg.height_in|default_if_none:'' }}" placeholder="H" class="w-14">
-            <input type="number" step="0.01" name="weight_lbs" value="{{ pkg.weight_lbs|default_if_none:'' }}" placeholder="lb" class="w-20">
+            <input type="number" step="0.01" name="weight_lbs" value="{{ pkg.weight_lbs|default_if_none:'' }}" placeholder="lb" class="w-full sm:w-20">
             <button class="btn-secondary">Save box</button>
           </form>
         </div>

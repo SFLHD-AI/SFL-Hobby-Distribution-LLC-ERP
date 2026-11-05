@@ -1,0 +1,43 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Market check{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+  <div>
+    <h1 class="page-title">Market check <span class="text-slate-400 font-normal">· {{ category }}</span></h1>
+    <p class="text-sm text-slate-500">Your average landed cost against the TCGplayer market price. Lowest percentage first = the most room to sell.{% if last %} Prices refreshed {{ last|date:"M j, g:i A" }} (hourly).{% endif %}</p>
+  </div>
+  <div class="flex gap-2">
+    <form method="post">{% csrf_token %}<input type="hidden" name="action" value="refresh"><button class="btn-secondary">↻ Refresh prices now</button></form>
+    <a href="?export=csv" class="btn-secondary">⬇ CSV</a>
+  </div>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-4">
+  <div class="stat"><p class="lbl">On hand at your cost</p><p class="val !text-xl">${{ total_cost|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">On hand at market</p><p class="val !text-xl">${{ total_market|floatformat:2|intcomma }}</p></div>
+  <div class="stat"><p class="lbl">Upside at market</p><p class="val !text-xl {% if upside < 0 %}text-red-600{% endif %}">${{ upside|floatformat:2|intcomma }}</p></div>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>SKU</th><th>Product</th><th class="num">On hand</th><th class="num">Your cost</th><th class="num">Market</th><th class="num">Cost % of mkt</th><th class="num">Margin / unit</th><th class="num">On hand at mkt</th><th></th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+      <tr>
+        <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'product_detail' r.p.pk %}">{{ r.p.sku }}</a></td>
+        <td class="max-w-xs truncate">{{ r.p.name }}</td>
+        <td class="num">{{ r.p.qty_on_hand }}</td>
+        <td class="num">${{ r.p.avg_cost|floatformat:2 }}</td>
+        <td class="num">{% if r.p.market_price %}${{ r.p.market_price|floatformat:2 }}{% else %}<span class="text-amber-700 text-xs">{{ r.p.market_error|default:"not fetched" }}</span>{% endif %}</td>
+        <td class="num">{% if r.p.market_badge %}<span class="badge {{ r.p.market_badge.1 }}">{{ r.pct }}%</span>{% else %}—{% endif %}</td>
+        <td class="num">{% if r.p.market_margin_per_unit is not None %}${{ r.p.market_margin_per_unit|floatformat:2 }}{% else %}—{% endif %}</td>
+        <td class="num">{% if r.on_hand_market is not None %}${{ r.on_hand_market|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+        <td><a href="https://www.tcgplayer.com/product/{{ r.p.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline">tcgplayer ↗</a></td>
+      </tr>
+    {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">No products in "{{ category }}" have a TCGplayer link yet. Add one on each product's Edit page.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if missing %}
+<p class="text-xs text-slate-500 mt-3">{{ missing|length }} product{{ missing|length|pluralize }} in "{{ category }}" without a TCGplayer link:
+  {% for p in missing|slice:":15" %}<a href="{% url 'product_edit' p.pk %}" class="text-indigo-600 hover:underline">{{ p.sku }}</a>{% if not forloop.last %}, {% endif %}{% endfor %}{% if missing|length > 15 %}…{% endif %}</p>
+{% endif %}
+{% endblock %}

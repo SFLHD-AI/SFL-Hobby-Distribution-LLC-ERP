@@ -224,8 +224,11 @@ def invoice_pdf_view(request, pk):
     """The PDF with a toolbar: Save to this phone / Share / Open full screen."""
     invoice = get_object_or_404(Invoice, pk=pk)
     qs = "?balance=1" if request.GET.get("balance") == "1" else ""
+    from django.urls import reverse
+    pdf_url = reverse("invoice_pdf", args=[invoice.pk]) + qs
     return render(request, "invoicing/invoice_pdf_view.html", {
         "invoice": invoice, "qs": qs, "filename": f"{invoice.number}.pdf",
+        "pdf_url": pdf_url, "download_url": pdf_url + ("&" if qs else "?") + "download=1",
     })
 
 

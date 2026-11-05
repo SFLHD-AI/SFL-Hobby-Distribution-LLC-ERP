@@ -6,7 +6,7 @@
 <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
   <h1 class="page-title">Vendors</h1>
   <form method="get" class="flex gap-2 items-center field-inline text-sm">
-    <input type="text" name="q" value="{{ q }}" placeholder="Search name or alias…" class="w-48">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search name or alias…" class="w-full sm:w-48">
     <label class="flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" name="inactive" value="1" {% if show_inactive %}checked{% endif %} class="rounded"> show inactive</label>
     <button class="btn-secondary">Search</button>
   </form>

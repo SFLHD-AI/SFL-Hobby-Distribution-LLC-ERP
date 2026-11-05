@@ -39,7 +39,7 @@
   {% elif po.status == 'picking' %}
     <div class="flex items-center gap-3">
       <span class="text-sm font-medium text-amber-700">Being picked — {{ po.picked_units }}/{{ po.total_units }} units</span>
-      <div class="w-40 bg-slate-200 rounded-full h-2.5"><div class="bg-amber-500 h-2.5 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
+      <div class="w-full sm:w-40 bg-slate-200 rounded-full h-2.5"><div class="bg-amber-500 h-2.5 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
       <a href="{% url 'pick_detail' po.pk %}" class="text-indigo-600 text-sm hover:underline">open pick screen →</a>
     </div>
     <script>setTimeout(()=>location.reload(), 7000);</script>
@@ -92,7 +92,7 @@
             <form method="post" class="flex gap-1.5 justify-end items-center">
               {% csrf_token %}<input type="hidden" name="action" value="update_line"><input type="hidden" name="line_id" value="{{ l.pk }}">
               <input name="qty" type="number" min="1" value="{{ l.qty_ordered }}" class="w-16 rounded border-slate-300 text-sm text-right">
-              <input name="price" type="number" step="0.01" value="{{ l.unit_price }}" class="w-24 rounded border-slate-300 text-sm text-right">
+              <input name="price" type="number" step="0.01" value="{{ l.unit_price }}" class="w-full sm:w-24 rounded border-slate-300 text-sm text-right">
               <input name="disc" type="number" step="0.01" value="{{ l.discount_pct }}" class="w-16 rounded border-slate-300 text-sm text-right">
               <button class="text-indigo-600 text-xs font-bold hover:underline">save</button>
             </form>
@@ -139,9 +139,9 @@
             {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.all_codes|join:" " }}">{{ p.sku }} — {{ p.name }} ({{ p.qty_available }} avail)</option>{% endfor %}
           </select></div>
         <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
-          <input type="number" name="qty" value="1" min="1" class="w-20"></div>
+          <input type="number" name="qty" value="1" min="1" class="w-full sm:w-20"></div>
         <div><label class="text-xs text-slate-500 block mb-1">Price $ <span class="normal-case text-slate-400">(blank = customer price)</span></label>
-          <input type="number" name="price" step="0.01" class="w-28" placeholder="auto"></div>
+          <input type="number" name="price" step="0.01" class="w-full sm:w-28" placeholder="auto"></div>
         <button class="btn-primary">Add</button>
       </form>
     </div>

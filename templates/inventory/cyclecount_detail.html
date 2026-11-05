@@ -21,7 +21,7 @@
           <td class="num">
             {% if cc.status == 'open' %}
               <input type="number" name="count_{{ l.pk }}" value="{{ l.counted_qty|default_if_none:'' }}"
-                     class="w-24 rounded-lg border-slate-300 text-sm text-right" inputmode="numeric">
+                     class="w-full sm:w-24 rounded-lg border-slate-300 text-sm text-right" inputmode="numeric">
             {% else %}{{ l.counted_qty|default_if_none:"—" }}{% endif %}
           </td>
           <td class="num font-bold {% if l.delta and l.delta < 0 %}text-red-600{% elif l.delta and l.delta > 0 %}text-emerald-600{% endif %}">

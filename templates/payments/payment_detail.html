@@ -41,7 +41,7 @@
     <form method="post" class="flex items-center gap-2 mb-2 field-inline">
       {% csrf_token %}<input type="hidden" name="action" value="apply"><input type="hidden" name="invoice_id" value="{{ i.pk }}">
       <span class="flex-1 text-sm">{{ i.number }} <span class="text-slate-400">bal ${{ i.balance_due|floatformat:2 }}</span></span>
-      <input type="number" step="0.01" name="amount" value="{{ i.balance_due }}" class="w-28 text-right">
+      <input type="number" step="0.01" name="amount" value="{{ i.balance_due }}" class="w-full sm:w-28 text-right">
       <button class="btn-secondary">Apply</button>
     </form>
     {% endfor %}

@@ -16,6 +16,21 @@ class ProductForm(forms.ModelForm):
                                      "placeholder": "one per line — same product, different packaging"}),
         help_text="Each code here finds this product when scanned or typed, and shares its stock and average cost.")
 
+    tcgplayer = forms.CharField(
+        required=False, label="TCGplayer product (URL or ID)",
+        widget=forms.TextInput(attrs={"placeholder": "paste the tcgplayer.com product link, e.g. https://www.tcgplayer.com/product/593391/…"}),
+        help_text="Sealed TCG Product only: pulls the TCGplayer market price every hour and shows your cost as a % of it.")
+
+    def clean_tcgplayer(self):
+        from inventory.pricing import parse_tcgplayer_id
+        raw = (self.cleaned_data.get("tcgplayer") or "").strip()
+        if not raw:
+            return None
+        pid = parse_tcgplayer_id(raw)
+        if pid is None:
+            raise forms.ValidationError("Paste the product's tcgplayer.com link or its numeric product ID.")
+        return pid
+
     def clean_extra_barcodes(self):
         raw = self.cleaned_data.get("extra_barcodes", "")
         codes = []
@@ -44,6 +59,7 @@ class ProductForm(forms.ModelForm):
                 self.fields[name].widget.attrs["data-scan"] = ""
         if self.instance.pk and not self.is_bound:
             self.fields["extra_barcodes"].initial = self.instance.extra_codes_text
+            self.fields["tcgplayer"].initial = self.instance.tcgplayer_id or ""
 
     def save_barcodes(self, product):
         """Sync ProductBarcode rows to the textarea (call after save())."""
@@ -76,6 +92,11 @@ class ProductForm(forms.ModelForm):
             obj.category, _ = Category.objects.get_or_create(name=nc)
         if nb:
             obj.brand, _ = Brand.objects.get_or_create(name=nb)
+        if "tcgplayer" in self.cleaned_data:
+            obj.tcgplayer_id = self.cleaned_data["tcgplayer"]
+            if not obj.tcgplayer_id:
+                obj.market_price = obj.market_low = None
+                obj.market_error = ""
         if commit:
             obj.save()
         return obj

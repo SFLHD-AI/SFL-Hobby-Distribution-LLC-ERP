@@ -137,6 +137,19 @@ def product_import(request):
     return redirect("product_list")
 
 
+def _maybe_refresh_market(request, product):
+    """Pull the TCGplayer price as soon as an id is saved (sealed product only)."""
+    if not product.tcgplayer_id:
+        return
+    from inventory.pricing import refresh_product
+    if not product.market_eligible:
+        messages.info(request, f"TCGplayer id saved, but market prices only apply to the "
+                               f"\"{__import__('inventory.pricing', fromlist=['x']).eligible_category_name()}\" category.")
+        return
+    ok, msg = refresh_product(product)
+    (messages.success if ok else messages.warning)(request, msg)
+
+
 @module_required("inventory")
 def product_create(request):
     form = ProductForm(request.POST or None, request.FILES or None)
@@ -145,6 +158,7 @@ def product_create(request):
         from django.utils.html import format_html
         product = form.save()
         form.save_barcodes(product)
+        _maybe_refresh_market(request, product)
         log_activity(request.user, "create", product)
         label_url = f"{reverse('product_labels')}?id={product.pk}&copies=1&mode=sku"
         messages.info(request, format_html(
@@ -174,6 +188,7 @@ def product_edit(request, pk):
         changes = {f: str(form.cleaned_data.get(f)) for f in form.changed_data}
         form.save()
         form.save_barcodes(product)
+        _maybe_refresh_market(request, product)
         log_activity(request.user, "update", product, changes=changes)
         messages.success(request, f"{product.sku} saved.")
         return redirect("product_detail", product.pk)
@@ -216,6 +231,11 @@ def product_delete(request, pk):
 def product_detail(request, pk):
     product = get_object_or_404(Product, pk=pk)
     adj_form = AdjustmentForm()
+    if request.method == "POST" and request.POST.get("action") == "refresh_market":
+        from inventory.pricing import refresh_product
+        ok, msg = refresh_product(product)
+        (messages.success if ok else messages.warning)(request, msg)
+        return redirect("product_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "revalue":
         if not can_see_costs(request.user):
             messages.error(request, "You don't have permission to change costs.")

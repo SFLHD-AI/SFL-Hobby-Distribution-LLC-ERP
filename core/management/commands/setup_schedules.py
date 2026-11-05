@@ -16,6 +16,8 @@ class Command(BaseCommand):
          "CRON", "0 7 * * *", "DAILY"),
         ("inbound-tracking", "inventory.tasks.refresh_inbound_tracking",
          "HOURLY", None, None),
+        ("market-prices", "inventory.tasks.refresh_market_prices",
+         "CRON", "0 * * * *", "HOURLY"),
         ("bank-sync", "banking.tasks.sync_all_connections",
          "HOURLY", None, None),
         ("recurring-expenses", "expenses.tasks.generate_recurring_expenses",

@@ -17,6 +17,7 @@ class CompanySettingsForm(forms.ModelForm):
                   "default_tax_rate", "invoice_template", "invoice_footer",
                   "default_payment_terms", "low_stock_email_digest", "alert_email",
                   "shipstation_api_key", "shipstation_api_secret", "shippo_api_token", "uship_api_key",
+                  "tcgplayer_public_key", "tcgplayer_private_key", "market_price_category",
                   # accounting
                   "fiscal_year_start_month", "accounting_basis_default", "books_start_date",
                   "mileage_rate", "sales_tax_filing_frequency",
@@ -30,6 +31,7 @@ class CompanySettingsForm(forms.ModelForm):
             "shipstation_api_secret": forms.PasswordInput(render_value=True),
             "uship_api_key": forms.PasswordInput(render_value=True),
             "shippo_api_token": forms.PasswordInput(render_value=True),
+            "tcgplayer_private_key": forms.PasswordInput(render_value=True),
             "fiscal_year_start_month": forms.Select(choices=MONTH_CHOICES),
             "books_start_date": forms.DateInput(attrs={"type": "date"}),
             "mileage_rate": forms.NumberInput(attrs={"step": "0.001", "min": "0"}),
@@ -75,6 +77,15 @@ class CompanySettingsForm(forms.ModelForm):
         cleaned["plaid_client_id"] = client_id
         cleaned["plaid_secret"] = secret
         return cleaned
+
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if "market_price_category" in self.fields:
+            self.fields["market_price_category"].required = False
+
+    def clean_market_price_category(self):
+        return (self.cleaned_data.get("market_price_category") or "").strip() or "Sealed TCG Product"
 
 
 class NumberSequenceForm(forms.ModelForm):

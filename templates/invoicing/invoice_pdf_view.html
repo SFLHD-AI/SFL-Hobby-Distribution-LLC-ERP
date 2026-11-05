@@ -6,44 +6,77 @@
     <h1 class="page-title">{{ invoice.number }} <span class="text-slate-400 font-normal">PDF</span></h1>
     <p class="text-sm text-slate-500">{{ invoice.customer.business_name }} · ${{ invoice.total }}</p>
   </div>
-  <div class="flex flex-wrap gap-2">
-    <a href="{% url 'invoice_pdf' invoice.pk %}{{ qs }}{% if qs %}&{% else %}?{% endif %}download=1"
-       download="{{ filename }}" id="saveBtn" class="btn-primary">⬇ Save to this phone</a>
-    <button type="button" id="shareBtn" class="btn-secondary hidden">📤 Share / AirDrop</button>
-    <a href="{% url 'invoice_pdf' invoice.pk %}{{ qs }}" target="_blank" class="btn-secondary">Open full screen</a>
-    <a href="{% url 'invoice_detail' invoice.pk %}" class="btn-secondary">← Back</a>
-  </div>
+  <a href="{% url 'invoice_detail' invoice.pk %}" class="text-sm text-indigo-600 hover:underline">← Back to invoice</a>
+</div>
+<div class="grid grid-cols-2 sm:flex sm:flex-wrap gap-2 mb-3">
+  <a href="{{ download_url }}" download="{{ filename }}" id="saveBtn" class="btn-primary justify-center">⬇ Save to this phone</a>
+  <button type="button" id="shareBtn" class="btn-secondary justify-center">📤 Share / AirDrop</button>
+  <a href="{% url 'invoice_pdf' invoice.pk %}{{ qs }}" target="_blank" class="btn-secondary justify-center">👁 Open the PDF</a>
+  <a href="{% url 'invoice_email' invoice.pk %}" class="btn-secondary justify-center"
+     onclick="return confirm('Email invoice with PDF to {{ invoice.customer.email|default:'customer' }}?')">✉ Email</a>
 </div>
 <p class="text-xs text-slate-500 mb-3" id="saveHint">
-  On iPhone, <b>Save to this phone</b> downloads the PDF to the Files app (Downloads folder); <b>Share</b> lets you AirDrop it, save it to Files, or send it by text or email.
+  <span class="ios-only hidden">On iPhone, <b>Save to this phone</b> opens the share sheet — tap <b>Save to Files</b> to keep it, or <b>AirDrop</b> / <b>Messages</b> to send it.</span>
+  <span class="not-ios">Save downloads the PDF; Share opens your device's share options when available.</span>
 </p>
-<div class="card overflow-hidden" style="height:calc(100vh - 14rem);min-height:24rem">
+<div id="pdfFrame" class="card overflow-hidden hidden sm:block" style="height:calc(100vh - 15rem);min-height:24rem">
   <iframe src="{% url 'invoice_pdf' invoice.pk %}{{ qs }}#toolbar=0" title="{{ invoice.number }}" style="width:100%;height:100%;border:0"></iframe>
+</div>
+<div id="pdfMobile" class="card-pad sm:hidden text-sm text-slate-600">
+  Tap <b>Open the PDF</b> to read it full screen (pinch to zoom, swipe for pages), then use Safari's share button or come back here to save.
 </div>
 {% endblock %}
 {% block scripts %}
 <script>
 (function () {
-  const url = "{% url 'invoice_pdf' invoice.pk %}{{ qs }}";
+  const url = "{{ pdf_url|escapejs }}";
+  const dlUrl = "{{ download_url|escapejs }}";
   const name = "{{ filename }}";
-  const share = document.getElementById("shareBtn");
-  if (navigator.share && navigator.canShare) {
-    share.classList.remove("hidden");
-    share.addEventListener("click", async () => {
-      share.disabled = true; share.textContent = "Preparing…";
-      try {
-        const blob = await (await fetch(url, { credentials: "same-origin" })).blob();
-        const file = new File([blob], name, { type: "application/pdf" });
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({ files: [file], title: name });
-        } else {
-          window.open(url, "_blank");
-        }
-      } catch (e) {
-        if (!(e && e.name === "AbortError")) window.open(url, "_blank");
-      } finally { share.disabled = false; share.textContent = "📤 Share / AirDrop"; }
-    });
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const canShareFiles = !!(navigator.share && navigator.canShare);
+  document.querySelectorAll(".ios-only").forEach(e => e.classList.toggle("hidden", !isIOS));
+  document.querySelectorAll(".not-ios").forEach(e => e.classList.toggle("hidden", isIOS));
+  const save = document.getElementById("saveBtn"), share = document.getElementById("shareBtn");
+  if (!canShareFiles) share.classList.add("hidden");
+
+  async function getFile() {
+    const blob = await (await fetch(url, { credentials: "same-origin" })).blob();
+    return new File([blob], name, { type: "application/pdf" });
   }
+  async function shareIt(btn) {
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Preparing…";
+    try {
+      const file = await getFile();
+      if (canShareFiles && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: name });
+        return true;
+      }
+    } catch (e) {
+      if (e && e.name === "AbortError") return true;   // user closed the sheet
+    } finally { btn.disabled = false; btn.textContent = label; }
+    return false;
+  }
+  async function downloadIt(btn) {
+    const label = btn.textContent;
+    btn.disabled = true; btn.textContent = "Preparing…";
+    try {
+      const file = await getFile();
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(file); a.download = name; a.rel = "noopener";
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    } catch (e) {
+      window.location.href = dlUrl;          // server-side attachment as a last resort
+    } finally { btn.disabled = false; btn.textContent = label; }
+  }
+  // iPhone: the share sheet is the only way to "save" a PDF to the phone, so Save uses it.
+  save.addEventListener("click", async (e) => {
+    e.preventDefault();                       // plain link is the no-JS fallback
+    if (isIOS && canShareFiles) { if (await shareIt(save)) return; }
+    await downloadIt(save);
+  });
+  share.addEventListener("click", async () => { if (!(await shareIt(share))) window.open(url, "_blank"); });
 })();
 </script>
 {% endblock %}

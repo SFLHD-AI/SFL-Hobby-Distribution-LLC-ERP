@@ -430,3 +430,24 @@ class InvoicePdfViewerTests(TestCase):
     def test_detail_links_to_viewer(self):
         html = self.client.get(f"/invoices/{self.inv.pk}/").content.decode()
         self.assertIn(f"/invoices/{self.inv.pk}/pdf/view/", html)
+
+
+class InvoicePdfViewerPhoneTests(TestCase):
+    def test_viewer_uses_share_sheet_on_iphone(self):
+        from django.contrib.auth.models import User
+        from decimal import Decimal
+        from orders.tests import make_customer, stocked_product
+        from orders.models import POLine, PurchaseOrder
+        from invoicing.models import Invoice
+        self.client.force_login(User.objects.create_superuser("pdfp", password="x"))
+        p = stocked_product("PDF-2", qty=10, cost="4.00")
+        po = PurchaseOrder.objects.create(customer=make_customer("Phone Co"))
+        POLine.objects.create(po=po, product=p, qty_ordered=1, unit_price=Decimal("10.00"))
+        po.confirm(); po.finalize()
+        inv = Invoice.build_from_pos([po])
+        html = self.client.get(f"/invoices/{inv.pk}/pdf/view/").content.decode()
+        self.assertIn('id="saveBtn"', html)
+        self.assertIn("navigator.share", html)
+        self.assertIn("isIOS", html)
+        self.assertIn("Open the PDF", html)
+        self.assertIn('class="card-pad sm:hidden', html)      # phone layout, no iframe

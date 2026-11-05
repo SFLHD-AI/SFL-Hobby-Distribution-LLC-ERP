@@ -27,4 +27,16 @@
   .stat { @apply card p-4; }
   .stat .lbl { @apply text-xs uppercase tracking-wide text-slate-500 font-semibold; }
   .stat .val { @apply mt-1 text-2xl font-bold text-slate-900 tabular-nums; }
+  /* mobile-first tweaks: filter forms stack, tables scroll instead of pushing the page wider */
+  .field-inline > div { @apply min-w-0; }
+  .card.overflow-x-auto .tbl, .card-pad.overflow-x-auto .tbl { min-width: 32rem; }
+  @media (max-width: 639px) {
+    .field-inline input:not([type=checkbox]):not([type=radio]), .field-inline select, .field-inline textarea { @apply w-full; }
+    .field-inline > div { @apply basis-full; }
+    .btn { @apply py-2.5; }
+    .page-title { @apply text-lg; }
+  }
+  html { -webkit-text-size-adjust: 100%; }
+  input, select, textarea { font-size: 16px; }   /* stops iOS zooming into fields */
+  @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem; } }
 }

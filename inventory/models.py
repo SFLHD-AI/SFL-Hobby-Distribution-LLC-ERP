@@ -86,6 +86,15 @@ class Product(SoftDeleteModel):
                                         decimal_places=2, default=0)
     msrp = models.DecimalField("MSRP", max_digits=12, decimal_places=2, null=True, blank=True)
 
+    # TCGplayer market price (sealed TCG product only; refreshed hourly)
+    tcgplayer_id = models.PositiveIntegerField("TCGplayer product ID", null=True, blank=True, db_index=True,
+                                               help_text="From the product's tcgplayer.com URL: /product/<id>/…")
+    market_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                       help_text="TCGplayer market price, per unit")
+    market_low = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    market_updated_at = models.DateTimeField(null=True, blank=True)
+    market_error = models.CharField(max_length=200, blank=True)
+
     reorder_point = models.IntegerField(default=0)
     low_stock_alert_muted = models.BooleanField(
         default=False,
@@ -166,6 +175,40 @@ class Product(SoftDeleteModel):
 
     def barcode_value(self):
         return self.upc or self.sku
+
+    # --- market price (TCGplayer) ---------------------------------------------
+    @property
+    def market_eligible(self):
+        """Only products in the configured 'Sealed TCG Product' category are priced."""
+        from inventory.pricing import eligible_category_name
+        return bool(self.category_id and self.category.name.strip().lower() == eligible_category_name().lower())
+
+    @property
+    def cost_pct_of_market(self):
+        """avg landed cost as a percent of TCGplayer market price (None when unknown)."""
+        if not self.market_price or self.market_price <= 0 or not self.avg_cost:
+            return None
+        return (self.avg_cost / self.market_price * Decimal("100")).quantize(Decimal("0.1"), ROUND_HALF_UP)
+
+    @property
+    def market_margin_per_unit(self):
+        if not self.market_price:
+            return None
+        return (self.market_price - self.avg_cost).quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def market_badge(self):
+        """(label, css) from the cost-vs-market ratio."""
+        pct = self.cost_pct_of_market
+        if pct is None:
+            return None
+        if pct < 70:
+            return (f"{pct}% of market", "bg-emerald-100 text-emerald-700")
+        if pct < 90:
+            return (f"{pct}% of market", "bg-sky-100 text-sky-700")
+        if pct < 100:
+            return (f"{pct}% of market", "bg-amber-100 text-amber-800")
+        return (f"{pct}% of market", "bg-red-100 text-red-700")
 
     # --- barcodes ------------------------------------------------------------
     @property

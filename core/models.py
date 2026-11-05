@@ -133,6 +133,13 @@ class CompanySettings(models.Model):
         max_length=10, default="quarterly",
         choices=[("monthly", "Monthly"), ("quarterly", "Quarterly"), ("annual", "Annual")])
 
+    # TCGplayer market prices
+    tcgplayer_public_key = models.CharField(max_length=120, blank=True)
+    tcgplayer_private_key = models.CharField(max_length=120, blank=True)
+    market_price_category = models.CharField(
+        max_length=100, default="Sealed TCG Product",
+        help_text="Products in this category get a TCGplayer market price (refreshed hourly)")
+
     # Bank feed (Plaid) — values here override the .env file
     plaid_client_id = models.CharField(max_length=100, blank=True)
     plaid_secret = models.CharField(max_length=100, blank=True)

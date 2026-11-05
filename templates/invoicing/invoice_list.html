@@ -11,7 +11,7 @@
   </div>
 </div>
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
-  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Invoice # / customer" class="w-56">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Invoice # / customer" class="w-full sm:w-56">
   <select name="status"><option value="">All</option>
     <option value="unpaid" {% if request.GET.status == 'unpaid' %}selected{% endif %}>Unpaid (open + partial)</option>
     <option value="open" {% if request.GET.status == 'open' %}selected{% endif %}>Open</option>

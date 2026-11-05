@@ -18,7 +18,7 @@
 
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
   <input type="text" name="q" value="{{ request.GET.q }}" placeholder="SKU / name / UPC / bin — scan here"
-         class="w-64" autofocus data-scan data-scan-submit>
+         class="w-full sm:w-64" autofocus data-scan data-scan-submit>
   <select name="category"><option value="">All categories</option>
     {% for c in categories %}<option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
   <select name="brand"><option value="">All brands</option>
@@ -35,7 +35,7 @@
       <th><input type="checkbox" onclick="document.querySelectorAll('.rowck').forEach(c=>c.checked=this.checked)" class="rounded"></th>
       <th>SKU</th><th>Name</th><th>Brand</th><th>Category</th><th>Bin</th>
       <th class="num">On hand</th><th class="num">Committed</th><th class="num">Available</th><th class="num">Incoming</th>
-      {% if u_can_see_costs %}<th class="num">Avg cost</th>{% endif %}
+      {% if u_can_see_costs %}<th class="num">Avg cost</th><th class="num" title="Your cost as % of TCGplayer market (sealed TCG product)">Mkt %</th>{% endif %}
       <th class="num">Price</th><th></th>
     </tr></thead>
     <tbody>
@@ -51,11 +51,12 @@
         <td class="num text-slate-500">{{ p.qty_committed }}</td>
         <td class="num font-semibold {% if p.is_low_stock and p.active %}text-red-600{% endif %}">{{ p.qty_available }}</td>
         <td class="num">{% with inc=p.incoming_summary %}{% if inc.qty %}<a href="{% url 'product_detail' p.pk %}#incoming" class="text-sky-700 font-medium hover:underline" title="{{ inc.orders }} open order(s){% if u_can_see_costs %} · ${{ inc.cost|floatformat:2 }}{% endif %}">{{ inc.qty }}</a>{% else %}<span class="text-slate-300">—</span>{% endif %}{% endwith %}</td>
-        {% if u_can_see_costs %}<td class="num">${{ p.avg_cost|floatformat:2 }}</td>{% endif %}
+        {% if u_can_see_costs %}<td class="num">${{ p.avg_cost|floatformat:2 }}</td>
+        <td class="num">{% if p.market_badge %}<span class="badge {{ p.market_badge.1 }}" title="market ${{ p.market_price }}">{{ p.cost_pct_of_market }}%</span>{% else %}<span class="text-slate-300">—</span>{% endif %}</td>{% endif %}
         <td class="num">${{ p.default_price|floatformat:2 }}</td>
         <td>{% if p.is_low_stock and p.active %}<span class="badge bg-red-100 text-red-700">LOW</span>{% endif %}</td>
       </tr>
-    {% empty %}<tr><td colspan="13" class="text-center text-slate-400 py-8">No products. Add one or import a CSV.</td></tr>{% endfor %}
+    {% empty %}<tr><td colspan="14" class="text-center text-slate-400 py-8">No products. Add one or import a CSV.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>

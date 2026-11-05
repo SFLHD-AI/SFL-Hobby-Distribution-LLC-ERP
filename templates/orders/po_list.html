@@ -9,7 +9,7 @@
   </div>
 </div>
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
-  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="PO # / customer / ref" class="w-56">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="PO # / customer / ref" class="w-full sm:w-56">
   <select name="status"><option value="">All statuses</option>
     <option value="unbilled" {% if request.GET.status == 'unbilled' %}selected{% endif %}>⚠ Needs invoicing (shipped/finalized, not billed)</option>
     {% for code, label in statuses %}<option value="{{ code }}" {% if request.GET.status == code %}selected{% endif %}>{{ label }}</option>{% endfor %}</select>
@@ -34,7 +34,7 @@
             {% else %}<a href="{% url 'invoice_create' %}?po={{ po.pk }}" class="badge bg-red-100 text-red-700 hover:bg-red-200" title="No invoice yet — click to bill it">⚠ not billed</a>{% endif %}
           {% endif %}</td>
         <td>{% if po.status == 'picking' %}
-          <div class="w-24 bg-slate-200 rounded-full h-2"><div class="bg-amber-500 h-2 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
+          <div class="w-full sm:w-24 bg-slate-200 rounded-full h-2"><div class="bg-amber-500 h-2 rounded-full" style="width:{{ po.pick_progress_pct }}%"></div></div>
           <span class="text-xs text-slate-500">{{ po.pick_progress_pct }}%</span>
         {% endif %}</td>
         <td class="num">{{ po.total_units }}</td>

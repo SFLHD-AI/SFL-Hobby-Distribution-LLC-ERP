@@ -273,6 +273,18 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## TCGplayer market prices (sealed product)
+
+For products in the **Sealed TCG Product** category (the name is a setting),
+paste the product's tcgplayer.com link on the product's Edit page. The
+system pulls the TCGplayer market price at the top of every hour and shows
+**your cost as a percentage of market** on the product page, in the Inventory
+list ("Mkt %") and on **Reports → Market check**, which lists every priced
+product cheapest-relative-to-market first with on-hand value at cost vs. at
+market. Green under 70%, blue under 90%, amber under 100%, red at or above
+market. Prices come from TCGplayer's public price points, so no keys are
+needed; official API keys can be entered in Settings if you have them.
+
 ## What's coming in for a product
 
 Search the product (Inventory search, the top search bar, or 📷 scan) and open
@@ -321,7 +333,8 @@ scanner.
 ## Saving an invoice PDF to your phone
 
 On an invoice, **📄 PDF** opens the PDF with a toolbar: **⬇ Save to this
-phone** downloads it (on iPhone it lands in the Files app under Downloads),
+phone** — on iPhone this opens the share sheet, where **Save to Files** keeps
+it on the phone (Safari cannot download a PDF silently); on a computer it downloads —
 **📤 Share / AirDrop** opens the phone's share sheet so you can AirDrop it,
 save it to Files, or send it by text or email, and **Open full screen** shows
 the plain PDF. Tick "show account balance" first to include the customer's

@@ -71,7 +71,7 @@
         <option value="none" {% if filters.category == 'none' %}selected{% endif %}>Uncategorized</option>
         {% for c in categories %}<option value="{{ c.pk }}" {% if filters.category == c.pk|stringformat:'s' %}selected{% endif %}>{{ c.name }}</option>{% endfor %}
       </select></div>
-    <div><label class="text-xs text-slate-500 block mb-1">Vendor</label><input type="text" name="vendor" list="vendor-list" value="{{ filters.vendor }}" class="w-36" placeholder="contains…"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Vendor</label><input type="text" name="vendor" list="vendor-list" value="{{ filters.vendor }}" class="w-full sm:w-36" placeholder="contains…"></div>
     <div><label class="text-xs text-slate-500 block mb-1">Status</label>
       <select name="status"><option value="">Any</option>
         <option value="paid" {% if filters.status == 'paid' %}selected{% endif %}>Paid</option>
@@ -115,7 +115,7 @@
       <span id="bulk-paid" class="hidden flex flex-wrap gap-2">{{ bulk_paid_form.paid_date }}{{ bulk_paid_form.paid_from }}{{ bulk_paid_form.payment_method }}</span>
       <span id="bulk-cat" class="hidden flex flex-wrap gap-2">
         <select name="category"><option value="">— category —</option>{% for c in categories %}<option value="{{ c.pk }}">{{ c.name }}</option>{% endfor %}</select>
-        <input type="text" name="new_category" placeholder="…or new" class="w-32">
+        <input type="text" name="new_category" placeholder="…or new" class="w-full sm:w-32">
       </span>
       <button class="btn-secondary">Apply</button>
       <span class="ml-auto text-xs text-slate-400">{{ page.paginator.count }} row{{ page.paginator.count|pluralize }}</span>

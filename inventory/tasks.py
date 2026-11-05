@@ -3,6 +3,12 @@ from inventory.models import Receipt
 from inventory.tracking import refresh_receipt
 
 
+def refresh_market_prices():
+    """Top of every hour: TCGplayer market price for sealed TCG product."""
+    from inventory.pricing import refresh_all
+    return refresh_all()
+
+
 def refresh_inbound_tracking():
     """Hourly: refresh tracking on open supplier orders that have packages on the way."""
     from shipping.providers import get_provider

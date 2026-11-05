@@ -78,6 +78,9 @@
   <a href="{% url 'report_revenue_dow' %}" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">📅</p><h2 class="font-semibold">Revenue by day of week</h2>
     <p class="text-sm text-slate-500 mt-1">Which days you sell the most and least.</p></a>
+  <a href="{% url 'report_market_check' %}" class="card-pad border-indigo-200 bg-indigo-50/40 hover:border-indigo-400 transition-colors">
+    <p class="text-2xl mb-2">🎯</p><h2 class="font-semibold">Market check (TCGplayer)</h2>
+    <p class="text-sm text-slate-500 mt-1">Sealed TCG product: your cost as a % of TCGplayer market, refreshed hourly. What should I be selling?</p></a>
   <a href="{% url 'report_sales_product' %}?group=category" class="card-pad hover:border-indigo-300 transition-colors">
     <p class="text-2xl mb-2">🗂️</p><h2 class="font-semibold">Profit by category</h2>
     <p class="text-sm text-slate-500 mt-1">Units, dollars and profit per product category for any period — includes manual invoice items and their categories.</p></a>

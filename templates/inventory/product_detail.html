@@ -24,13 +24,26 @@
   </div>
 </div>
 
-<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 mb-6">
+<div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-3 mb-6">
   <div class="stat"><p class="lbl">On hand</p><p class="val">{{ product.qty_on_hand }}</p></div>
   <div class="stat"><p class="lbl">Committed</p><p class="val">{{ product.qty_committed }}</p></div>
   <div class="stat"><p class="lbl">Available</p><p class="val {% if product.is_low_stock %}text-red-600{% endif %}">{{ product.qty_available }}</p></div>
   <a href="#incoming" class="stat hover:border-indigo-300 {% if incoming_summary.qty %}border-sky-200 bg-sky-50/40{% endif %}">
     <p class="lbl">Incoming</p><p class="val">{{ incoming_summary.qty }}</p>
     <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p></a>
+  {% if show_costs and product.market_eligible %}
+  <div class="stat {% if product.market_badge %}border-indigo-200{% endif %}">
+    <p class="lbl">TCGplayer market</p>
+    {% if product.market_price %}<p class="val !text-xl">${{ product.market_price|floatformat:2|intcomma }}</p>
+      <p class="text-xs mt-1">{% if product.market_badge %}<span class="badge {{ product.market_badge.1 }}">your cost is {{ product.market_badge.0 }}</span>{% endif %}</p>
+      <p class="text-xs text-slate-400 mt-1">margin at market ${{ product.market_margin_per_unit|floatformat:2 }}/unit · {{ product.market_updated_at|date:"M j, g:i A" }}</p>
+    {% elif product.tcgplayer_id %}<p class="text-sm text-amber-700 mt-1">{{ product.market_error|default:"Not fetched yet" }}</p>
+    {% else %}<p class="text-sm text-slate-500 mt-1">Add the TCGplayer link on <a href="{% url 'product_edit' product.pk %}" class="text-indigo-600 hover:underline">Edit</a></p>{% endif %}
+    {% if product.tcgplayer_id %}<form method="post" class="mt-1">{% csrf_token %}<input type="hidden" name="action" value="refresh_market">
+      <button class="text-xs text-indigo-600 hover:underline">↻ Refresh</button>
+      <a href="https://www.tcgplayer.com/product/{{ product.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline ml-2">open ↗</a></form>{% endif %}
+  </div>
+  {% endif %}
   {% if show_costs %}
   <div class="stat"><p class="lbl">Avg landed cost</p><p class="val !text-xl">${{ product.avg_cost|floatformat:4 }}</p></div>
   <div class="stat"><p class="lbl">Inventory value</p><p class="val !text-xl">${{ product.inventory_value|intcomma }}</p></div>

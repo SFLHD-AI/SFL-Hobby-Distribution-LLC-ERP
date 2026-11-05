@@ -33,10 +33,10 @@
     <div><label class="text-xs text-slate-500 block mb-1" for="f_as_of">As of</label><input type="date" id="f_as_of" name="as_of" value="{{ as_of|date:'Y-m-d' }}"></div>
   {% endif %}
   {% if show_min %}
-    <div><label class="text-xs text-slate-500 block mb-1" for="f_min">Only amounts of at least $</label><input type="number" step="0.01" min="0" id="f_min" name="min" value="{{ min_amount|floatformat:2 }}" class="w-28"></div>
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_min">Only amounts of at least $</label><input type="number" step="0.01" min="0" id="f_min" name="min" value="{{ min_amount|floatformat:2 }}" class="w-full sm:w-28"></div>
   {% endif %}
   {% if show_threshold %}
-    <div><label class="text-xs text-slate-500 block mb-1" for="f_threshold">1099 threshold $</label><input type="number" step="1" min="0" id="f_threshold" name="threshold" value="{{ threshold|floatformat:0 }}" class="w-28">
+    <div><label class="text-xs text-slate-500 block mb-1" for="f_threshold">1099 threshold $</label><input type="number" step="1" min="0" id="f_threshold" name="threshold" value="{{ threshold|floatformat:0 }}" class="w-full sm:w-28">
       {% if threshold_help %}<p class="text-[11px] text-slate-400 mt-1">{{ threshold_help }}</p>{% endif %}</div>
   {% endif %}
   <button class="btn-secondary">Run</button>

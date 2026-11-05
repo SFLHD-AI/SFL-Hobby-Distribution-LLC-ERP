@@ -467,3 +467,48 @@ def quickbooks_export(request):
         f"qb_expenses_{start}_{end}.csv",
         ["Date", "Category", "Vendor", "Amount", "Memo"],
         [[e.date, e.category or "", e.vendor, e.amount, e.note] for e in exps])
+
+
+
+# ---------------------------------------------------------------------------
+# Market check: your cost vs TCGplayer market (sealed TCG product)
+# ---------------------------------------------------------------------------
+@costs_required
+def market_check(request):
+    """What should I be selling? Every sealed product with a TCGplayer price,
+    cheapest-relative-to-market first."""
+    from inventory.pricing import eligible_category_name, eligible_products, refresh_all
+    if request.method == "POST" and request.POST.get("action") == "refresh":
+        from django.contrib import messages
+        from django.shortcuts import redirect
+        messages.success(request, refresh_all())
+        return redirect("report_market_check")
+    products = list(eligible_products().order_by("sku"))
+    rows, total_cost, total_market = [], ZERO, ZERO
+    for p in products:
+        pct = p.cost_pct_of_market
+        on_hand_cost = p.inventory_value
+        on_hand_market = (Decimal(p.qty_on_hand) * p.market_price).quantize(Decimal("0.01")) if p.market_price else None
+        total_cost += on_hand_cost
+        total_market += on_hand_market or ZERO
+        rows.append({"p": p, "pct": pct, "on_hand_market": on_hand_market,
+                     "upside": (on_hand_market - on_hand_cost) if on_hand_market is not None else None})
+    rows.sort(key=lambda r: (r["pct"] is None, r["pct"] or 0))
+    if request.GET.get("export") == "csv":
+        return csv_response("market_check.csv",
+                            ["SKU", "Product", "On hand", "Avg cost", "TCGplayer market", "Cost % of market",
+                             "Margin/unit at market", "On-hand at cost", "On-hand at market", "Updated"],
+                            [[r["p"].sku, r["p"].name, r["p"].qty_on_hand, f"{r['p'].avg_cost:.4f}",
+                              f"{r['p'].market_price:.2f}" if r["p"].market_price else "",
+                              f"{r['pct']}" if r["pct"] is not None else "",
+                              f"{r['p'].market_margin_per_unit:.2f}" if r["p"].market_margin_per_unit is not None else "",
+                              f"{r['p'].inventory_value:.2f}",
+                              f"{r['on_hand_market']:.2f}" if r["on_hand_market"] is not None else "",
+                              r["p"].market_updated_at.isoformat() if r["p"].market_updated_at else ""] for r in rows])
+    last = max((p.market_updated_at for p in products if p.market_updated_at), default=None)
+    return render(request, "reports/market_check.html", {
+        "rows": rows, "category": eligible_category_name(), "total_cost": total_cost,
+        "total_market": total_market, "upside": total_market - total_cost, "last": last,
+        "missing": [p for p in __import__("inventory.models", fromlist=["Product"]).Product.objects
+                    .filter(active=True, tcgplayer_id__isnull=True, category__name__iexact=eligible_category_name())],
+    })

@@ -16,7 +16,7 @@
           <td class="num">{{ l.qty }}</td>
           <td class="num">${{ l.unit_price|floatformat:2 }}</td>
           <td class="num"><input type="number" name="qty_{{ l.pk }}" min="0" max="{{ l.qty }}"
-                 class="w-24 rounded-lg border-slate-300 text-sm text-right"></td>
+                 class="w-full sm:w-24 rounded-lg border-slate-300 text-sm text-right"></td>
           <td><input type="checkbox" name="restock_{{ l.pk }}" checked class="rounded"></td>
         </tr>
       {% endfor %}

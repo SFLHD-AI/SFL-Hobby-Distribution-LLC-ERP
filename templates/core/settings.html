@@ -152,6 +152,13 @@
       <div class="field"><label>Shippo API token <span class="normal-case text-slate-400">(buy USPS/UPS/FedEx labels in-app)</span></label>{{ form.shippo_api_token }}</div>
       <div class="field"><label>uShip API key</label>{{ form.uship_api_key }}</div>
     </div>
+    <h3 class="font-semibold text-sm pt-2">TCGplayer market prices</h3>
+    <p class="text-sm text-slate-500">Products in the category below get a TCGplayer market price every hour (paste each product's tcgplayer.com link on its Edit page). No keys are needed — prices come from TCGplayer's public price points. If you hold official API keys, enter them and they are used instead.</p>
+    <div class="grid md:grid-cols-3 gap-4">
+      <div class="field"><label>Category to price</label>{{ form.market_price_category }}</div>
+      <div class="field"><label>TCGplayer public key <span class="normal-case text-slate-400">(optional)</span></label>{{ form.tcgplayer_public_key }}</div>
+      <div class="field"><label>TCGplayer private key <span class="normal-case text-slate-400">(optional)</span></label>{{ form.tcgplayer_private_key }}</div>
+    </div>
   </div>
 
   <button class="btn-primary">Save settings</button>

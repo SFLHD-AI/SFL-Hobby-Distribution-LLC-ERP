@@ -9,7 +9,7 @@
   </div>
 </div>
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
-  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Name / email / phone" class="w-64">
+  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="Name / email / phone" class="w-full sm:w-64">
   <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="active" value="1" {% if request.GET.active %}checked{% endif %} class="rounded"> Active only</label>
   <button class="btn-secondary">Filter</button>
 </form>

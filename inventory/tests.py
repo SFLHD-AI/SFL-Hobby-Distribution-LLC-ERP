@@ -557,3 +557,84 @@ class ReceiveOverridesTrackingTests(TestCase):
         self.assertEqual(r.expected_date, timezone.localdate())
         self.assertEqual({pk.status for pk in r.packages.all()}, {"DELIVERED"})
         self.assertEqual(r.tracking_badge[0], "Delivered (2 boxes)")
+
+
+class MarketPriceTests(TestCase):
+    class FakeProvider:
+        name = "fake"
+        def __init__(self, prices): self.prices, self.calls = prices, []
+        def is_configured(self): return True
+        def fetch(self, pid):
+            from inventory.pricing import PricingError
+            self.calls.append(pid)
+            if pid not in self.prices:
+                raise PricingError("TCGplayer product id not found.")
+            m = self.prices[pid]
+            return {"market": m, "low": m}
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Category, Product
+        self.client.force_login(User.objects.create_superuser("mkt", password="x"))
+        sealed = Category.objects.create(name="Sealed TCG Product")
+        other = Category.objects.create(name="Supplies")
+        self.p = Product.objects.create(sku="PRISM-ETB", name="Prismatic ETB", category=sealed,
+                                        default_price=Decimal("120"), tcgplayer_id=593391)
+        self.p.apply_movement(movement_type="receipt", qty_delta=10, unit_cost=Decimal("62.50"), new_avg_cost=Decimal("62.50"))
+        self.other = Product.objects.create(sku="SLEEVES", name="Sleeves", category=other,
+                                            default_price=Decimal("5"), tcgplayer_id=1)
+
+    def test_parse_id_from_url_or_number(self):
+        from inventory.pricing import parse_tcgplayer_id
+        self.assertEqual(parse_tcgplayer_id("https://www.tcgplayer.com/product/593391/pokemon-sv-prismatic-evolutions-etb?Language=English"), 593391)
+        self.assertEqual(parse_tcgplayer_id("593391"), 593391)
+        self.assertIsNone(parse_tcgplayer_id("not a link"))
+
+    def test_refresh_only_sealed_category_and_math(self):
+        from inventory.pricing import refresh_all
+        fake = self.FakeProvider({593391: Decimal("100.00"), 1: Decimal("9.99")})
+        self.assertIn("1 updated", refresh_all(fake))
+        self.assertEqual(fake.calls, [593391])                 # Supplies never fetched
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.market_price, Decimal("100.00"))
+        self.assertEqual(self.p.cost_pct_of_market, Decimal("62.5"))
+        self.assertEqual(self.p.market_margin_per_unit, Decimal("37.50"))
+        self.assertEqual(self.p.market_badge[1], "bg-emerald-100 text-emerald-700")
+        self.other.refresh_from_db(); self.assertIsNone(self.other.market_price)
+
+    def test_error_is_stored_not_raised(self):
+        from inventory.pricing import refresh_product
+        ok, msg = refresh_product(self.p, self.FakeProvider({}))
+        self.assertFalse(ok)
+        self.p.refresh_from_db()
+        self.assertIn("not found", self.p.market_error)
+
+    def test_pages_show_market(self):
+        from unittest.mock import patch
+        fake = self.FakeProvider({593391: Decimal("100.00")})
+        with patch("inventory.pricing.get_provider", return_value=fake):
+            self.client.post(f"/inventory/{self.p.pk}/", {"action": "refresh_market"})
+        detail = self.client.get(f"/inventory/{self.p.pk}/").content.decode()
+        self.assertIn("TCGplayer market", detail)
+        self.assertIn("62.5% of market", detail)
+        lst = self.client.get("/inventory/").content.decode()
+        self.assertIn("62.5%", lst)
+        rep = self.client.get("/reports/market-check/").content.decode()
+        self.assertIn("PRISM-ETB", rep)
+        self.assertIn("$1,000.00", rep)                       # 10 on hand at market
+        csv = self.client.get("/reports/market-check/?export=csv").content.decode()
+        self.assertIn("62.5", csv)
+
+    def test_product_form_accepts_url_and_refreshes(self):
+        from unittest.mock import patch
+        fake = self.FakeProvider({777: Decimal("50.00")})
+        data = {"sku": "PRISM-ETB", "name": "Prismatic ETB", "category": self.p.category_id, "upc": "",
+                "tcgplayer": "https://www.tcgplayer.com/product/777/x", "extra_barcodes": "",
+                "case_pack_qty": 1, "unit_of_measure": "each", "avg_cost": "62.5", "default_price": "120",
+                "reorder_point": 0, "active": "on"}
+        with patch("inventory.pricing.get_provider", return_value=fake):
+            r = self.client.post(f"/inventory/{self.p.pk}/edit/", data)
+        self.assertEqual(r.status_code, 302, getattr(r, "context", None) and r.context["form"].errors)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.tcgplayer_id, 777)
+        self.assertEqual(self.p.market_price, Decimal("50.00"))
