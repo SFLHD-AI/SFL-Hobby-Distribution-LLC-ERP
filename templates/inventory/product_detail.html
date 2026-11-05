@@ -74,6 +74,10 @@
   <div class="space-y-4">
     <div class="card-pad">
       <h2 class="font-semibold mb-3">Details</h2>
+      {% if product.barcodes.all %}
+      <p class="text-xs text-slate-500 mb-2">Also scans as:
+        {% for b in product.barcodes.all %}<span class="font-mono bg-slate-100 rounded px-1.5 py-0.5 ml-1">{{ b.code }}</span>{% endfor %}</p>
+      {% endif %}
       {% if product.image %}<img src="{{ product.image.url }}" class="h-32 rounded-lg mb-3 border">{% endif %}
       <dl class="text-sm space-y-1.5">
         <div class="flex justify-between"><dt class="text-slate-500">UPC</dt><dd class="font-mono">{{ product.upc|default:"—" }}</dd></div>

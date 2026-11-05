@@ -80,51 +80,64 @@ def fetch_status(carrier, number, provider=None):
     }
 
 
-def refresh_receipt(receipt, provider=None):
-    """Update one receipt's tracking fields. Returns (ok, message)."""
+def refresh_package(pkg, provider=None):
+    """Update one package's tracking fields. Returns (ok, message)."""
     from shipping.providers import ProviderError, ProviderNotConfigured, get_provider
-    if not receipt.tracking_number:
-        return False, "No tracking number."
-    carrier = receipt.tracking_carrier or guess_carrier(receipt.tracking_number)
-    if carrier and carrier != receipt.tracking_carrier:
-        receipt.tracking_carrier = carrier
+    carrier = pkg.carrier or guess_carrier(pkg.tracking_number)
+    if carrier and carrier != pkg.carrier:
+        pkg.carrier = carrier
     if carrier not in SHIPPO_CARRIERS:
-        receipt.tracking_checked_at = timezone.now()
-        receipt.tracking_error = "Automatic tracking isn't available for this carrier; use the link."
-        receipt.save(update_fields=["tracking_carrier", "tracking_checked_at", "tracking_error"])
-        return False, receipt.tracking_error
+        pkg.checked_at = timezone.now()
+        pkg.error = "Automatic tracking isn't available for this carrier; use the link."
+        pkg.save(update_fields=["carrier", "checked_at", "error"])
+        return False, pkg.error
     provider = provider or get_provider("shippo")
     try:
-        info = fetch_status(carrier, receipt.tracking_number, provider)
+        info = fetch_status(carrier, pkg.tracking_number, provider)
     except ProviderNotConfigured:
-        receipt.tracking_checked_at = timezone.now()
-        receipt.tracking_error = "Add a Shippo token in Settings to track automatically."
-        receipt.save(update_fields=["tracking_carrier", "tracking_checked_at", "tracking_error"])
-        return False, receipt.tracking_error
+        pkg.checked_at = timezone.now()
+        pkg.error = "Add a Shippo token in Settings to track automatically."
+        pkg.save(update_fields=["carrier", "checked_at", "error"])
+        return False, pkg.error
     except ProviderError as e:
-        receipt.tracking_checked_at = timezone.now()
-        receipt.tracking_error = str(e)[:200]
-        receipt.save(update_fields=["tracking_carrier", "tracking_checked_at", "tracking_error"])
-        return False, receipt.tracking_error
-    receipt.tracking_status = info["status"]
-    receipt.tracking_detail = info["detail"]
-    receipt.tracking_location = info["location"]
-    receipt.tracking_event_at = info["event_at"]
-    receipt.tracking_eta = info["eta"]
-    receipt.tracking_checked_at = timezone.now()
-    receipt.tracking_error = ""
-    fields = ["tracking_carrier", "tracking_status", "tracking_detail", "tracking_location",
-              "tracking_event_at", "tracking_eta", "tracking_checked_at", "tracking_error"]
-    # The carrier's ETA becomes the expected arrival while the order is still open
-    if info["eta"] and not receipt.posted and receipt.expected_date != info["eta"]:
-        receipt.expected_date = info["eta"]
-        fields.append("expected_date")
-    if info["status"] == "DELIVERED" and info["event_at"] and not receipt.posted:
-        day = timezone.localtime(info["event_at"]).date()
-        if receipt.expected_date != day:
-            receipt.expected_date = day
-            if "expected_date" not in fields:
-                fields.append("expected_date")
-    receipt.save(update_fields=fields)
-    label = receipt.tracking_badge[0] if receipt.tracking_badge else info["status"]
-    return True, f"{label}" + (f" · ETA {info['eta']:%b %-d}" if info["eta"] else "") + (f" · {info['detail']}" if info["detail"] else "")
+        pkg.checked_at = timezone.now()
+        pkg.error = str(e)[:200]
+        pkg.save(update_fields=["carrier", "checked_at", "error"])
+        return False, pkg.error
+    pkg.status, pkg.detail, pkg.location = info["status"], info["detail"], info["location"]
+    pkg.event_at, pkg.eta = info["event_at"], info["eta"]
+    pkg.checked_at, pkg.error = timezone.now(), ""
+    pkg.save()
+    label = pkg.badge[0]
+    return True, f"{pkg.tracking_number[-8:]}: {label}" + (f" · ETA {info['eta']:%b %-d}" if info["eta"] else "")
+
+
+def sync_expected_date(receipt):
+    """While the order is open, 'Expected' follows the packages: the latest
+    ETA among boxes still on the way, or the last delivery date."""
+    if receipt.posted:
+        return
+    eta = receipt.tracking_eta
+    if eta and receipt.expected_date != eta:
+        receipt.expected_date = eta
+        receipt.save(update_fields=["expected_date"])
+
+
+def refresh_receipt(receipt, provider=None):
+    """Refresh every package on a supplier order. Returns (ok, message)."""
+    from shipping.providers import get_provider
+    pkgs = list(receipt.packages.all())
+    if not pkgs:
+        return False, "No tracking number."
+    provider = provider or get_provider("shippo")
+    msgs, ok_any = [], False
+    for pkg in pkgs:
+        if pkg.is_delivered and not receipt.posted:
+            msgs.append(f"{pkg.tracking_number[-8:]}: Delivered")
+            ok_any = True
+            continue
+        ok, msg = refresh_package(pkg, provider)
+        ok_any = ok_any or ok
+        msgs.append(msg)
+    sync_expected_date(receipt)
+    return ok_any, " · ".join(msgs)

@@ -320,17 +320,17 @@ class CameraScannerWiringTests(TestCase):
                     f"/orders/{self.po.pk}/"):
             html = self.client.get(url).content.decode()
             self.assertIn("data-scan-select", html, url)
-            self.assertIn('data-upc="012345678905"', html, url)
+            self.assertIn('data-upc="SCAN-1 012345678905"', html, url)
 
 
 
 
 class InboundTrackingTests(TestCase):
-    """Optional tracking on supplier orders: Shippo fills status + ETA."""
+    """Several tracking numbers per supplier order; Shippo fills status + ETA."""
 
     class FakeShippo:
-        def __init__(self, payload=None, error=None):
-            self.payload, self.error = payload, error
+        def __init__(self, payload=None, error=None, by_number=None):
+            self.payload, self.error, self.by_number = payload, error, by_number or {}
             self.calls = []
 
         def is_configured(self):
@@ -341,7 +341,15 @@ class InboundTrackingTests(TestCase):
             self.calls.append(path)
             if self.error:
                 raise ProviderError(self.error)
-            return self.payload
+            num = path.rsplit("/", 1)[-1]
+            return self.by_number.get(num, self.payload)
+
+    @staticmethod
+    def _payload(status, eta, detail="Moving", city="Tampa"):
+        return {"tracking_status": {"status": status, "status_details": detail,
+                                    "status_date": "2026-11-03T14:05:00Z",
+                                    "location": {"city": city, "state": "FL"}},
+                "eta": eta}
 
     def setUp(self):
         from django.contrib.auth.models import User
@@ -355,60 +363,51 @@ class InboundTrackingTests(TestCase):
         self.assertEqual(guess_carrier("9400111899223456789012"), "usps")
         self.assertEqual(guess_carrier("TBA123456789000"), "amazon")
 
-    def test_refresh_sets_status_eta_and_expected_date(self):
-        from inventory.tracking import refresh_receipt
-        self.r.tracking_number = "9400111899223456789012"
-        self.r.save()
-        fake = self.FakeShippo({"tracking_status": {"status": "TRANSIT", "status_details": "Arrived at USPS facility",
-                                                    "status_date": "2026-11-03T14:05:00Z",
-                                                    "location": {"city": "Tampa", "state": "FL"}},
-                                "eta": "2026-11-06T18:00:00Z"})
-        ok, msg = refresh_receipt(self.r, fake)
-        self.assertTrue(ok, msg)
-        self.r.refresh_from_db()
-        self.assertEqual(self.r.tracking_carrier, "usps")
-        self.assertEqual(self.r.tracking_status, "TRANSIT")
-        self.assertEqual(str(self.r.tracking_eta), "2026-11-06")
-        self.assertEqual(str(self.r.expected_date), "2026-11-06")   # ETA fills Expected
-        self.assertIn("Tampa", self.r.tracking_location)
-        self.assertEqual(fake.calls, ["/tracks/usps/9400111899223456789012"])
-        self.assertEqual(self.r.tracking_badge[0], "In transit")
-
-    def test_provider_error_is_recorded_not_raised(self):
-        from inventory.tracking import refresh_receipt
-        self.r.tracking_number = "1Z999AA10123456784"; self.r.save()
-        ok, msg = refresh_receipt(self.r, self.FakeShippo(error="Shippo 404: not found"))
-        self.assertFalse(ok)
-        self.r.refresh_from_db()
-        self.assertIn("404", self.r.tracking_error)
-
-    def test_save_tracking_via_page_and_clear(self):
-        r = self.client.post(f"/inventory/receiving/{self.r.pk}/",
-                             {"action": "save_tracking", "tracking_carrier": "", "tracking_number": " 1Z999AA10123456784 "})
+    def test_add_several_numbers_at_once_and_expected_follows_latest_eta(self):
+        from unittest.mock import patch
+        fake = self.FakeShippo(by_number={
+            "9400111899223456789012": self._payload("TRANSIT", "2026-11-06T18:00:00Z"),
+            "1Z999AA10123456784": self._payload("TRANSIT", "2026-11-09T18:00:00Z"),
+        })
+        with patch("shipping.providers.get_provider", return_value=fake):
+            r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {
+                "action": "add_packages", "carrier": "",
+                "tracking_numbers": "9400111899223456789012\n1Z999AA10123456784, 9400111899223456789012"})
         self.assertEqual(r.status_code, 302)
         self.r.refresh_from_db()
-        self.assertEqual(self.r.tracking_number, "1Z999AA10123456784")
-        self.assertEqual(self.r.tracking_carrier, "ups")
+        pkgs = list(self.r.packages.order_by("id"))
+        self.assertEqual([p.carrier for p in pkgs], ["usps", "ups"])      # guessed, deduped
+        self.assertEqual({p.status for p in pkgs}, {"TRANSIT"})
+        self.assertEqual(str(self.r.expected_date), "2026-11-09")          # last box wins
+        self.assertEqual(self.r.tracking_badge[0], "In transit (2 boxes)")
         page = self.client.get(f"/inventory/receiving/{self.r.pk}/")
         self.assertContains(page, "ups.com/track")
-        self.assertContains(page, "data-combobox")                 # searchable picker
-        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "save_tracking", "tracking_carrier": "", "tracking_number": ""})
-        self.r.refresh_from_db()
-        self.assertEqual(self.r.tracking_number, "")
-        self.assertIsNone(self.r.tracking_eta)
+        self.assertContains(page, "tools.usps.com")
 
-    def test_hourly_task_skips_without_token(self):
-        from inventory.tasks import refresh_inbound_tracking
-        self.assertIn("not configured", refresh_inbound_tracking())
+    def test_partial_delivery_badge_and_remove(self):
+        from inventory.models import ReceiptPackage
+        a = ReceiptPackage.objects.create(receipt=self.r, tracking_number="A1", carrier="ups", status="DELIVERED")
+        b = ReceiptPackage.objects.create(receipt=self.r, tracking_number="B2", carrier="ups", status="TRANSIT")
+        self.assertEqual(self.r.tracking_badge[0], "1 of 2 delivered")
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "del_package", "package_id": b.pk})
+        self.assertEqual(self.r.packages.count(), 1)
+        self.assertEqual(self.r.tracking_badge[0], "Delivered")
+
+    def test_provider_error_is_recorded_not_raised(self):
+        from inventory.models import ReceiptPackage
+        from inventory.tracking import refresh_receipt
+        ReceiptPackage.objects.create(receipt=self.r, tracking_number="1Z999AA10123456784")
+        ok, msg = refresh_receipt(self.r, self.FakeShippo(error="Shippo 404: not found"))
+        self.assertFalse(ok)
+        self.assertIn("404", self.r.packages.get().error)
 
     def test_receiving_list_refresh_all_button(self):
         from unittest.mock import patch
-        from inventory.models import Receipt
-        self.r.tracking_number = "9400111899223456789012"; self.r.tracking_carrier = "usps"; self.r.save()
-        other = Receipt.objects.create(tracking_number="1Z999AA10123456784", tracking_carrier="ups")
-        fake = self.FakeShippo({"tracking_status": {"status": "TRANSIT", "status_details": "Moving",
-                                                    "status_date": "2026-11-04T10:00:00Z"},
-                                "eta": "2026-11-08T12:00:00Z"})
+        from inventory.models import Receipt, ReceiptPackage
+        ReceiptPackage.objects.create(receipt=self.r, tracking_number="9400111899223456789012", carrier="usps")
+        other = Receipt.objects.create()
+        ReceiptPackage.objects.create(receipt=other, tracking_number="1Z999AA10123456784", carrier="ups")
+        fake = self.FakeShippo(self._payload("TRANSIT", "2026-11-08T12:00:00Z"))
         page = self.client.get("/inventory/receiving/")
         self.assertContains(page, "Refresh tracking")
         with patch("shipping.providers.get_provider", return_value=fake):
@@ -423,20 +422,103 @@ class InboundTrackingTests(TestCase):
         r = self.client.post("/inventory/receiving/", {"action": "refresh_tracking"}, follow=True)
         self.assertContains(r, "Add a Shippo token")
 
+    def test_hourly_task_skips_without_token(self):
+        from inventory.tasks import refresh_inbound_tracking
+        self.assertIn("not configured", refresh_inbound_tracking())
+
+
+class ReceivingSearchTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Product, ProductBarcode, Receipt, ReceiptLine, ReceiptPackage, Supplier
+        self.client.force_login(User.objects.create_superuser("rs", password="x"))
+        gts = Supplier.objects.create(name="GTS Distribution")
+        panini = Supplier.objects.create(name="Panini America")
+        p = Product.objects.create(sku="PRISM-BB", name="SV Prismatic Evolutions Booster Bundle",
+                                   upc="196214112541", default_price=Decimal("50"))
+        ProductBarcode.objects.create(product=p, code="196214112544", note="2nd print")
+        self.r1 = Receipt.objects.create(supplier=gts, reference="PO-77")
+        ReceiptLine.objects.create(receipt=self.r1, product=p, qty=6, unit_cost=Decimal("1824.31"))
+        ReceiptPackage.objects.create(receipt=self.r1, tracking_number="1Z999AA10123456784", carrier="ups")
+        self.r2 = Receipt.objects.create(supplier=panini, reference="PO-78")
+
+    def _ids(self, q):
+        html = self.client.get(f"/inventory/receiving/?q={q}").content.decode()
+        return [n for n in (self.r1.pk, self.r2.pk) if f"RCV-{n}<" in html or f"RCV-{n}</a>" in html]
+
+    def test_search_by_product_supplier_barcode_tracking(self):
+        self.assertEqual(self._ids("PRISM"), [self.r1.pk])
+        self.assertEqual(self._ids("Prismatic"), [self.r1.pk])
+        self.assertEqual(self._ids("196214112544"), [self.r1.pk])     # extra barcode
+        self.assertEqual(self._ids("Panini"), [self.r2.pk])
+        self.assertEqual(self._ids("1Z999AA10123456784"), [self.r1.pk])  # scanned label
+        self.assertEqual(self._ids("PO-78"), [self.r2.pk])
+        self.assertEqual(self._ids(f"RCV-{self.r2.pk}"), [self.r2.pk])
+        self.assertEqual(self._ids("zzz"), [])
+
+
+class ProductBarcodeTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Product
+        self.client.force_login(User.objects.create_superuser("bc", password="x"))
+        self.p = Product.objects.create(sku="BUNDLE-1", name="Bundle", upc="111111111111",
+                                        default_price=Decimal("50"))
+
+    def test_form_adds_and_removes_codes(self):
+        from inventory.models import Product
+        data = {"sku": "BUNDLE-1", "name": "Bundle", "upc": "111111111111", "extra_barcodes": "222222222222\n333333333333",
+                "case_pack_qty": 1, "unit_of_measure": "each", "avg_cost": "0", "default_price": "50",
+                "reorder_point": 0, "active": "on"}
+        r = self.client.post(f"/inventory/{self.p.pk}/edit/", data)
+        self.assertEqual(r.status_code, 302, getattr(r, "context", None) and r.context["form"].errors)
+        self.assertEqual(sorted(b.code for b in self.p.barcodes.all()), ["222222222222", "333333333333"])
+        self.assertEqual(Product.find_by_code("333333333333"), self.p)
+        self.assertEqual(Product.find_by_code("111111111111"), self.p)
+        self.assertEqual(Product.find_by_code("bundle-1"), self.p)
+        data["extra_barcodes"] = "222222222222"
+        self.client.post(f"/inventory/{self.p.pk}/edit/", data)
+        self.assertEqual([b.code for b in self.p.barcodes.all()], ["222222222222"])
+
+    def test_code_cannot_belong_to_two_products(self):
+        from inventory.models import Product, ProductBarcode
+        other = Product.objects.create(sku="OTHER", name="Other", default_price=Decimal("1"))
+        ProductBarcode.objects.create(product=other, code="999999999999")
+        data = {"sku": "BUNDLE-1", "name": "Bundle", "upc": "111111111111", "extra_barcodes": "999999999999",
+                "case_pack_qty": 1, "unit_of_measure": "each", "avg_cost": "0", "default_price": "50",
+                "reorder_point": 0, "active": "on"}
+        r = self.client.post(f"/inventory/{self.p.pk}/edit/", data)
+        self.assertEqual(r.status_code, 200)
+        self.assertContains(r, "already belongs to OTHER")
+
+    def test_scan_add_and_search_use_extra_codes(self):
+        from inventory.models import ProductBarcode
+        from orders.tests import make_customer
+        from orders.models import PurchaseOrder
+        ProductBarcode.objects.create(product=self.p, code="444444444444")
+        self.p.apply_movement(movement_type="receipt", qty_delta=5, unit_cost=Decimal("4"), new_avg_cost=Decimal("4"))
+        po = PurchaseOrder.objects.create(customer=make_customer("Scan Co"))
+        self.client.post(f"/orders/{po.pk}/", {"action": "scan_add", "barcode": "444444444444"})
+        self.assertEqual(po.live_lines.count(), 1)
+        self.assertContains(self.client.get("/inventory/?q=444444444444"), "BUNDLE-1")
+        self.assertContains(self.client.get("/search/?q=444444444444"), "BUNDLE-1")
+        html = self.client.get(f"/orders/{po.pk}/").content.decode()
+        self.assertIn('data-upc="BUNDLE-1 111111111111 444444444444"', html)
+
 
 class IncomingStockTests(TestCase):
     def setUp(self):
         from django.contrib.auth.models import User
         from datetime import date
-        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        from inventory.models import Product, Receipt, ReceiptLine, ReceiptPackage, Supplier
         self.client.force_login(User.objects.create_superuser("inc", password="x"))
         self.p = Product.objects.create(sku="INC-1", name="Prismatic Bundle", default_price=Decimal("50"))
         gts = Supplier.objects.create(name="GTS")
         r1 = Receipt.objects.create(supplier=gts, date=date(2026, 11, 1), expected_date=date(2026, 11, 20))
         ReceiptLine.objects.create(receipt=r1, product=self.p, qty=6, unit_cost=Decimal("1824.3125"))
-        r2 = Receipt.objects.create(supplier=gts, date=date(2026, 11, 2), expected_date=date(2026, 11, 10),
-                                    tracking_number="1Z999AA10123456784", tracking_carrier="ups",
-                                    tracking_status="TRANSIT", tracking_eta=date(2026, 11, 9))
+        r2 = Receipt.objects.create(supplier=gts, date=date(2026, 11, 2), expected_date=date(2026, 11, 10))
+        ReceiptPackage.objects.create(receipt=r2, tracking_number="1Z999AA10123456784", carrier="ups",
+                                      status="TRANSIT", eta=date(2026, 11, 9))
         ReceiptLine.objects.create(receipt=r2, product=self.p, qty=4, unit_cost=Decimal("1800.00"))
         posted = Receipt.objects.create(supplier=gts)                 # already received: not incoming
         ReceiptLine.objects.create(receipt=posted, product=self.p, qty=2, unit_cost=Decimal("1700"))
@@ -445,10 +527,10 @@ class IncomingStockTests(TestCase):
     def test_summary_counts_only_open_orders(self):
         inc = self.p.incoming_summary
         self.assertEqual(inc["qty"], 10)
-        self.assertEqual(inc["cost"], Decimal("18145.88"))       # 6×1824.3125 + 4×1800
+        self.assertEqual(inc["cost"], Decimal("18145.88"))
         self.assertEqual(inc["avg_cost"], Decimal("1814.5880"))
         self.assertEqual(inc["orders"], 2)
-        self.assertEqual(str(inc["next_eta"]), "2026-11-09")     # carrier ETA beats typed date
+        self.assertEqual(str(inc["next_eta"]), "2026-11-09")
 
     def test_detail_and_list_show_incoming(self):
         html = self.client.get(f"/inventory/{self.p.pk}/").content.decode()
@@ -460,44 +542,18 @@ class IncomingStockTests(TestCase):
         self.assertIn(">10</a>", lst)
 
 
-
-
-
 class ReceiveOverridesTrackingTests(TestCase):
     def test_marking_received_sets_expected_today_and_delivered(self):
         from datetime import date
         from django.utils import timezone
-        from inventory.models import Product, Receipt, ReceiptLine
+        from inventory.models import Product, Receipt, ReceiptLine, ReceiptPackage
         p = Product.objects.create(sku="RCV-OVR", name="Box", default_price=Decimal("10"))
-        r = Receipt.objects.create(expected_date=date(2030, 1, 1), tracking_number="1Z999AA10123456784",
-                                   tracking_carrier="ups", tracking_status="TRANSIT",
-                                   tracking_eta=date(2030, 1, 1))
+        r = Receipt.objects.create(expected_date=date(2030, 1, 1))
+        ReceiptPackage.objects.create(receipt=r, tracking_number="A", status="TRANSIT", eta=date(2030, 1, 1))
+        ReceiptPackage.objects.create(receipt=r, tracking_number="B", status="UNKNOWN")
         ReceiptLine.objects.create(receipt=r, product=p, qty=1, unit_cost=Decimal("5"))
         r.post()
         r.refresh_from_db()
         self.assertEqual(r.expected_date, timezone.localdate())
-        self.assertEqual(r.tracking_status, "DELIVERED")
-        self.assertEqual(r.tracking_eta, timezone.localdate())
-        self.assertEqual(r.tracking_badge[0], "Delivered")
-
-
-class BackfillReceivedTrackingTests(TestCase):
-    def test_old_received_orders_get_delivered_and_dated(self):
-        from datetime import date
-        from django.utils import timezone
-        from importlib import import_module
-        from django.apps import apps
-        from inventory.models import Product, Receipt, ReceiptLine
-        p = Product.objects.create(sku="BF-1", name="Box", default_price=Decimal("10"))
-        r = Receipt.objects.create(tracking_number="1Z999AA10123456784", tracking_carrier="ups")
-        ReceiptLine.objects.create(receipt=r, product=p, qty=1, unit_cost=Decimal("5"))
-        r.post()
-        # simulate an order received under the old rule
-        Receipt.objects.filter(pk=r.pk).update(expected_date=date(2030, 1, 1), tracking_status="TRANSIT",
-                                               tracking_eta=date(2030, 1, 1))
-        mig = import_module("inventory.migrations.0008_backfill_received_tracking")
-        mig.forwards(apps, None)
-        r.refresh_from_db()
-        self.assertEqual(r.tracking_status, "DELIVERED")
-        self.assertEqual(r.expected_date, timezone.localtime(r.posted_at).date())
-        self.assertEqual(r.tracking_eta, r.expected_date)
+        self.assertEqual({pk.status for pk in r.packages.all()}, {"DELIVERED"})
+        self.assertEqual(r.tracking_badge[0], "Delivered (2 boxes)")

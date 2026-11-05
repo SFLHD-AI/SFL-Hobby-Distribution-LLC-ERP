@@ -159,7 +159,12 @@
   function fire(el, type, init) { el.dispatchEvent(new Event(type, Object.assign({ bubbles: true }, init || {}))); }
 
   function fillInput(input, code) {
-    input.value = code;
+    if (input.hasAttribute("data-scan-append")) {
+      const cur = input.value.trim();
+      input.value = cur ? cur + "\n" + code : code;
+    } else {
+      input.value = code;
+    }
     fire(input, "input"); fire(input, "change");
     if (input.hasAttribute("data-scan-submit") && input.form) {
       input.form.requestSubmit ? input.form.requestSubmit() : input.form.submit();
@@ -173,7 +178,8 @@
   function pickOption(select, code) {
     const needle = code.toLowerCase();
     const opts = Array.from(select.options);
-    let match = opts.find(o => (o.dataset.sku || "").toLowerCase() === needle || (o.dataset.upc || "").toLowerCase() === needle)
+    let match = opts.find(o => (o.dataset.sku || "").toLowerCase() === needle
+                             || (o.dataset.upc || "").toLowerCase().split(/\s+/).includes(needle))
              || opts.find(o => o.text.toLowerCase().startsWith(needle + " ") || o.text.toLowerCase() === needle)
              || opts.find(o => o.text.toLowerCase().includes(needle));
     if (!match) {

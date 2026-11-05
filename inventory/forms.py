@@ -1,6 +1,8 @@
+import re
 from django import forms
 
-from inventory.models import (CycleCount, PriceList, PriceListItem, Product,
+from django.db import models
+from inventory.models import (ProductBarcode, CycleCount, PriceList, PriceListItem, Product,
                               Receipt, ReceiptLine, StockAdjustment, Supplier,
                               Category, Brand)
 
@@ -8,12 +10,48 @@ from inventory.models import (CycleCount, PriceList, PriceListItem, Product,
 class ProductForm(forms.ModelForm):
     """SKU and UPC fields get a camera-scan button (see static/js/scanner.js)."""
     new_category = forms.CharField(required=False, label="…or new category")
+    extra_barcodes = forms.CharField(
+        required=False, label="Other barcodes / UPCs",
+        widget=forms.Textarea(attrs={"rows": 2, "data-scan": "", "data-scan-append": "",
+                                     "placeholder": "one per line — same product, different packaging"}),
+        help_text="Each code here finds this product when scanned or typed, and shares its stock and average cost.")
+
+    def clean_extra_barcodes(self):
+        raw = self.cleaned_data.get("extra_barcodes", "")
+        codes = []
+        for token in re.split(r"[\s,;]+", raw):
+            token = token.strip()
+            if token and token not in codes:
+                codes.append(token)
+        primary = (self.cleaned_data.get("upc") or self.data.get("upc") or "").strip()
+        sku = (self.cleaned_data.get("sku") or self.data.get("sku") or "").strip()
+        codes = [c for c in codes if c != primary and c.lower() != sku.lower()]
+        for c in codes:
+            clash = ProductBarcode.objects.filter(code=c).exclude(product=self.instance if self.instance.pk else None).first()
+            if clash:
+                raise forms.ValidationError(f"Barcode {c} already belongs to {clash.product.sku}.")
+            other = Product.all_objects.filter(models.Q(upc=c) | models.Q(sku__iexact=c))
+            if self.instance.pk:
+                other = other.exclude(pk=self.instance.pk)
+            if other.exists():
+                raise forms.ValidationError(f"{c} is already the SKU or UPC of {other.first().sku}.")
+        return codes
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         for name in ("sku", "upc"):
             if name in self.fields:
                 self.fields[name].widget.attrs["data-scan"] = ""
+        if self.instance.pk and not self.is_bound:
+            self.fields["extra_barcodes"].initial = self.instance.extra_codes_text
+
+    def save_barcodes(self, product):
+        """Sync ProductBarcode rows to the textarea (call after save())."""
+        codes = self.cleaned_data.get("extra_barcodes") or []
+        product.barcodes.exclude(code__in=codes).delete()
+        for c in codes:
+            ProductBarcode.objects.get_or_create(code=c, defaults={"product": product})
+        return codes
     new_brand = forms.CharField(required=False, label="…or new brand")
     # Opening stock (new products only): enter what you have and what it cost you
     initial_qty = forms.IntegerField(
@@ -126,14 +164,22 @@ class ReceiptBillForm(forms.ModelForm):
         self.fields["paid_from"].empty_label = "— paid personally / not from a tracked account —"
 
 
-class ReceiptTrackingForm(forms.ModelForm):
-    """Optional inbound tracking for a supplier order."""
+class ReceiptPackageForm(forms.Form):
+    """Add one or more tracking numbers to a supplier order."""
+    carrier = forms.ChoiceField(choices=Receipt.CARRIERS, required=False,
+                                help_text="Leave blank to guess from the number")
+    tracking_numbers = forms.CharField(
+        widget=forms.Textarea(attrs={"rows": 2, "placeholder": "one per line — paste or 📷 scan each label",
+                                     "autocomplete": "off", "data-scan": "", "data-scan-append": ""}),
+        label="Tracking number(s)")
 
-    class Meta:
-        model = Receipt
-        fields = ["tracking_carrier", "tracking_number"]
-        widgets = {"tracking_number": forms.TextInput(attrs={"placeholder": "paste the tracking number",
-                                                             "autocomplete": "off"})}
-
-    def clean_tracking_number(self):
-        return (self.cleaned_data.get("tracking_number") or "").strip()
+    def clean_tracking_numbers(self):
+        raw = self.cleaned_data.get("tracking_numbers", "")
+        nums = []
+        for token in re.split(r"[\s,;]+", raw):
+            token = token.strip()
+            if token and token.upper() not in [n.upper() for n in nums]:
+                nums.append(token)
+        if not nums:
+            raise forms.ValidationError("Enter at least one tracking number.")
+        return nums

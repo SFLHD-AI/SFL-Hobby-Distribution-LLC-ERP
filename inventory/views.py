@@ -11,7 +11,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from core.csvutils import csv_response
 from core.models import log_activity
 from core.roles import can_see_costs, module_required
-from inventory.forms import (ReceiptBillForm, ReceiptTrackingForm, AdjustmentForm, CycleCountForm, PriceListForm,
+from inventory.forms import (ReceiptBillForm, ReceiptPackageForm, AdjustmentForm, CycleCountForm, PriceListForm,
                              PriceListItemForm, ProductForm, ReceiptForm,
                              ReceiptLineForm)
 from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
@@ -29,7 +29,8 @@ def product_list(request):
     q = request.GET.get("q", "").strip()
     if q:
         qs = qs.filter(models.Q(sku__icontains=q) | models.Q(name__icontains=q) |
-                       models.Q(upc__icontains=q) | models.Q(bin_location__icontains=q))
+                       models.Q(upc__icontains=q) | models.Q(bin_location__icontains=q) |
+                       models.Q(barcodes__code__icontains=q)).distinct()
     cat = request.GET.get("category")
     if cat:
         qs = qs.filter(category_id=cat)
@@ -143,6 +144,7 @@ def product_create(request):
         from django.urls import reverse
         from django.utils.html import format_html
         product = form.save()
+        form.save_barcodes(product)
         log_activity(request.user, "create", product)
         label_url = f"{reverse('product_labels')}?id={product.pk}&copies=1&mode=sku"
         messages.info(request, format_html(
@@ -171,6 +173,7 @@ def product_edit(request, pk):
     if request.method == "POST" and form.is_valid():
         changes = {f: str(form.cleaned_data.get(f)) for f in form.changed_data}
         form.save()
+        form.save_barcodes(product)
         log_activity(request.user, "update", product, changes=changes)
         messages.success(request, f"{product.sku} saved.")
         return redirect("product_detail", product.pk)
@@ -320,8 +323,8 @@ def receipt_list(request):
             messages.warning(request, "Add a Shippo token in Settings to refresh tracking automatically; "
                                       "the tracking links still open the carrier's page.")
             return redirect(request.get_full_path())
-        open_tracked = (Receipt.objects.filter(is_deleted=False, posted=False)
-                        .exclude(tracking_number="").exclude(tracking_status="DELIVERED"))
+        open_tracked = (Receipt.objects.filter(is_deleted=False, posted=False, packages__isnull=False)
+                        .exclude(packages__status="DELIVERED").distinct())
         ok = failed = 0
         for r in open_tracked:
             good, _ = refresh_receipt(r, provider)
@@ -333,7 +336,20 @@ def receipt_list(request):
         else:
             messages.info(request, "No open supplier orders have a tracking number yet.")
         return redirect(request.get_full_path())
-    qs = Receipt.objects.select_related("supplier")
+    qs = Receipt.objects.select_related("supplier").prefetch_related("packages")
+    q = (request.GET.get("q") or "").strip()
+    if q:
+        from django.db import models as dj
+        cond = (dj.Q(supplier__name__icontains=q) | dj.Q(reference__icontains=q)
+                | dj.Q(supplier_invoice_number__icontains=q)
+                | dj.Q(packages__tracking_number__icontains=q)
+                | dj.Q(lines__product__sku__icontains=q) | dj.Q(lines__product__name__icontains=q)
+                | dj.Q(lines__product__upc__icontains=q)
+                | dj.Q(lines__product__barcodes__code__icontains=q))
+        num = q.upper().replace("RCV-", "").replace("RCV", "").strip()
+        if num.isdigit():
+            cond |= dj.Q(pk=int(num))
+        qs = qs.filter(cond).distinct()
     status = request.GET.get("status")
     if status == "open":
         qs = qs.filter(posted=False)
@@ -342,7 +358,7 @@ def receipt_list(request):
     elif status == "unpaid":
         qs = [r for r in qs.filter(posted=True).prefetch_related("supplier_payments")
               if not r.is_paid]
-    return render(request, "inventory/receipt_list.html", {"receipts": qs[:200]})
+    return render(request, "inventory/receipt_list.html", {"receipts": qs[:200], "q": q})
 
 
 @module_required("receiving")
@@ -363,26 +379,37 @@ def receipt_detail(request, pk):
     line_form = ReceiptLineForm()
     header_form = ReceiptForm(instance=receipt)
     bill_form = ReceiptBillForm(instance=receipt)
-    tracking_form = ReceiptTrackingForm(instance=receipt)
-    if request.method == "POST" and request.POST.get("action") == "save_tracking":
+    package_form = ReceiptPackageForm()
+    if request.method == "POST" and request.POST.get("action") == "add_packages":
+        from inventory.models import ReceiptPackage
         from inventory.tracking import guess_carrier, refresh_receipt
-        tracking_form = ReceiptTrackingForm(request.POST, instance=receipt)
-        if tracking_form.is_valid():
-            obj = tracking_form.save(commit=False)
-            if obj.tracking_number and not obj.tracking_carrier:
-                obj.tracking_carrier = guess_carrier(obj.tracking_number)
-            if not obj.tracking_number:
-                obj.tracking_status = obj.tracking_detail = obj.tracking_location = obj.tracking_error = ""
-                obj.tracking_eta = obj.tracking_event_at = obj.tracking_checked_at = None
-            obj.save()
-            log_activity(request.user, "tracking_updated", receipt, note=obj.tracking_number)
-            if obj.tracking_number:
-                ok, msg = refresh_receipt(obj)
-                (messages.success if ok else messages.info)(request, f"Tracking saved. {msg}")
+        package_form = ReceiptPackageForm(request.POST)
+        if package_form.is_valid():
+            carrier = package_form.cleaned_data["carrier"]
+            added = []
+            for num in package_form.cleaned_data["tracking_numbers"]:
+                pkg, created = ReceiptPackage.objects.get_or_create(
+                    receipt=receipt, tracking_number=num,
+                    defaults={"carrier": carrier or guess_carrier(num)})
+                if created:
+                    added.append(pkg)
+            if added:
+                log_activity(request.user, "tracking_added", receipt,
+                             note=", ".join(p.tracking_number for p in added))
+                ok, msg = refresh_receipt(receipt)
+                messages.success(request, f"Added {len(added)} tracking number{'s' if len(added) != 1 else ''}. {msg}")
             else:
-                messages.success(request, "Tracking cleared.")
+                messages.info(request, "Those tracking numbers are already on this order.")
             return redirect("receipt_detail", pk)
-        messages.error(request, "Tracking not saved — check the fields.")
+        messages.error(request, "; ".join(f"{v[0]}" for v in package_form.errors.values()))
+    if request.method == "POST" and request.POST.get("action") == "del_package":
+        from inventory.tracking import sync_expected_date
+        pkg = get_object_or_404(receipt.packages, pk=request.POST.get("package_id"))
+        log_activity(request.user, "tracking_removed", receipt, note=pkg.tracking_number)
+        pkg.delete()
+        sync_expected_date(receipt)
+        messages.success(request, "Tracking number removed.")
+        return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "refresh_tracking":
         from inventory.tracking import refresh_receipt
         ok, msg = refresh_receipt(receipt)
@@ -450,7 +477,7 @@ def receipt_detail(request, pk):
     return render(request, "inventory/receipt_detail.html", {
         "receipt": receipt, "line_form": line_form, "header_form": header_form,
         "bill_form": bill_form, "linked_payments": linked_payments,
-        "tracking_form": tracking_form,
+        "package_form": package_form, "packages": receipt.packages.all(),
         "lines": receipt.lines.filter(is_deleted=False).select_related("product"),
         "products": Product.objects.filter(active=True),
     })

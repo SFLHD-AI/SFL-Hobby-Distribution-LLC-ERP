@@ -101,32 +101,47 @@
   </div>
 
   <div class="lg:col-span-2 space-y-4">
-  {# ---------- Inbound tracking ---------- #}
+  {# ---------- Inbound tracking: one or more packages ---------- #}
   <div class="card-pad">
-    <h2 class="font-semibold mb-2 flex items-center gap-2">Shipment tracking
+    <h2 class="font-semibold mb-2 flex items-center gap-2 flex-wrap">Shipment tracking
       {% if receipt.tracking_badge %}<span class="badge {{ receipt.tracking_badge.1 }}">{{ receipt.tracking_badge.0 }}</span>{% endif %}
-      {% if receipt.tracking_eta %}<span class="text-xs text-slate-500">ETA {{ receipt.tracking_eta|date:"D, M j" }}</span>{% endif %}
+      {% if receipt.tracking_eta and not receipt.posted %}<span class="text-xs text-slate-500">all boxes expected by {{ receipt.tracking_eta|date:"D, M j" }}</span>{% endif %}
     </h2>
-    {% if receipt.tracking_number %}
-    <p class="text-sm">
-      <a href="{{ receipt.tracking_url }}" target="_blank" class="font-mono text-indigo-600 hover:underline">{{ receipt.tracking_number }}</a>
-      <span class="text-slate-500">· {{ receipt.get_tracking_carrier_display|default:"carrier unknown" }}</span>
-    </p>
-    {% if receipt.tracking_detail %}<p class="text-sm mt-1">{{ receipt.tracking_detail }}{% if receipt.tracking_location %} <span class="text-slate-500">— {{ receipt.tracking_location }}</span>{% endif %}{% if receipt.tracking_event_at %} <span class="text-xs text-slate-400">{{ receipt.tracking_event_at|date:"M j, g:i A" }}</span>{% endif %}</p>{% endif %}
-    {% if receipt.tracking_error %}<p class="text-xs text-amber-700 mt-1">{{ receipt.tracking_error }}</p>{% endif %}
-    <p class="text-xs text-slate-400 mt-1">{% if receipt.tracking_checked_at %}Checked {{ receipt.tracking_checked_at|date:"M j, g:i A" }} · refreshes hourly while the order is open{% else %}Not checked yet{% endif %}</p>
+    {% if packages %}
+    <div class="overflow-x-auto mb-3">
+    <table class="tbl">
+      <thead><tr><th>Tracking #</th><th>Carrier</th><th>Status</th><th>Latest</th><th>ETA</th><th></th></tr></thead>
+      <tbody>
+      {% for pk_ in packages %}
+        <tr>
+          <td><a href="{{ pk_.tracking_url }}" target="_blank" class="font-mono text-indigo-600 hover:underline">{{ pk_.tracking_number }}</a></td>
+          <td class="text-sm">{{ pk_.get_carrier_display|default:"?" }}</td>
+          <td><span class="badge {{ pk_.badge.1 }}">{{ pk_.badge.0 }}</span></td>
+          <td class="text-xs text-slate-600">{{ pk_.detail }}{% if pk_.location %} — {{ pk_.location }}{% endif %}{% if pk_.event_at %} <span class="text-slate-400">{{ pk_.event_at|date:"M j, g:i A" }}</span>{% endif %}
+            {% if pk_.error %}<span class="block text-amber-700">{{ pk_.error }}</span>{% endif %}</td>
+          <td class="text-sm whitespace-nowrap">{{ pk_.eta|date:"M j"|default:"—" }}</td>
+          <td>{% if not receipt.posted %}<form method="post" onsubmit="return confirm('Remove this tracking number?')">{% csrf_token %}
+            <input type="hidden" name="action" value="del_package"><input type="hidden" name="package_id" value="{{ pk_.pk }}">
+            <button class="text-red-500 text-lg leading-none" title="Remove">×</button></form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    <form method="post" class="inline-block mb-2">{% csrf_token %}<input type="hidden" name="action" value="refresh_tracking">
+      <button class="text-sm text-indigo-600 hover:underline">↻ Refresh all</button></form>
     {% endif %}
-    <form method="post" class="mt-2 flex flex-wrap gap-2 items-end field-inline">
-      {% csrf_token %}<input type="hidden" name="action" value="save_tracking">
-      <div><label class="text-xs text-slate-500 block mb-1">Carrier</label>{{ tracking_form.tracking_carrier }}</div>
-      <div class="flex-1 min-w-[12rem]"><label class="text-xs text-slate-500 block mb-1">Tracking number <span class="text-slate-400">(optional)</span></label>{{ tracking_form.tracking_number }}</div>
-      <button class="btn-secondary">{% if receipt.tracking_number %}Update{% else %}Add tracking{% endif %}</button>
+    {% if not receipt.posted %}
+    <form method="post" class="flex flex-wrap gap-2 items-end field-inline">
+      {% csrf_token %}<input type="hidden" name="action" value="add_packages">
+      <div><label class="text-xs text-slate-500 block mb-1">Carrier</label>{{ package_form.carrier }}</div>
+      <div class="flex-1 min-w-[14rem]"><label class="text-xs text-slate-500 block mb-1">Tracking number(s) <span class="text-slate-400">— one per line, 📷 scans each label</span></label>{{ package_form.tracking_numbers }}</div>
+      <button class="btn-secondary">{% if packages %}Add more{% else %}Add tracking{% endif %}</button>
     </form>
-    {% if receipt.tracking_number %}
-    <form method="post" class="inline-block mt-2">{% csrf_token %}<input type="hidden" name="action" value="refresh_tracking">
-      <button class="text-sm text-indigo-600 hover:underline">↻ Refresh now</button></form>
+    <p class="text-xs text-slate-400 mt-2">Leave the carrier blank and it is guessed from each number. "Expected" follows the latest carrier ETA until the last box arrives.</p>
+    {% elif not packages %}
+    <p class="text-sm text-slate-400">No tracking was added to this order.</p>
     {% endif %}
-    <p class="text-xs text-slate-400 mt-2">Leave the carrier blank and it is guessed from the number. The carrier's estimated delivery date fills in "Expected" automatically.</p>
   </div>
 
   <div class="card-pad">
@@ -158,7 +173,7 @@
       <div class="basis-full lg:basis-auto lg:flex-1 min-w-0"><label class="text-xs text-slate-500 block mb-1">Product — type a SKU, UPC or name, or 📷 scan</label>
         <select name="product" required class="w-full" data-combobox data-scan-select data-scan-next="qty">
           <option value="">— pick product —</option>
-          {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name }}</option>{% endfor %}
+          {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.all_codes|join:" " }}">{{ p.sku }} — {{ p.name }}</option>{% endfor %}
         </select></div>
       <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
         <input type="number" name="qty" min="1" required class="w-24"></div>

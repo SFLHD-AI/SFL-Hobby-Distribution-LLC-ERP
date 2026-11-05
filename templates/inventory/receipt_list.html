@@ -9,6 +9,13 @@
     <a href="{% url 'receipt_create' %}" class="btn-primary">+ New supplier order</a>
   </div>
 </div>
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <div class="flex-1 min-w-[16rem]"><label class="text-xs text-slate-500 block mb-1">Find an order</label>
+    <input type="text" name="q" value="{{ q }}" placeholder="product SKU / UPC / name, supplier, or 📷 scan the shipping label" class="w-full" data-scan data-scan-submit autofocus></div>
+  {% if request.GET.status %}<input type="hidden" name="status" value="{{ request.GET.status }}">{% endif %}
+  <button class="btn-secondary">Search</button>
+  {% if q %}<a href="?{% if request.GET.status %}status={{ request.GET.status }}{% endif %}" class="text-sm text-indigo-600 hover:underline">clear</a>{% endif %}
+</form>
 <div class="mb-4 flex gap-2 text-sm">
   <a href="?" class="btn-secondary {% if not request.GET.status %}!bg-slate-200{% endif %}">All</a>
   <a href="?status=open" class="btn-secondary {% if request.GET.status == 'open' %}!bg-slate-200{% endif %}">Open</a>
@@ -26,7 +33,7 @@
         <td>{{ r.supplier|default:"—" }}</td>
         <td>{{ r.date|date:"M j, Y" }}</td>
         <td>{{ r.expected_date|date:"M j, Y"|default:"—" }}
-            {% if r.tracking_badge %}<a href="{{ r.tracking_url }}" target="_blank" class="badge {{ r.tracking_badge.1 }} ml-1" title="{{ r.tracking_detail }}">{{ r.tracking_badge.0 }}</a>{% endif %}</td>
+            {% if r.tracking_badge %}<a href="{% url 'receipt_detail' r.pk %}" class="badge {{ r.tracking_badge.1 }} ml-1" title="{{ r.tracking_detail }}">{{ r.tracking_badge.0 }}</a>{% endif %}</td>
         <td class="text-xs">{{ r.reference }}</td>
         <td class="num">${{ r.merchandise_total|floatformat:2|intcomma }}</td>
         <td class="num">${{ r.freight_cost|add:r.duties_cost|floatformat:2 }}</td>

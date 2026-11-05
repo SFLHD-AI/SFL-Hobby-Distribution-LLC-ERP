@@ -167,6 +167,41 @@ class Product(SoftDeleteModel):
     def barcode_value(self):
         return self.upc or self.sku
 
+    # --- barcodes ------------------------------------------------------------
+    @property
+    def all_codes(self):
+        """Every code that identifies this product: SKU, primary UPC and extra barcodes."""
+        codes = [self.sku]
+        if self.upc:
+            codes.append(self.upc)
+        codes += [b.code for b in self.barcodes.all()]
+        return codes
+
+    @property
+    def extra_codes_text(self):
+        return "\n".join(b.code for b in self.barcodes.all())
+
+    def matches_code(self, code):
+        code = (code or "").strip()
+        return bool(code) and any(code.lower() == c.lower() for c in self.all_codes)
+
+    @classmethod
+    def find_by_code(cls, code, active_only=False):
+        """Product for a scanned/typed code: primary UPC, extra barcode, or SKU."""
+        code = (code or "").strip()
+        if not code:
+            return None
+        qs = cls.objects.filter(active=True) if active_only else cls.objects.all()
+        return (qs.filter(upc=code).first()
+                or qs.filter(barcodes__code=code).first()
+                or qs.filter(sku__iexact=code).first())
+
+    @staticmethod
+    def code_filter(q):
+        """Q object matching SKU, name, primary UPC or any extra barcode."""
+        return (models.Q(sku__icontains=q) | models.Q(name__icontains=q)
+                | models.Q(upc__icontains=q) | models.Q(barcodes__code__icontains=q))
+
     def revalue_cost(self, new_cost, user=None, note=""):
         """
         Set the weighted average cost directly WITHOUT changing quantity.
@@ -224,6 +259,23 @@ class Product(SoftDeleteModel):
             self.qty_on_hand = locked.qty_on_hand
             self.avg_cost = locked.avg_cost
             return movement
+
+
+class ProductBarcode(models.Model):
+    """An extra barcode that maps to a product. Retail packaging often changes
+    UPC between print runs while the product (and its cost basis) stays the
+    same, so one SKU can carry several codes."""
+
+    product = models.ForeignKey(Product, on_delete=models.CASCADE, related_name="barcodes")
+    code = models.CharField(max_length=64, unique=True, db_index=True)
+    note = models.CharField(max_length=100, blank=True, help_text="e.g. 2nd print run, case UPC")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["code"]
+
+    def __str__(self):
+        return f"{self.code} → {self.product.sku}"
 
 
 class StockMovement(models.Model):
@@ -333,22 +385,10 @@ class Receipt(SoftDeleteModel):
                                   help_text="Account the supplier was paid from")
     payment_reference = models.CharField(max_length=100, blank=True,
                                          help_text="Check # / wire confirmation")
-    # Inbound shipment tracking (optional). Status, ETA and last event are
-    # refreshed automatically through Shippo's free tracking API when a token
-    # is configured; otherwise the carrier link still works.
+    # Carriers offered for inbound packages (see ReceiptPackage)
     CARRIERS = [("", "—"), ("usps", "USPS"), ("ups", "UPS"), ("fedex", "FedEx"),
                 ("dhl_express", "DHL Express"), ("ontrac", "OnTrac"), ("lasership", "LaserShip"),
                 ("amazon", "Amazon Logistics"), ("other", "Other / freight")]
-    tracking_carrier = models.CharField(max_length=20, choices=CARRIERS, blank=True)
-    tracking_number = models.CharField(max_length=100, blank=True, db_index=True)
-    tracking_status = models.CharField(max_length=20, blank=True,
-                                       help_text="UNKNOWN / PRE_TRANSIT / TRANSIT / DELIVERED / RETURNED / FAILURE")
-    tracking_detail = models.CharField(max_length=300, blank=True, help_text="Latest scan, in the carrier's words")
-    tracking_location = models.CharField(max_length=150, blank=True)
-    tracking_event_at = models.DateTimeField(null=True, blank=True)
-    tracking_eta = models.DateField(null=True, blank=True, help_text="Carrier's estimated delivery date")
-    tracking_checked_at = models.DateTimeField(null=True, blank=True)
-    tracking_error = models.CharField(max_length=200, blank=True)
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL, related_name="receipts_created")
     created_at = models.DateTimeField(auto_now_add=True)
@@ -367,24 +407,49 @@ class Receipt(SoftDeleteModel):
     def landed_total(self):
         return self.merchandise_total + self.freight_cost + self.duties_cost
 
-    # --- inbound tracking ----------------------------------------------------
+    # --- inbound tracking (aggregate of packages) -----------------------------
     @property
-    def tracking_url(self):
-        from inventory.tracking import carrier_url
-        return carrier_url(self.tracking_carrier, self.tracking_number)
+    def tracking_numbers(self):
+        return [p.tracking_number for p in self.packages.all()]
 
     @property
     def tracking_badge(self):
-        """(label, css) for list/detail badges."""
-        m = {"DELIVERED": ("Delivered", "bg-emerald-100 text-emerald-700"),
-             "TRANSIT": ("In transit", "bg-sky-100 text-sky-700"),
-             "PRE_TRANSIT": ("Label created", "bg-slate-100 text-slate-600"),
-             "RETURNED": ("Returned", "bg-red-100 text-red-700"),
-             "FAILURE": ("Problem", "bg-red-100 text-red-700"),
-             "UNKNOWN": ("No scans yet", "bg-slate-100 text-slate-500")}
-        if not self.tracking_number:
+        """(label, css) summarising every package on the order, or None."""
+        pkgs = list(self.packages.all())
+        if not pkgs:
             return None
-        return m.get(self.tracking_status, ("Tracking added", "bg-slate-100 text-slate-600"))
+        statuses = {p.status for p in pkgs}
+        n = len(pkgs)
+        if statuses == {"DELIVERED"}:
+            return ("Delivered" + (f" ({n} boxes)" if n > 1 else ""), "bg-emerald-100 text-emerald-700")
+        delivered = sum(1 for p in pkgs if p.is_delivered)
+        if delivered:
+            return (f"{delivered} of {n} delivered", "bg-sky-100 text-sky-700")
+        if "RETURNED" in statuses or "FAILURE" in statuses:
+            return ("Problem", "bg-red-100 text-red-700")
+        if "TRANSIT" in statuses:
+            return ("In transit" + (f" ({n} boxes)" if n > 1 else ""), "bg-sky-100 text-sky-700")
+        if "PRE_TRANSIT" in statuses:
+            return ("Label created", "bg-slate-100 text-slate-600")
+        if "UNKNOWN" in statuses:
+            return ("No scans yet", "bg-slate-100 text-slate-500")
+        return ("Tracking added", "bg-slate-100 text-slate-600")
+
+    @property
+    def tracking_eta(self):
+        """When the whole order should be here: the latest ETA among boxes
+        not yet delivered (or the latest delivery if all have arrived)."""
+        pkgs = list(self.packages.all())
+        pending = [p.eta for p in pkgs if not p.is_delivered and p.eta]
+        if pending:
+            return max(pending)
+        done = [timezone.localtime(p.event_at).date() for p in pkgs if p.is_delivered and p.event_at]
+        return max(done) if done else None
+
+    @property
+    def tracking_detail(self):
+        pkgs = [p for p in self.packages.all() if p.detail]
+        return "; ".join(f"{p.tracking_number[-6:]}: {p.detail}" for p in pkgs)[:300]
 
     # --- supplier bill state -------------------------------------------------
     @property
@@ -459,17 +524,57 @@ class Receipt(SoftDeleteModel):
             # It's here: the arrival date is today and tracking is settled,
             # whatever the carrier last said.
             self.expected_date = timezone.localdate()
-            fields = ["posted", "posted_at", "expected_date"]
-            if self.tracking_number:
-                self.tracking_status = "DELIVERED"
-                self.tracking_detail = "Marked received"
-                self.tracking_event_at = self.posted_at
-                self.tracking_eta = self.expected_date
-                self.tracking_error = ""
-                fields += ["tracking_status", "tracking_detail", "tracking_event_at",
-                           "tracking_eta", "tracking_error"]
-            self.save(update_fields=fields)
+            self.save(update_fields=["posted", "posted_at", "expected_date"])
+            self.packages.exclude(status="DELIVERED").update(
+                status="DELIVERED", detail="Marked received", event_at=self.posted_at,
+                eta=self.expected_date, error="")
             log_activity(user, "post", self, note=f"Posted receipt, {len(lines)} lines")
+
+
+class ReceiptPackage(models.Model):
+    """One tracked parcel on a supplier order. An order can arrive in several
+    boxes with their own tracking numbers; the order is 'here' when the last
+    one lands."""
+
+    receipt = models.ForeignKey(Receipt, on_delete=models.CASCADE, related_name="packages")
+    carrier = models.CharField(max_length=20, choices=Receipt.CARRIERS, blank=True)
+    tracking_number = models.CharField(max_length=100, db_index=True)
+    status = models.CharField(max_length=20, blank=True)
+    detail = models.CharField(max_length=300, blank=True)
+    location = models.CharField(max_length=150, blank=True)
+    event_at = models.DateTimeField(null=True, blank=True)
+    eta = models.DateField(null=True, blank=True)
+    checked_at = models.DateTimeField(null=True, blank=True)
+    error = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    BADGES = {"DELIVERED": ("Delivered", "bg-emerald-100 text-emerald-700"),
+              "TRANSIT": ("In transit", "bg-sky-100 text-sky-700"),
+              "PRE_TRANSIT": ("Label created", "bg-slate-100 text-slate-600"),
+              "RETURNED": ("Returned", "bg-red-100 text-red-700"),
+              "FAILURE": ("Problem", "bg-red-100 text-red-700"),
+              "UNKNOWN": ("No scans yet", "bg-slate-100 text-slate-500")}
+
+    class Meta:
+        ordering = ["eta", "id"]
+        constraints = [models.UniqueConstraint(fields=["receipt", "tracking_number"],
+                                               name="uniq_receipt_tracking_number")]
+
+    def __str__(self):
+        return f"{self.tracking_number} ({self.get_carrier_display() or 'carrier?'})"
+
+    @property
+    def tracking_url(self):
+        from inventory.tracking import carrier_url
+        return carrier_url(self.carrier, self.tracking_number)
+
+    @property
+    def badge(self):
+        return self.BADGES.get(self.status, ("Tracking added", "bg-slate-100 text-slate-600"))
+
+    @property
+    def is_delivered(self):
+        return self.status == "DELIVERED"
 
 
 class ReceiptLine(SoftDeleteModel):

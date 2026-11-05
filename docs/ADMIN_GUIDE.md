@@ -286,14 +286,30 @@ order is marked received.
 
 ## Tracking an inbound supplier order
 
-On a Receiving document, the **Shipment tracking** card takes an optional
-tracking number (the carrier is guessed from the number if you leave it
-blank). The number links to the carrier's own tracking page. When a Shippo
-token is set in Settings, the status, latest scan and the carrier's
-estimated delivery date are pulled automatically — on save, with **↻ Refresh
-now**, and every hour while the order is open — and the ETA fills in the
-order's "Expected" date. The Receiving list shows a tracking badge next to
-each expected date, and its **↻ Refresh tracking** button updates every open order with a tracking number at once.
+On a Receiving document, the **Shipment tracking** card takes any number of
+tracking numbers — paste them one per line, or 📷 scan each shipping label and
+it adds a line. The carrier is guessed from each number if you leave it blank.
+Each box shows its own status, latest scan and ETA; the order's badge sums
+them up ("2 of 3 delivered", "In transit (3 boxes)"), and "Expected" follows
+the latest carrier ETA until the last box arrives. With a Shippo token set in
+Settings the statuses refresh on save, with **↻ Refresh all**, hourly, and
+with the **↻ Refresh tracking** button on the Receiving list. Marking the
+order received settles every box as delivered.
+
+## Finding a supplier order
+
+The search box at the top of Receiving finds an order by anything on it:
+type part of a product's SKU, UPC, extra barcode or name, the supplier's
+name, your reference or the supplier's invoice number — or 📷 scan the
+shipping label's tracking barcode on the box that just arrived.
+
+## One product, several barcodes
+
+Retail packaging often changes UPC between print runs while the product is
+the same. On the product form, **Other barcodes / UPCs** takes extra codes
+(one per line, or 📷 scan each). Every code finds the product when scanned
+or typed anywhere — picking, order lines, receiving, searches — and they all
+share one stock count and one weighted-average cost.
 
 ## Picking products
 

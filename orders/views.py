@@ -188,8 +188,7 @@ def _scan_add(request, po):
     code = request.POST.get("barcode", "").strip()
     if not code:
         return
-    product = (Product.objects.filter(upc=code).first()
-               or Product.objects.filter(sku__iexact=code).first())
+    product = Product.find_by_code(code)
     if not product:
         raise ValidationError(f"No product matches barcode/SKU “{code}”.")
     price = po.customer.price_for(product)
@@ -232,9 +231,7 @@ def product_search_json(request):
     customer = Customer.objects.filter(pk=customer_id).first() if customer_id else None
     if not q:
         return JsonResponse({"results": []})
-    qs = Product.objects.filter(active=True).filter(
-        models.Q(sku__icontains=q) | models.Q(name__icontains=q) |
-        models.Q(upc__icontains=q))[:15]
+    qs = Product.objects.filter(active=True).filter(Product.code_filter(q)).distinct()[:15]
     results = []
     for p in qs:
         results.append({

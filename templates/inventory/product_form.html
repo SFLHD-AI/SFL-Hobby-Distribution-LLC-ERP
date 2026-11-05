@@ -19,6 +19,8 @@
     </div>
     <div class="grid md:grid-cols-4 gap-4">
       <div class="field"><label>UPC / barcode</label>{{ form.upc }}</div>
+      <div class="field md:col-span-3"><label>{{ form.extra_barcodes.label }}</label>{{ form.extra_barcodes }}
+        <p class="text-xs text-slate-400 mt-1">{{ form.extra_barcodes.help_text }}</p></div>
       <div class="field"><label>Case pack qty</label>{{ form.case_pack_qty }}</div>
       <div class="field"><label>Unit of measure</label>{{ form.unit_of_measure }}</div>
       <div class="field"><label>Bin location</label>{{ form.bin_location }}</div>

@@ -91,9 +91,8 @@ def pick_scan_api(request, pk):
     if not code:
         return Response({"ok": False, "error": "Empty scan."}, status=400)
 
-    lines = [l for l in po.live_lines.select_related("product")
-             if l.product.barcode_value() == code or l.product.sku == code
-             or l.product.upc == code]
+    lines = [l for l in po.live_lines.select_related("product").prefetch_related("product__barcodes")
+             if l.product.matches_code(code) or l.product.barcode_value() == code]
     if not lines:
         return Response({"ok": False, "error": "WRONG ITEM — not on this order.",
                          "code": "wrong_item"}, status=400)

@@ -237,9 +237,7 @@ def global_search(request):
     if q:
         from invoicing.models import Invoice as Inv
         from shipping.models import Shipment
-        results["products"] = Product.objects.filter(
-            models.Q(sku__icontains=q) | models.Q(name__icontains=q) |
-            models.Q(upc__icontains=q))[:20]
+        results["products"] = Product.objects.filter(Product.code_filter(q)).distinct()[:20]
         results["customers"] = Customer.objects.filter(
             models.Q(business_name__icontains=q) | models.Q(email__icontains=q) |
             models.Q(phone__icontains=q))[:20]
