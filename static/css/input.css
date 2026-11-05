@@ -36,6 +36,10 @@
     .btn { @apply py-2.5; }
     .page-title { @apply text-lg; }
   }
+  /* iPhone notch / status bar / home indicator: keep bars out from under them */
+  .app-header, .safe-top { padding-top: env(safe-area-inset-top, 0px); }
+  .safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); }
+  .min-h-16 { min-height: 4rem; }
   html { -webkit-text-size-adjust: 100%; }
   input, select, textarea { font-size: 16px; }   /* stops iOS zooming into fields */
   @media (min-width: 640px) { input, select, textarea { font-size: 0.875rem; } }
