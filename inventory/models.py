@@ -647,6 +647,101 @@ class ReceiptLine(SoftDeleteModel):
         return (Decimal(self.qty) * self.unit_cost).quantize(CENTS, ROUND_HALF_UP)
 
 
+class TradepostFill(models.Model):
+    """A purchase (order execution) pulled from Tradepost's API. Cached so the
+    Tradepost screen loads instantly, remembers which supplier order each
+    fill went to, which ones were dismissed, and the latest package tracking."""
+
+    execution_id = models.CharField(max_length=40, unique=True)
+    order_number = models.CharField(max_length=20, db_index=True)
+    status = models.CharField(max_length=20, blank=True)
+    executed_at = models.DateTimeField(null=True, blank=True)
+    quantity = models.PositiveIntegerField(default=0)
+    unit_cost = models.DecimalField(max_digits=12, decimal_places=4, default=0)
+    price_cents = models.IntegerField(default=0)
+    fees_cents = models.IntegerField(default=0)
+    config_id = models.CharField(max_length=40, blank=True, db_index=True)
+    product_name = models.CharField(max_length=250, blank=True)
+    set_name = models.CharField(max_length=250, blank=True)
+    condition = models.CharField(max_length=40, blank=True)
+    tcgplayer_id = models.PositiveIntegerField(null=True, blank=True)
+    # [{"tracking": "1Z…", "carrier": "ups", "tp_status": "IN_TRANSIT", "tp_eta": "2026-11-09",
+    #   "status": "TRANSIT", "detail": "…", "location": "…", "eta": "2026-11-09", "checked_at": "…"}]
+    packages = models.JSONField(default=list, blank=True)
+    receipt = models.ForeignKey(Receipt, null=True, blank=True, on_delete=models.SET_NULL,
+                                related_name="tradepost_fills")
+    dismissed = models.BooleanField(default=False, db_index=True)
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-executed_at", "-id"]
+
+    def __str__(self):
+        return f"{self.order_number} {self.product_name} x{self.quantity}"
+
+    @property
+    def line_total(self):
+        return (self.unit_cost * self.quantity).quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def is_logged(self):
+        return self.receipt_id is not None
+
+    @property
+    def product(self):
+        if not hasattr(self, "_product"):
+            from inventory.tradepost import match_product
+            self._product = match_product(self, Product)
+        return self._product
+
+    # --- tracking summary (mirrors Receipt.tracking_badge for the fill's own packages) ---
+    @property
+    def tracking_badge(self):
+        pkgs = self.packages or []
+        if not pkgs:
+            return None
+        statuses = {p.get("status") or _tp_status(p.get("tp_status")) for p in pkgs}
+        n = len(pkgs)
+        if statuses == {"DELIVERED"}:
+            return ("Delivered" + (f" ({n} boxes)" if n > 1 else ""), "bg-emerald-100 text-emerald-700")
+        delivered = sum(1 for p in pkgs if (p.get("status") or _tp_status(p.get("tp_status"))) == "DELIVERED")
+        if delivered:
+            return (f"{delivered} of {n} delivered", "bg-sky-100 text-sky-700")
+        if "RETURNED" in statuses or "FAILURE" in statuses:
+            return ("Problem", "bg-red-100 text-red-700")
+        if "TRANSIT" in statuses:
+            return ("In transit" + (f" ({n} boxes)" if n > 1 else ""), "bg-sky-100 text-sky-700")
+        if "PRE_TRANSIT" in statuses:
+            return ("Label created", "bg-slate-100 text-slate-600")
+        return ("No scans yet", "bg-slate-100 text-slate-500")
+
+    @property
+    def tracking_eta(self):
+        """Latest ETA among boxes still on the way; else the last delivery date."""
+        from datetime import date
+        pending, done = [], []
+        for p in self.packages or []:
+            st = p.get("status") or _tp_status(p.get("tp_status"))
+            eta = p.get("eta") or p.get("tp_eta")
+            if not eta:
+                continue
+            try:
+                d = date.fromisoformat(eta[:10])
+            except ValueError:
+                continue
+            (done if st == "DELIVERED" else pending).append(d)
+        if pending:
+            return max(pending)
+        return max(done) if done else None
+
+
+def _tp_status(tp):
+    """Tradepost label status → our package status vocabulary."""
+    return {"DELIVERED": "DELIVERED", "IN_TRANSIT": "TRANSIT", "OUT_FOR_DELIVERY": "TRANSIT",
+            "AVAILABLE_FOR_PICKUP": "TRANSIT", "PRE_TRANSIT": "PRE_TRANSIT",
+            "RETURN_TO_SENDER": "RETURNED", "FAILURE": "FAILURE"}.get(tp or "", "UNKNOWN")
+
+
 # ---------------------------------------------------------------------------
 # Manual adjustments
 # ---------------------------------------------------------------------------

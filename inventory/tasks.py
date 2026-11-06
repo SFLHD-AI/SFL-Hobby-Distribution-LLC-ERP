@@ -25,3 +25,26 @@ def refresh_inbound_tracking():
         ok += good
         fail += (not good)
     return f"{ok} updated, {fail} failed."
+
+
+def sync_tradepost():
+    """Hourly: pull new Tradepost fills, match them to logged supplier orders,
+    and refresh Shippo tracking on packages still on the way."""
+    from core.models import CompanySettings
+    from inventory import tradepost as tp
+    from inventory.models import ReceiptLine, TradepostFill
+    from shipping.providers import get_provider
+    client = tp.TradepostClient(CompanySettings.get().tradepost_api_key)
+    if not client.is_configured():
+        return "Tradepost not configured; skipped."
+    try:
+        new, upd = tp.sync_fills(client)
+    except tp.TradepostError as e:
+        return f"Tradepost sync failed: {e}"
+    linked = tp.link_logged_fills(Receipt, ReceiptLine)
+    n = 0
+    provider = get_provider("shippo")
+    if provider.is_configured():
+        for fill in TradepostFill.objects.filter(dismissed=False).exclude(packages=[]):
+            n += tp.refresh_fill_tracking(fill, provider)
+    return f"{new} new, {upd} updated, {linked} linked, {n} packages tracked."

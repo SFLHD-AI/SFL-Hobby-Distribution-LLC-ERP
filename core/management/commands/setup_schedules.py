@@ -18,6 +18,8 @@ class Command(BaseCommand):
          "HOURLY", None, None),
         ("market-prices", "inventory.tasks.refresh_market_prices",
          "CRON", "0 * * * *", "HOURLY"),
+        ("tradepost-sync", "inventory.tasks.sync_tradepost",
+         "HOURLY", None, None),
         ("bank-sync", "banking.tasks.sync_all_connections",
          "HOURLY", None, None),
         ("recurring-expenses", "expenses.tasks.generate_recurring_expenses",

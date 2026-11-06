@@ -227,27 +227,44 @@ without headers each line is scanned for a barcode, a quantity (`x4`,
 
 ### Tradepost purchases (API)
 
-Receiving → **Tradepost** pulls the fills you bought on Tradepost straight
-from their Partner Exchange API and turns them into supplier orders.
+Receiving → **Tradepost** pulls the fills you bought from Tradepost's Partner
+Exchange API, matches them to supplier orders you already logged, tracks
+every package with Shippo, and turns the rest into supplier orders.
 
 Setup (once): in Tradepost **Terminal → Settings → API Keys** generate a key
-(`tp_live_…`) and paste it into **Settings → Tradepost API key**.
+(`tp_live_…`) and paste it into **Settings → Tradepost API key**. A Shippo
+token (Settings → Shipping) gives live carrier scans and delivery dates.
 
-Each visit lists every BUY fill in the look-back window (default 120 days),
-newest first, with the product matched to your catalog by Tradepost product
-ID, then TCGplayer ID, then exact name. Fills already on a supplier order are
-hidden (tick *show already-imported*). Pick fills and **Create supplier order
-from selected**, or **Import all new**: one RCV, supplier "Tradepost",
-one line per fill at the fees-in unit cost Tradepost reports, reference =
-the Tradepost order numbers. Unmatched products are created automatically
-(SKU `TP-<tcgplayer id>`, with the TCGplayer ID set so market prices flow)
-and remembered, so the next fill of the same product matches instantly.
-Refunded / failed fills never appear; a fill can't be imported twice.
+How the screen works:
 
-Technical notes: single GraphQL endpoint `platform-api.tradepost.co/graphql`,
-header `X-API-Key`, query `listOrderExecutions(side: BUY)` with
-`includeProductData` and `includePnl`, keyset pagination. Code in
-`inventory/tradepost.py`.
+* **Sync.** Fills are pulled automatically when you open the page (if the
+  last sync is older than 30 min), hourly in the background, or with
+  **Sync now**. Look-back is adjustable (30 days – 2 years).
+* **Matching logged orders.** A fill is linked to a supplier order when the
+  Tradepost order number (`TPST-…`) appears in that order's **Supplier
+  invoice #**, Reference or Notes — so orders you logged by hand show up as
+  *Logged* with a link to the RCV. If one didn't match, open
+  *already logged? link it* on the row and type the RCV number.
+* **Logging new fills.** Tick fills and **Log selected as a supplier
+  order**, or **Log all new**: one RCV, supplier "Tradepost", one line per
+  fill at the fees-in unit cost, order numbers in both Supplier invoice #
+  and Reference. Products are matched by Tradepost ID, TCGplayer ID, then
+  exact name, created when unknown (SKU `TP-<tcgplayer id>`) and
+  remembered for next time.
+* **Hiding old fills.** Tick fills you don't need to log and **Hide
+  selected**; they move to the *Hidden* tab and are never offered again
+  (restore from that tab).
+* **Shipping.** Each fill shows its packages (an order can have several):
+  carrier, tracking link, status and ETA. Tradepost's label status is shown
+  immediately; with Shippo, every undelivered package is re-checked hourly
+  and on **Refresh tracking**. Tracking numbers are copied onto the linked
+  supplier order, so Receiving's Expected date follows the last box.
+
+Technical notes: GraphQL `platform-api.tradepost.co/graphql`, header
+`X-API-Key`, `listOrderExecutions(side: BUY)` with `includeProductData`,
+`includePnl`, `includeTransfers` (labels via `shipmentGroup.shippingLabels`),
+keyset pagination. Cache model `TradepostFill`; code in
+`inventory/tradepost.py`; hourly job `inventory.tasks.sync_tradepost`.
 
 ### Supplier bills on Receiving
 

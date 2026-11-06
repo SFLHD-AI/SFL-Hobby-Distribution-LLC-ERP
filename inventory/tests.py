@@ -747,8 +747,12 @@ class OrderImportTests(TestCase):
 
 
 class TradepostImportTests(TestCase):
-    """Drives the Tradepost page with a fake API client (no network)."""
+    """Drives the Tradepost page with a fake API client and fake Shippo (no network)."""
 
+    LABEL = {"id": "lb-1", "trackingCode": "1Z999AA10123456784", "carrier": "UPSDAP",
+             "currentStatus": "IN_TRANSIT", "estimatedDeliveryDate": "2026-11-09T00:00:00Z", "updatedAt": "x"}
+    LABEL2 = {"id": "lb-2", "trackingCode": "9400111899223033005555", "carrier": "USPS",
+              "currentStatus": "DELIVERED", "estimatedDeliveryDate": None, "updatedAt": "x"}
     SAMPLE = [
         {"id": "aaaa-1", "orderNumber": "TPST-AAAA0001", "takerSide": "BUY", "quantity": 2,
          "executionPriceCents": 173737, "grossAmountCents": 347474, "status": "SETTLED",
@@ -757,12 +761,13 @@ class TradepostImportTests(TestCase):
          "assetConfiguration": {"id": "cfg-1", "name": "Prismatic Evolutions Booster Bundle",
                                 "externalId": {"TCGPLAYER": "593285"}, "slug": "pe-bundle", "data": {"brand": "Pokemon"}},
          "asset": {"name": "Scarlet & Violet: Prismatic Evolutions"}, "key": {"name": "MINT"},
-         "pnl": {"boughtQuantity": 2, "buyUnitPriceCents": "176000", "buyFeesCents": "4526"}},
+         "pnl": {"boughtQuantity": 2, "buyUnitPriceCents": "176000", "buyFeesCents": "4526"},
+         "transfers": [{"id": "tr-1", "status": "SHIPPED", "shipmentGroup": {"id": "sg-1", "shippingLabels": [LABEL, LABEL2]}}]},
         {"id": "aaaa-2", "orderNumber": "TPST-AAAA0002", "takerSide": "BUY", "quantity": 13,
          "executionPriceCents": 3704, "grossAmountCents": 48152, "status": "SETTLING",
          "executedAt": "2026-11-03T15:00:00Z", "settledAt": None, "assetConfigurationId": "cfg-2",
          "assetConfiguration": {"id": "cfg-2", "name": "OP-17 Double Pack", "externalId": None},
-         "asset": {"name": "One Piece: OP-17"}, "key": {"name": "MINT"}, "pnl": None},
+         "asset": {"name": "One Piece: OP-17"}, "key": {"name": "MINT"}, "pnl": None, "transfers": []},
         {"id": "aaaa-3", "orderNumber": "TPST-AAAA0003", "takerSide": "BUY", "quantity": 1,
          "executionPriceCents": 100, "grossAmountCents": 100, "status": "REVERSED",
          "executedAt": "2026-11-04T15:00:00Z", "assetConfigurationId": "cfg-3",
@@ -776,7 +781,6 @@ class TradepostImportTests(TestCase):
         from inventory import tradepost as tp
         self.client.force_login(User.objects.create_superuser("tp", password="x"))
         c = CompanySettings.get(); c.tradepost_api_key = "tp_live_test"; c.save()
-        # existing product that should match by TCGplayer id
         self.existing = make_product("PE-BUNDLE", name="Prismatic Evolutions Booster Bundle - Sealed Case",
                                      tcgplayer_id=593285)
         parse = tp.TradepostClient.parse_fill
@@ -784,6 +788,21 @@ class TradepostImportTests(TestCase):
         patcher = mock.patch.object(tp.TradepostClient, "list_buys",
                                     lambda self, since=None, **kw: [parse(r) for r in TradepostImportTests.SAMPLE])
         patcher.start(); self.addCleanup(patcher.stop)
+        # fake Shippo: configured, answers every tracking lookup
+        self.shippo = mock.Mock(); self.shippo.is_configured.return_value = True
+        p2 = mock.patch("shipping.providers.get_provider", return_value=self.shippo)
+        p2.start(); self.addCleanup(p2.stop)
+        self.lookups = []
+        def fetch(carrier, number, provider=None):
+            self.lookups.append((carrier, number))
+            from datetime import date, datetime, timezone as tz
+            if number.startswith("1Z"):
+                return {"status": "TRANSIT", "detail": "Departed facility", "location": "Dallas, TX",
+                        "event_at": datetime(2026, 11, 7, tzinfo=tz.utc), "eta": date(2026, 11, 10)}
+            return {"status": "DELIVERED", "detail": "Delivered, front door", "location": "Miami, FL",
+                    "event_at": datetime(2026, 11, 5, tzinfo=tz.utc), "eta": None}
+        p3 = mock.patch("inventory.tracking.fetch_status", side_effect=fetch)
+        p3.start(); self.addCleanup(p3.stop)
 
     def test_tcgplayer_id_shapes(self):
         from inventory.tradepost import _tcgplayer_id
@@ -793,29 +812,63 @@ class TradepostImportTests(TestCase):
         self.assertEqual(_tcgplayer_id(None, {}, {"brand": "Pokemon"}), None)
         self.assertEqual(_tcgplayer_id(None, {"TCGPLAYER": ["12", "13"]}), 12)
 
-    def test_parse_fill_uses_fees_in_unit_price_and_tcg_id(self):
+    def test_parse_fill_prices_ids_and_labels(self):
         from inventory.tradepost import TradepostClient
         f = TradepostClient.parse_fill(self.SAMPLE[0])
         self.assertEqual(f.unit_cost, Decimal("1760.0000"))
         self.assertEqual(f.tcgplayer_id, 593285)
         self.assertEqual(f.line_total, Decimal("3520.00"))
+        self.assertEqual([(l["tracking"], l["carrier"], l["tp_status"], l["tp_eta"]) for l in f.labels],
+                         [("1Z999AA10123456784", "ups", "IN_TRANSIT", "2026-11-09"),
+                          ("9400111899223033005555", "usps", "DELIVERED", "")])
         g = TradepostClient.parse_fill(self.SAMPLE[1])
         self.assertEqual(g.unit_cost, Decimal("37.0400"))      # no pnl → cross price
         self.assertIsNone(g.tcgplayer_id)
+        self.assertEqual(g.labels, [])
 
-    def test_page_lists_new_fills_and_hides_reversed(self):
+    def test_first_visit_syncs_and_tracks(self):
+        from inventory.models import TradepostFill
         html = self.client.get("/inventory/receiving/tradepost/").content.decode()
         self.assertIn("TPST-AAAA0001", html)
-        self.assertIn("PE-BUNDLE", html)                 # matched by TCGplayer id
-        self.assertIn("new product", html)               # OP-17 has no match yet
-        self.assertNotIn("TPST-AAAA0003", html)          # reversed fills are not purchases
+        self.assertIn("PE-BUNDLE", html)                      # matched by TCGplayer id
+        self.assertIn("new product on import", html)          # OP-17 has no match yet
+        self.assertNotIn("TPST-AAAA0003", html)               # reversed fills are not purchases
+        self.assertIn("1 of 2 delivered", html)               # Shippo said one box landed
+        self.assertIn("ETA Tue Nov 10", html)
+        self.assertIn("Departed facility", html)
+        fill = TradepostFill.objects.get(execution_id="aaaa-1")
+        self.assertEqual(fill.packages[0]["status"], "TRANSIT")
+        self.assertEqual(fill.packages[1]["status"], "DELIVERED")
+        # second visit within 30 minutes: served from the cache, delivered box not re-queried
+        n = len(self.lookups)
+        self.client.get("/inventory/receiving/tradepost/")
+        self.assertEqual(len(self.lookups), n)
+
+    def test_matches_orders_already_logged_by_invoice_number(self):
+        from inventory.models import Receipt, Supplier, TradepostFill
+        sup = Supplier.objects.create(name="Tradepost")
+        rcv = Receipt.objects.create(supplier=sup, supplier_invoice_number="TPST-AAAA0001", reference="hand-logged")
+        self.client.get("/inventory/receiving/tradepost/")
+        fill = TradepostFill.objects.get(execution_id="aaaa-1")
+        self.assertEqual(fill.receipt, rcv)
+        # its Tradepost tracking numbers now live on the order too
+        self.assertEqual(sorted(rcv.tracking_numbers), ["1Z999AA10123456784", "9400111899223033005555"])
+        pkg = rcv.packages.get(tracking_number="1Z999AA10123456784")
+        self.assertEqual((pkg.carrier, pkg.status, str(pkg.eta)), ("ups", "TRANSIT", "2026-11-10"))
+        rcv.refresh_from_db()
+        self.assertEqual(str(rcv.expected_date), "2026-11-10")
+        html = self.client.get("/inventory/receiving/tradepost/?view=new").content.decode()
+        self.assertNotIn("TPST-AAAA0001", html)
+        self.assertIn("TPST-AAAA0002", html)
 
     def test_create_receipt_from_selected_fills(self):
-        from inventory.models import Receipt
+        from inventory.models import Receipt, TradepostFill
+        self.client.get("/inventory/receiving/tradepost/")
         r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1", "aaaa-2"]})
         self.assertEqual(r.status_code, 302)
         rcv = Receipt.objects.get()
         self.assertEqual(rcv.supplier.name, "Tradepost")
+        self.assertEqual(rcv.supplier_invoice_number, "TPST-AAAA0001, TPST-AAAA0002")
         self.assertEqual(rcv.reference, "TPST-AAAA0001, TPST-AAAA0002")
         lines = {l.tradepost_execution_id: l for l in rcv.lines.all()}
         self.assertEqual(lines["aaaa-1"].product, self.existing)
@@ -825,22 +878,46 @@ class TradepostImportTests(TestCase):
         self.assertTrue(new.sku.startswith("TP-"))
         self.assertEqual(new.tradepost_config_id, "cfg-2")
         self.existing.refresh_from_db()
-        self.assertEqual(self.existing.tradepost_config_id, "cfg-1")   # remembered for next time
-        self.assertFalse(rcv.posted)
-        # second visit: both fills are now flagged imported and hidden by default
-        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
-        self.assertNotIn("TPST-AAAA0001", html)
-        self.assertIn("2 already imported", html)
-        html = self.client.get("/inventory/receiving/tradepost/?all=1").content.decode()
-        self.assertIn("TPST-AAAA0001", html)
-        # importing again does nothing
-        r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1"]})
+        self.assertEqual(self.existing.tradepost_config_id, "cfg-1")
+        self.assertEqual(rcv.packages.count(), 2)
+        self.assertTrue(all(f.receipt == rcv for f in TradepostFill.objects.filter(execution_id__in=["aaaa-1", "aaaa-2"])))
+        # can't be logged twice
+        self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1"]})
         self.assertEqual(Receipt.objects.count(), 1)
 
-    def test_import_all_new(self):
+    def test_log_all_new(self):
         from inventory.models import Receipt
+        self.client.get("/inventory/receiving/tradepost/")
         self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
         self.assertEqual(Receipt.objects.get().lines.count(), 2)
+
+    def test_hide_restore_and_manual_link(self):
+        from inventory.models import Receipt, Supplier, TradepostFill
+        self.client.get("/inventory/receiving/tradepost/")
+        self.client.post("/inventory/receiving/tradepost/", {"action": "dismiss", "fill": ["aaaa-2"]})
+        self.assertTrue(TradepostFill.objects.get(execution_id="aaaa-2").dismissed)
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.assertNotIn("TPST-AAAA0002", html)
+        html = self.client.get("/inventory/receiving/tradepost/?view=dismissed").content.decode()
+        self.assertIn("TPST-AAAA0002", html)
+        # "log all new" skips hidden fills
+        self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
+        self.assertEqual(Receipt.objects.get().lines.count(), 1)
+        self.client.post("/inventory/receiving/tradepost/", {"action": "restore", "fill": ["aaaa-2"]})
+        self.assertFalse(TradepostFill.objects.get(execution_id="aaaa-2").dismissed)
+        rcv = Receipt.objects.create(supplier=Supplier.objects.get(name="Tradepost"), reference="manual")
+        self.client.post("/inventory/receiving/tradepost/", {"action": "link", "fill_id": "aaaa-2", "rcv": f"RCV-{rcv.pk}"})
+        self.assertEqual(TradepostFill.objects.get(execution_id="aaaa-2").receipt, rcv)
+        self.client.post("/inventory/receiving/tradepost/", {"action": "unlink", "fill": ["aaaa-2"]})
+        self.assertIsNone(TradepostFill.objects.get(execution_id="aaaa-2").receipt)
+
+    def test_hourly_task(self):
+        from inventory.models import TradepostFill
+        from inventory.tasks import sync_tradepost
+        msg = sync_tradepost()
+        self.assertIn("3 new", msg)
+        self.assertIn("2 packages tracked", msg)
+        self.assertEqual(TradepostFill.objects.count(), 3)
 
     def test_unconfigured_shows_setup_steps(self):
         from core.models import CompanySettings
@@ -852,14 +929,13 @@ class TradepostImportTests(TestCase):
         from unittest import mock
         from inventory.tradepost import TradepostClient, TradepostError
         c = TradepostClient("tp_live_bad")
-        fake = mock.Mock(status_code=200); fake.json.return_value = {
-            "data": None, "errors": [{"message": "Authentication required", "path": ["listOrderExecutions"]}]}
+        fake = mock.Mock(status_code=401); fake.json.return_value = {"error": "Invalid API key", "code": "INVALID_API_KEY"}
         with mock.patch("inventory.tradepost.requests.post", return_value=fake):
             with self.assertRaises(TradepostError) as cm:
                 c._query("query { x }", {})
         self.assertIn("API key", str(cm.exception))
 
-    def test_client_retries_without_external_ids(self):
+    def test_client_retries_without_optional_fields(self):
         from unittest import mock
         from inventory.tradepost import TradepostClient
         c = TradepostClient("tp_live_ok")

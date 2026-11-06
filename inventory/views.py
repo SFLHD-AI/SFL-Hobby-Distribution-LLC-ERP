@@ -538,57 +538,151 @@ def receipt_import(request):
 
 @module_required("receiving")
 def receipt_tradepost(request):
-    """List Tradepost fills we bought; turn the selected ones into one RCV."""
+    """Tradepost purchases: synced from the API, matched to logged supplier
+    orders, with Shippo tracking per package. Pick fills → one RCV."""
     from core.models import CompanySettings
     from inventory import tradepost as tp
+    from inventory.models import TradepostFill
+    from shipping.providers import get_provider
     company = CompanySettings.get()
     client = tp.TradepostClient(company.tradepost_api_key)
-    ctx = {"configured": client.is_configured(), "fills": [], "error": "", "days": 120,
-           "imported": set(), "show_imported": request.GET.get("all") == "1"}
-    if not client.is_configured():
-        return render(request, "inventory/receipt_tradepost.html", ctx)
+    view = request.GET.get("view") or request.POST.get("view") or "all"
     try:
         days = max(1, min(int(request.GET.get("days") or request.POST.get("days") or 120), 730))
     except ValueError:
         days = 120
-    ctx["days"] = days
-    try:
-        fills = client.list_buys(since=timezone.now() - timezone.timedelta(days=days))
-    except tp.TradepostError as e:
-        ctx["error"] = str(e)
+    ctx = {"configured": client.is_configured(), "fills": [], "error": "", "days": days, "view": view,
+           "shippo": get_provider("shippo").is_configured(), "last_sync": None}
+    if not client.is_configured():
         return render(request, "inventory/receipt_tradepost.html", ctx)
-    fills = [f for f in fills if f.status not in ("FAILED", "REVERSED")]
-    imported = tp.already_imported([f.id for f in fills], ReceiptLine)
-    ctx["imported"] = imported
+    back = f"?view={view}&days={days}"
 
-    if request.method == "POST" and request.POST.get("action") == "create":
-        chosen = set(request.POST.getlist("fill"))
-        if request.POST.get("all_new"):
-            chosen = {f.id for f in fills if f.id not in imported}
-        picked = [f for f in fills if f.id in chosen and f.id not in imported]
-        if not picked:
-            messages.error(request, "Pick at least one Tradepost fill that hasn't been imported yet.")
-        else:
+    def do_sync(refresh=True):
+        try:
+            new, upd = tp.sync_fills(client, since=timezone.now() - timezone.timedelta(days=days))
+        except tp.TradepostError as e:
+            ctx["error"] = str(e)
+            return False
+        linked = tp.link_logged_fills(Receipt, ReceiptLine)
+        n = 0
+        if refresh and ctx["shippo"]:
+            provider = get_provider("shippo")
+            for fill in TradepostFill.objects.filter(dismissed=False).exclude(packages=[]):
+                if _fill_needs_refresh(fill):
+                    n += tp.refresh_fill_tracking(fill, provider)
+        ctx["sync_note"] = (f"Synced with Tradepost: {new} new fill{'s' if new != 1 else ''}, {upd} updated"
+                            + (f", {linked} matched to orders you already logged" if linked else "")
+                            + (f", tracking refreshed on {n} package{'s' if n != 1 else ''}" if n else "") + ".")
+        return True
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        ids = request.POST.getlist("fill")
+        chosen = TradepostFill.objects.filter(execution_id__in=ids)
+        if action == "sync":
+            if do_sync():
+                messages.success(request, ctx["sync_note"])
+            else:
+                messages.error(request, ctx["error"])
+            return redirect(request.path + back)
+        if action == "dismiss":
+            n = chosen.filter(receipt__isnull=True).update(dismissed=True)
+            messages.success(request, f"Hidden {n} fill{'s' if n != 1 else ''} — they won't be offered for logging again.")
+            return redirect(request.path + back)
+        if action == "restore":
+            n = chosen.update(dismissed=False)
+            messages.success(request, f"Restored {n} fill{'s' if n != 1 else ''}.")
+            return redirect(request.path + back)
+        if action == "unlink":
+            n = chosen.filter(receipt__isnull=False).update(receipt=None)
+            messages.success(request, f"Unlinked {n} fill{'s' if n != 1 else ''} from their supplier orders.")
+            return redirect(request.path + back)
+        if action == "link":
+            fill = TradepostFill.objects.filter(execution_id=request.POST.get("fill_id")).first()
+            num = (request.POST.get("rcv") or "").upper().replace("RCV-", "").replace("RCV", "").strip()
+            receipt = Receipt.objects.filter(pk=int(num)).first() if num.isdigit() else None
+            if fill and receipt:
+                fill.receipt, fill.dismissed = receipt, False
+                fill.save(update_fields=["receipt", "dismissed"])
+                tp.mirror_packages(fill)
+                messages.success(request, f"{fill.order_number} linked to RCV-{receipt.pk}.")
+            else:
+                messages.error(request, "Enter the number of an existing supplier order, e.g. RCV-12.")
+            return redirect(request.path + back)
+        if action == "refresh_tracking":
+            if not ctx["shippo"]:
+                messages.warning(request, "Add a Shippo token in Settings to track packages automatically.")
+                return redirect(request.path + back)
+            provider = get_provider("shippo")
+            qs = chosen if ids else TradepostFill.objects.filter(dismissed=False).exclude(packages=[])
+            n = sum(tp.refresh_fill_tracking(f, provider, force=bool(ids)) for f in qs)
+            messages.success(request, f"Tracking refreshed on {n} package{'s' if n != 1 else ''}.")
+            return redirect(request.path + back)
+        if action == "create":
+            if request.POST.get("all_new"):
+                picked = list(TradepostFill.objects.filter(receipt__isnull=True, dismissed=False)
+                              .exclude(status__in=["FAILED", "REVERSED"]))
+            else:
+                picked = list(chosen.filter(receipt__isnull=True))
+            if not picked:
+                messages.error(request, "Pick at least one Tradepost fill that isn't on a supplier order yet.")
+                return redirect(request.path + back)
             receipt, new_products = tp.build_receipt(picked, request.user, Receipt, ReceiptLine,
                                                      Product, Supplier,
                                                      reference=(request.POST.get("reference") or "").strip())
             log_activity(request.user, "create", receipt)
-            msg = (f"Created RCV-{receipt.pk} from {len(picked)} Tradepost fill"
-                   f"{'s' if len(picked) != 1 else ''}.")
+            msg = f"Created RCV-{receipt.pk} from {len(picked)} Tradepost fill{'s' if len(picked) != 1 else ''}."
             if new_products:
                 msg += (f" {new_products} new product{'s' if new_products != 1 else ''} added — "
                         "check their names, categories and prices.")
             messages.success(request, msg)
             return redirect("receipt_detail", receipt.pk)
 
+    # GET: sync automatically when the cache is empty, stale, or ?sync=1
+    latest = TradepostFill.objects.order_by("-fetched_at").values_list("fetched_at", flat=True).first()
+    ctx["last_sync"] = latest
+    if request.GET.get("sync") == "1" or latest is None or (timezone.now() - latest).total_seconds() > 1800:
+        do_sync()
+        ctx["last_sync"] = timezone.now()
+
+    qs = TradepostFill.objects.select_related("receipt").exclude(status__in=["FAILED", "REVERSED"])
+    if view == "new":
+        qs = qs.filter(receipt__isnull=True, dismissed=False)
+    elif view == "logged":
+        qs = qs.filter(receipt__isnull=False)
+    elif view == "dismissed":
+        qs = qs.filter(dismissed=True)
+    else:
+        qs = qs.filter(dismissed=False)
+    fills = list(qs[:500])
+    from inventory.tracking import carrier_url
     for f in fills:
-        f.product = tp.match_product(f, Product)
-        f.imported = f.id in imported
-    ctx["fills"] = fills if ctx["show_imported"] else [f for f in fills if not f.imported]
-    ctx["n_imported"] = len([f for f in fills if f.imported])
-    ctx["n_new"] = len(fills) - ctx["n_imported"]
-    ctx["total_new"] = sum((f.line_total for f in fills if not f.imported), Decimal("0"))
+        for p in f.packages or []:
+            p["url"] = carrier_url(p.get("carrier"), p.get("tracking"))
+    ctx["fills"] = fills
+    allq = TradepostFill.objects.exclude(status__in=["FAILED", "REVERSED"])
+    ctx["n_new"] = allq.filter(receipt__isnull=True, dismissed=False).count()
+    ctx["n_logged"] = allq.filter(receipt__isnull=False).count()
+    ctx["n_dismissed"] = allq.filter(dismissed=True).count()
+    ctx["total_new"] = sum((f.line_total for f in allq.filter(receipt__isnull=True, dismissed=False)), Decimal("0"))
     return render(request, "inventory/receipt_tradepost.html", ctx)
+
+
+def _fill_needs_refresh(fill, max_age_minutes=55):
+    """Refresh when any undelivered package hasn't been checked in the last hour."""
+    from datetime import datetime
+    for p in fill.packages or []:
+        if p.get("status") == "DELIVERED":
+            continue
+        chk = p.get("checked_at")
+        if not chk:
+            return True
+        try:
+            if (timezone.now() - datetime.fromisoformat(chk)).total_seconds() > max_age_minutes * 60:
+                return True
+        except ValueError:
+            return True
+    return False
 
 
 def _next_import_sku():

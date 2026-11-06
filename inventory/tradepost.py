@@ -39,6 +39,7 @@ _FILL_FIELDS = """
   asset { name }
   key { name }
   pnl { boughtQuantity buyUnitPriceCents buyFeesCents }
+  transfers { id status shipmentGroup { id shippingLabels { id trackingCode carrier currentStatus estimatedDeliveryDate updatedAt } } }
 """
 
 _LIST_QUERY = """
@@ -70,6 +71,7 @@ class Fill:
     set_name: str = ""
     condition: str = ""
     tcgplayer_id: int | None = None
+    labels: list = field(default_factory=list)   # [{"tracking", "carrier", "tp_status", "tp_eta"}]
     raw: dict = field(default_factory=dict)
 
     @property
@@ -136,7 +138,7 @@ class TradepostClient:
         fills, after = [], None
         for _ in range(max_pages):
             inp = {"side": "BUY", "executedAfter": since.isoformat().replace("+00:00", "Z"),
-                   "includeProductData": True, "includePnl": True,
+                   "includeProductData": True, "includePnl": True, "includeTransfers": True,
                    "pagination": {"first": page_size}}
             if status:
                 inp["status"] = status
@@ -178,7 +180,19 @@ class TradepostClient:
                 executed = datetime.fromisoformat(row["executedAt"].replace("Z", "+00:00"))
             except ValueError:
                 executed = None
+        labels, seen = [], set()
+        for tr in row.get("transfers") or []:
+            grp = tr.get("shipmentGroup") or {}
+            for lb in grp.get("shippingLabels") or []:
+                code = (lb.get("trackingCode") or "").strip()
+                if not code or code in seen:
+                    continue
+                seen.add(code)
+                eta = lb.get("estimatedDeliveryDate") or ""
+                labels.append({"tracking": code, "carrier": normalize_carrier(lb.get("carrier"), code),
+                               "tp_status": lb.get("currentStatus") or "", "tp_eta": eta[:10] if eta else ""})
         return Fill(
+            labels=labels,
             id=str(row.get("id") or ""), order_number=row.get("orderNumber") or "",
             status=row.get("status") or "", executed_at=executed, quantity=qty,
             unit_cost=(Decimal(unit_cents) / 100).quantize(Decimal("0.0001")),
@@ -187,6 +201,27 @@ class TradepostClient:
             product_name=cfg.get("name") or "", set_name=(row.get("asset") or {}).get("name") or "",
             condition=(row.get("key") or {}).get("name") or "", tcgplayer_id=tcg, raw=row,
         )
+
+
+def normalize_carrier(tp_carrier, tracking=""):
+    """Tradepost's carrier token (UPSDAP, USPS, FEDEX, …) → our carrier key."""
+    from inventory.tracking import guess_carrier
+    c = (tp_carrier or "").strip().upper()
+    if c.startswith("UPS"):
+        return "ups"
+    if c.startswith("USPS"):
+        return "usps"
+    if c.startswith("FEDEX"):
+        return "fedex"
+    if c.startswith("DHL"):
+        return "dhl_express"
+    if c.startswith("ONTRAC"):
+        return "ontrac"
+    if c.startswith("LASERSHIP"):
+        return "lasership"
+    if c.startswith("AMAZON"):
+        return "amazon"
+    return guess_carrier(tracking) or ""
 
 
 def _tcgplayer_id(*sources):
@@ -271,29 +306,152 @@ def product_for_fill(fill, Product, create=True):
     return p, True
 
 
-def already_imported(fill_ids, ReceiptLine):
-    return set(ReceiptLine.all_objects.filter(tradepost_execution_id__in=list(fill_ids))
-               .exclude(receipt__is_deleted=True)
-               .values_list("tradepost_execution_id", flat=True))
+def sync_fills(client, since=None):
+    """Pull fills from Tradepost into TradepostFill rows (upsert). Returns (new, updated)."""
+    from inventory.models import TradepostFill
+    new = updated = 0
+    for f in client.list_buys(since=since):
+        if not f.id:
+            continue
+        # keep our own Shippo results for packages we already know
+        existing = TradepostFill.objects.filter(execution_id=f.id).first()
+        known = {p.get("tracking"): p for p in (existing.packages if existing else [])}
+        packages = []
+        for lb in f.labels:
+            row = dict(known.get(lb["tracking"]) or {})
+            row.update(lb)
+            packages.append(row)
+        fields = dict(order_number=f.order_number, status=f.status, executed_at=f.executed_at,
+                      quantity=f.quantity, unit_cost=f.unit_cost, price_cents=f.price_cents,
+                      fees_cents=f.fees_cents, config_id=f.config_id, product_name=f.product_name[:250],
+                      set_name=f.set_name[:250], condition=f.condition[:40], tcgplayer_id=f.tcgplayer_id,
+                      packages=packages)
+        if existing:
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            existing.save()
+            updated += 1
+        else:
+            TradepostFill.objects.create(execution_id=f.id, **fields)
+            new += 1
+    return new, updated
+
+
+def link_logged_fills(Receipt, ReceiptLine):
+    """Attach unlinked fills to supplier orders you already logged by hand:
+    a receipt whose Supplier invoice # or Reference mentions the Tradepost
+    order number, or a line that was imported from that fill. Returns count."""
+    from django.db.models import Q
+    from inventory.models import TradepostFill
+    linked = 0
+    for fill in TradepostFill.objects.filter(receipt__isnull=True, dismissed=False):
+        receipt = None
+        line = ReceiptLine.objects.filter(tradepost_execution_id=fill.execution_id,
+                                          receipt__is_deleted=False).select_related("receipt").first()
+        if line:
+            receipt = line.receipt
+        elif fill.order_number:
+            receipt = (Receipt.objects.filter(is_deleted=False)
+                       .filter(Q(supplier_invoice_number__icontains=fill.order_number)
+                               | Q(reference__icontains=fill.order_number)
+                               | Q(notes__icontains=fill.order_number))
+                       .order_by("-id").first())
+        if receipt:
+            fill.receipt = receipt
+            fill.save(update_fields=["receipt"])
+            mirror_packages(fill)
+            linked += 1
+    return linked
+
+
+def mirror_packages(fill):
+    """Make sure the linked supplier order has a ReceiptPackage for every
+    Tradepost tracking number on this fill (so the Receiving page and the
+    hourly tracker see them too)."""
+    from inventory.models import ReceiptPackage
+    if not fill.receipt_id:
+        return
+    for p in fill.packages or []:
+        pkg, created = ReceiptPackage.objects.get_or_create(
+            receipt_id=fill.receipt_id, tracking_number=p["tracking"],
+            defaults={"carrier": p.get("carrier") or ""})
+        if created and p.get("status"):
+            _apply_tracking(pkg, p)
+
+
+def _apply_tracking(pkg, p):
+    from datetime import date
+    pkg.status = p.get("status") or ""
+    pkg.detail = (p.get("detail") or "")[:300]
+    pkg.location = (p.get("location") or "")[:150]
+    pkg.eta = date.fromisoformat(p["eta"]) if p.get("eta") else None
+    pkg.checked_at = timezone.now()
+    pkg.save()
+
+
+def refresh_fill_tracking(fill, provider=None, force=False):
+    """Ask Shippo about every package on the fill (skipping ones already
+    delivered). Updates the JSON and, when the fill is logged, the receipt's
+    packages and expected date. Returns number of packages refreshed."""
+    from inventory.tracking import SHIPPO_CARRIERS, fetch_status, sync_expected_date
+    from shipping.providers import ProviderError, ProviderNotConfigured, get_provider
+    if not fill.packages:
+        return 0
+    provider = provider or get_provider("shippo")
+    if not provider.is_configured():
+        return 0
+    n = 0
+    for p in fill.packages:
+        if p.get("status") == "DELIVERED" and not force:
+            continue
+        carrier = p.get("carrier") or normalize_carrier("", p["tracking"])
+        if carrier not in SHIPPO_CARRIERS:
+            continue
+        try:
+            info = fetch_status(carrier, p["tracking"], provider)
+        except (ProviderNotConfigured, ProviderError) as e:
+            p["error"] = str(e)[:200]
+            p["checked_at"] = timezone.now().isoformat()
+            continue
+        p.update({"carrier": carrier, "status": info["status"], "detail": info["detail"],
+                  "location": info["location"], "eta": info["eta"].isoformat() if info["eta"] else "",
+                  "checked_at": timezone.now().isoformat(), "error": ""})
+        n += 1
+    fill.save(update_fields=["packages"])
+    if fill.receipt_id:
+        mirror_packages(fill)
+        by_code = {p["tracking"]: p for p in fill.packages}
+        for pkg in fill.receipt.packages.all():
+            if pkg.tracking_number in by_code and by_code[pkg.tracking_number].get("status"):
+                _apply_tracking(pkg, by_code[pkg.tracking_number])
+        sync_expected_date(fill.receipt)
+    return n
 
 
 def build_receipt(fills, user, Receipt, ReceiptLine, Product, Supplier, reference=""):
-    """One RCV (supplier Tradepost) with one line per fill. Returns (receipt, new_products)."""
+    """One RCV (supplier Tradepost) with one line per TradepostFill; links the
+    fills and copies their tracking numbers. Returns (receipt, new_products)."""
     from django.db import transaction
     supplier, _ = Supplier.objects.get_or_create(name="Tradepost")
     orders = sorted({f.order_number for f in fills if f.order_number})
-    ref = reference or (", ".join(orders)[:100] if orders else "Tradepost")
+    joined = ", ".join(orders)
     dates = [f.executed_at for f in fills if f.executed_at]
     with transaction.atomic():
         receipt = Receipt.objects.create(
-            supplier=supplier, reference=ref, created_by=user,
+            supplier=supplier, reference=(reference or joined or "Tradepost")[:100],
+            supplier_invoice_number=joined[:100], created_by=user,
             date=timezone.localtime(min(dates)).date() if dates else timezone.localdate(),
-            notes="Imported from Tradepost: " + ", ".join(orders))
+            notes="Imported from Tradepost: " + joined)
         new_products = 0
         for f in fills:
             product, created = product_for_fill(f, Product)
             new_products += created
             ReceiptLine.objects.create(receipt=receipt, product=product, qty=f.quantity,
-                                       unit_cost=f.unit_cost, tradepost_execution_id=f.id,
+                                       unit_cost=f.unit_cost, tradepost_execution_id=f.execution_id,
                                        tradepost_order_number=f.order_number)
+            f.receipt = receipt
+            f.save(update_fields=["receipt"])
+            mirror_packages(f)
+        from inventory.tracking import sync_expected_date
+        sync_expected_date(receipt)
     return receipt, new_products
