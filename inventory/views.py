@@ -536,6 +536,61 @@ def receipt_import(request):
     return render(request, "inventory/receipt_import.html", ctx)
 
 
+@module_required("receiving")
+def receipt_tradepost(request):
+    """List Tradepost fills we bought; turn the selected ones into one RCV."""
+    from core.models import CompanySettings
+    from inventory import tradepost as tp
+    company = CompanySettings.get()
+    client = tp.TradepostClient(company.tradepost_api_key)
+    ctx = {"configured": client.is_configured(), "fills": [], "error": "", "days": 120,
+           "imported": set(), "show_imported": request.GET.get("all") == "1"}
+    if not client.is_configured():
+        return render(request, "inventory/receipt_tradepost.html", ctx)
+    try:
+        days = max(1, min(int(request.GET.get("days") or request.POST.get("days") or 120), 730))
+    except ValueError:
+        days = 120
+    ctx["days"] = days
+    try:
+        fills = client.list_buys(since=timezone.now() - timezone.timedelta(days=days))
+    except tp.TradepostError as e:
+        ctx["error"] = str(e)
+        return render(request, "inventory/receipt_tradepost.html", ctx)
+    fills = [f for f in fills if f.status not in ("FAILED", "REVERSED")]
+    imported = tp.already_imported([f.id for f in fills], ReceiptLine)
+    ctx["imported"] = imported
+
+    if request.method == "POST" and request.POST.get("action") == "create":
+        chosen = set(request.POST.getlist("fill"))
+        if request.POST.get("all_new"):
+            chosen = {f.id for f in fills if f.id not in imported}
+        picked = [f for f in fills if f.id in chosen and f.id not in imported]
+        if not picked:
+            messages.error(request, "Pick at least one Tradepost fill that hasn't been imported yet.")
+        else:
+            receipt, new_products = tp.build_receipt(picked, request.user, Receipt, ReceiptLine,
+                                                     Product, Supplier,
+                                                     reference=(request.POST.get("reference") or "").strip())
+            log_activity(request.user, "create", receipt)
+            msg = (f"Created RCV-{receipt.pk} from {len(picked)} Tradepost fill"
+                   f"{'s' if len(picked) != 1 else ''}.")
+            if new_products:
+                msg += (f" {new_products} new product{'s' if new_products != 1 else ''} added — "
+                        "check their names, categories and prices.")
+            messages.success(request, msg)
+            return redirect("receipt_detail", receipt.pk)
+
+    for f in fills:
+        f.product = tp.match_product(f, Product)
+        f.imported = f.id in imported
+    ctx["fills"] = fills if ctx["show_imported"] else [f for f in fills if not f.imported]
+    ctx["n_imported"] = len([f for f in fills if f.imported])
+    ctx["n_new"] = len(fills) - ctx["n_imported"]
+    ctx["total_new"] = sum((f.line_total for f in fills if not f.imported), Decimal("0"))
+    return render(request, "inventory/receipt_tradepost.html", ctx)
+
+
 def _next_import_sku():
     base = "IMP-"
     n = Product.all_objects.filter(sku__startswith=base).count() + 1

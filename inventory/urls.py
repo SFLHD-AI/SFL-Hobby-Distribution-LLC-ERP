@@ -15,6 +15,7 @@ urlpatterns = [
     path("receiving/", views.receipt_list, name="receipt_list"),
     path("receiving/new/", views.receipt_create, name="receipt_create"),
     path("receiving/import/", views.receipt_import, name="receipt_import"),
+    path("receiving/tradepost/", views.receipt_tradepost, name="receipt_tradepost"),
     path("receiving/<int:pk>/", views.receipt_detail, name="receipt_detail"),
 
     path("cycle-counts/", views.cyclecount_list, name="cyclecount_list"),

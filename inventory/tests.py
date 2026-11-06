@@ -744,3 +744,137 @@ class OrderImportTests(TestCase):
         })
         self.assertEqual(r.status_code, 200)
         self.assertEqual(Receipt.objects.count(), 0)
+
+
+class TradepostImportTests(TestCase):
+    """Drives the Tradepost page with a fake API client (no network)."""
+
+    SAMPLE = [
+        {"id": "aaaa-1", "orderNumber": "TPST-AAAA0001", "takerSide": "BUY", "quantity": 2,
+         "executionPriceCents": 173737, "grossAmountCents": 347474, "status": "SETTLED",
+         "executedAt": "2026-11-01T15:00:00Z", "settledAt": "2026-11-01T15:01:00Z",
+         "assetConfigurationId": "cfg-1",
+         "assetConfiguration": {"id": "cfg-1", "name": "Prismatic Evolutions Booster Bundle",
+                                "externalId": {"TCGPLAYER": "593285"}, "slug": "pe-bundle", "data": {"brand": "Pokemon"}},
+         "asset": {"name": "Scarlet & Violet: Prismatic Evolutions"}, "key": {"name": "MINT"},
+         "pnl": {"boughtQuantity": 2, "buyUnitPriceCents": "176000", "buyFeesCents": "4526"}},
+        {"id": "aaaa-2", "orderNumber": "TPST-AAAA0002", "takerSide": "BUY", "quantity": 13,
+         "executionPriceCents": 3704, "grossAmountCents": 48152, "status": "SETTLING",
+         "executedAt": "2026-11-03T15:00:00Z", "settledAt": None, "assetConfigurationId": "cfg-2",
+         "assetConfiguration": {"id": "cfg-2", "name": "OP-17 Double Pack", "externalId": None},
+         "asset": {"name": "One Piece: OP-17"}, "key": {"name": "MINT"}, "pnl": None},
+        {"id": "aaaa-3", "orderNumber": "TPST-AAAA0003", "takerSide": "BUY", "quantity": 1,
+         "executionPriceCents": 100, "grossAmountCents": 100, "status": "REVERSED",
+         "executedAt": "2026-11-04T15:00:00Z", "assetConfigurationId": "cfg-3",
+         "assetConfiguration": {"id": "cfg-3", "name": "Refunded thing"}, "asset": None, "key": None},
+    ]
+
+    def setUp(self):
+        from unittest import mock
+        from django.contrib.auth.models import User
+        from core.models import CompanySettings
+        from inventory import tradepost as tp
+        self.client.force_login(User.objects.create_superuser("tp", password="x"))
+        c = CompanySettings.get(); c.tradepost_api_key = "tp_live_test"; c.save()
+        # existing product that should match by TCGplayer id
+        self.existing = make_product("PE-BUNDLE", name="Prismatic Evolutions Booster Bundle - Sealed Case",
+                                     tcgplayer_id=593285)
+        parse = tp.TradepostClient.parse_fill
+        self.real_list_buys = tp.TradepostClient.list_buys
+        patcher = mock.patch.object(tp.TradepostClient, "list_buys",
+                                    lambda self, since=None, **kw: [parse(r) for r in TradepostImportTests.SAMPLE])
+        patcher.start(); self.addCleanup(patcher.stop)
+
+    def test_tcgplayer_id_shapes(self):
+        from inventory.tradepost import _tcgplayer_id
+        self.assertEqual(_tcgplayer_id({"TCGPLAYER": "285229"}), 285229)
+        self.assertEqual(_tcgplayer_id('{"TCG_PLAYER_ID": "477236"}'), 477236)
+        self.assertEqual(_tcgplayer_id("666891"), 666891)
+        self.assertEqual(_tcgplayer_id(None, {}, {"brand": "Pokemon"}), None)
+        self.assertEqual(_tcgplayer_id(None, {"TCGPLAYER": ["12", "13"]}), 12)
+
+    def test_parse_fill_uses_fees_in_unit_price_and_tcg_id(self):
+        from inventory.tradepost import TradepostClient
+        f = TradepostClient.parse_fill(self.SAMPLE[0])
+        self.assertEqual(f.unit_cost, Decimal("1760.0000"))
+        self.assertEqual(f.tcgplayer_id, 593285)
+        self.assertEqual(f.line_total, Decimal("3520.00"))
+        g = TradepostClient.parse_fill(self.SAMPLE[1])
+        self.assertEqual(g.unit_cost, Decimal("37.0400"))      # no pnl → cross price
+        self.assertIsNone(g.tcgplayer_id)
+
+    def test_page_lists_new_fills_and_hides_reversed(self):
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.assertIn("TPST-AAAA0001", html)
+        self.assertIn("PE-BUNDLE", html)                 # matched by TCGplayer id
+        self.assertIn("new product", html)               # OP-17 has no match yet
+        self.assertNotIn("TPST-AAAA0003", html)          # reversed fills are not purchases
+
+    def test_create_receipt_from_selected_fills(self):
+        from inventory.models import Receipt
+        r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1", "aaaa-2"]})
+        self.assertEqual(r.status_code, 302)
+        rcv = Receipt.objects.get()
+        self.assertEqual(rcv.supplier.name, "Tradepost")
+        self.assertEqual(rcv.reference, "TPST-AAAA0001, TPST-AAAA0002")
+        lines = {l.tradepost_execution_id: l for l in rcv.lines.all()}
+        self.assertEqual(lines["aaaa-1"].product, self.existing)
+        self.assertEqual(lines["aaaa-1"].unit_cost, Decimal("1760.0000"))
+        self.assertEqual(lines["aaaa-2"].qty, 13)
+        new = lines["aaaa-2"].product
+        self.assertTrue(new.sku.startswith("TP-"))
+        self.assertEqual(new.tradepost_config_id, "cfg-2")
+        self.existing.refresh_from_db()
+        self.assertEqual(self.existing.tradepost_config_id, "cfg-1")   # remembered for next time
+        self.assertFalse(rcv.posted)
+        # second visit: both fills are now flagged imported and hidden by default
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.assertNotIn("TPST-AAAA0001", html)
+        self.assertIn("2 already imported", html)
+        html = self.client.get("/inventory/receiving/tradepost/?all=1").content.decode()
+        self.assertIn("TPST-AAAA0001", html)
+        # importing again does nothing
+        r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1"]})
+        self.assertEqual(Receipt.objects.count(), 1)
+
+    def test_import_all_new(self):
+        from inventory.models import Receipt
+        self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
+        self.assertEqual(Receipt.objects.get().lines.count(), 2)
+
+    def test_unconfigured_shows_setup_steps(self):
+        from core.models import CompanySettings
+        c = CompanySettings.get(); c.tradepost_api_key = ""; c.save()
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.assertIn("API Keys", html)
+
+    def test_client_surfaces_auth_error(self):
+        from unittest import mock
+        from inventory.tradepost import TradepostClient, TradepostError
+        c = TradepostClient("tp_live_bad")
+        fake = mock.Mock(status_code=200); fake.json.return_value = {
+            "data": None, "errors": [{"message": "Authentication required", "path": ["listOrderExecutions"]}]}
+        with mock.patch("inventory.tradepost.requests.post", return_value=fake):
+            with self.assertRaises(TradepostError) as cm:
+                c._query("query { x }", {})
+        self.assertIn("API key", str(cm.exception))
+
+    def test_client_retries_without_external_ids(self):
+        from unittest import mock
+        from inventory.tradepost import TradepostClient
+        c = TradepostClient("tp_live_ok")
+        calls = []
+        def post(url, json, headers, timeout):
+            calls.append(json["query"])
+            m = mock.Mock(status_code=200)
+            if "externalId" in json["query"]:
+                m.status_code = 400
+                m.json.return_value = {"errors": [{"message": "Invalid request. Request ID: x", "code": "INVALID_REQUEST"}]}
+            else:
+                m.json.return_value = {"data": {"listOrderExecutions": {
+                    "orderExecutions": [self.SAMPLE[1]], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}
+            return m
+        with mock.patch("inventory.tradepost.requests.post", side_effect=post):
+            fills = self.real_list_buys(c)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(fills[0].order_number, "TPST-AAAA0002")

@@ -6,6 +6,7 @@
   <div class="flex flex-wrap gap-2">
     <form method="post">{% csrf_token %}<input type="hidden" name="action" value="refresh_tracking">
       <button class="btn-secondary" title="Pull the latest status and estimated delivery date for every open order with a tracking number">↻ Refresh tracking</button></form>
+    <a href="{% url 'receipt_tradepost' %}" class="btn-secondary" title="Pull the fills you bought on Tradepost and turn them into a supplier order">⇣ Tradepost</a>
     <a href="{% url 'receipt_import' %}" class="btn-secondary" title="Paste or upload a Tradepost / distributor order and turn it into a supplier order">⇩ Import an order</a>
     <a href="{% url 'receipt_create' %}" class="btn-primary">+ New supplier order</a>
   </div>

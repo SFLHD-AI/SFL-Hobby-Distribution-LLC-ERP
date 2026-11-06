@@ -18,6 +18,7 @@ class CompanySettingsForm(forms.ModelForm):
                   "default_payment_terms", "low_stock_email_digest", "alert_email",
                   "shipstation_api_key", "shipstation_api_secret", "shippo_api_token", "uship_api_key",
                   "tcgplayer_public_key", "tcgplayer_private_key", "market_price_category",
+                  "tradepost_api_key",
                   "theme",
                   # accounting
                   "fiscal_year_start_month", "accounting_basis_default", "books_start_date",
@@ -33,6 +34,7 @@ class CompanySettingsForm(forms.ModelForm):
             "uship_api_key": forms.PasswordInput(render_value=True),
             "shippo_api_token": forms.PasswordInput(render_value=True),
             "tcgplayer_private_key": forms.PasswordInput(render_value=True),
+            "tradepost_api_key": forms.PasswordInput(render_value=True, attrs={"autocomplete": "off"}),
             "fiscal_year_start_month": forms.Select(choices=MONTH_CHOICES),
             "books_start_date": forms.DateInput(attrs={"type": "date"}),
             "mileage_rate": forms.NumberInput(attrs={"step": "0.001", "min": "0"}),

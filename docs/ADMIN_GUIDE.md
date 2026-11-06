@@ -225,9 +225,29 @@ Headers such as `UPC, Description, Qty, Unit Price, Total` are recognised;
 without headers each line is scanned for a barcode, a quantity (`x4`,
 `Qty: 4`, or a lone number) and the money amounts.
 
-Tradepost's own API is available only to approved partners through their
-Partner Exchange; once SFL has keys and docs, the same importer can be fed
-directly from the API.
+### Tradepost purchases (API)
+
+Receiving → **Tradepost** pulls the fills you bought on Tradepost straight
+from their Partner Exchange API and turns them into supplier orders.
+
+Setup (once): in Tradepost **Terminal → Settings → API Keys** generate a key
+(`tp_live_…`) and paste it into **Settings → Tradepost API key**.
+
+Each visit lists every BUY fill in the look-back window (default 120 days),
+newest first, with the product matched to your catalog by Tradepost product
+ID, then TCGplayer ID, then exact name. Fills already on a supplier order are
+hidden (tick *show already-imported*). Pick fills and **Create supplier order
+from selected**, or **Import all new**: one RCV, supplier "Tradepost",
+one line per fill at the fees-in unit cost Tradepost reports, reference =
+the Tradepost order numbers. Unmatched products are created automatically
+(SKU `TP-<tcgplayer id>`, with the TCGplayer ID set so market prices flow)
+and remembered, so the next fill of the same product matches instantly.
+Refunded / failed fills never appear; a fill can't be imported twice.
+
+Technical notes: single GraphQL endpoint `platform-api.tradepost.co/graphql`,
+header `X-API-Key`, query `listOrderExecutions(side: BUY)` with
+`includeProductData` and `includePnl`, keyset pagination. Code in
+`inventory/tradepost.py`.
 
 ### Supplier bills on Receiving
 

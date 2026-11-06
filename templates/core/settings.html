@@ -175,6 +175,14 @@
     </div>
   </div>
 
+  <div class="card-pad space-y-3">
+    <h3 class="font-semibold text-sm">Tradepost purchases</h3>
+    <p class="text-sm text-slate-500">Generate a key in Tradepost <strong>Terminal → Settings → API Keys</strong> and paste it here. Receiving → <strong>Tradepost</strong> then lists every fill you bought and turns the ones you pick into a supplier order, with products matched by TCGplayer ID.</p>
+    <div class="grid md:grid-cols-2 gap-4">
+      <div class="field"><label>Tradepost API key</label>{{ form.tradepost_api_key }}</div>
+    </div>
+  </div>
+
   <button class="btn-primary">Save settings</button>
 </form>
 <script>

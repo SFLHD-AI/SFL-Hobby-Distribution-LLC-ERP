@@ -94,6 +94,9 @@ class Product(SoftDeleteModel):
     market_low = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     market_updated_at = models.DateTimeField(null=True, blank=True)
     market_error = models.CharField(max_length=200, blank=True)
+    tradepost_config_id = models.CharField(
+        "Tradepost product ID", max_length=40, blank=True, db_index=True,
+        help_text="Tradepost asset-configuration UUID; set automatically when a Tradepost fill is imported")
 
     reorder_point = models.IntegerField(default=0)
     low_stock_alert_muted = models.BooleanField(
@@ -631,6 +634,10 @@ class ReceiptLine(SoftDeleteModel):
     unit_cost = models.DecimalField(max_digits=12, decimal_places=4,
                                     help_text="Supplier unit cost before freight/duties")
     landed_unit_cost = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
+    tradepost_execution_id = models.CharField(
+        max_length=40, blank=True, default="", db_index=True,
+        help_text="Tradepost fill (order execution) this line was imported from — stops double imports")
+    tradepost_order_number = models.CharField(max_length=20, blank=True, default="")
 
     def __str__(self):
         return f"{self.product.sku} x{self.qty} @ {self.unit_cost}"

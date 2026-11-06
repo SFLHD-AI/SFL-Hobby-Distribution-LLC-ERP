@@ -150,6 +150,10 @@ class CompanySettings(models.Model):
     # TCGplayer market prices
     tcgplayer_public_key = models.CharField(max_length=120, blank=True)
     tcgplayer_private_key = models.CharField(max_length=120, blank=True)
+    tradepost_api_key = models.CharField(
+        "Tradepost API key", max_length=120, blank=True,
+        help_text="From Tradepost Terminal → Settings → API Keys (starts with tp_live_). "
+                  "Lets Receiving pull your Tradepost purchases straight into supplier orders.")
     market_price_category = models.CharField(
         max_length=100, default="Sealed TCG Product",
         help_text="Products in this category get a TCGplayer market price (refreshed hourly)")

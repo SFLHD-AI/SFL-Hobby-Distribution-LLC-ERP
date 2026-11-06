@@ -1,0 +1,76 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Tradepost purchases{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
+  <h1 class="page-title">Tradepost purchases</h1>
+  <a href="{% url 'receipt_list' %}" class="text-sm text-indigo-600 hover:underline">← Receiving</a>
+</div>
+
+{% if not configured %}
+<div class="card-pad space-y-2">
+  <p class="text-sm text-slate-700">Connect Tradepost once and your purchases show up here, ready to become supplier orders.</p>
+  <ol class="text-sm text-slate-600 list-decimal ml-5 space-y-1">
+    <li>In Tradepost <strong>Terminal</strong> open <strong>Settings → API Keys</strong> and generate a key (it starts with <code>tp_live_</code>).</li>
+    <li>Paste it into <a href="{% url 'settings_edit' %}" class="text-indigo-600 hover:underline">Settings → Tradepost API key</a> and save.</li>
+    <li>Come back here: every fill you bought is listed, matched to your products by TCGplayer ID.</li>
+  </ol>
+</div>
+{% elif error %}
+<div class="card-pad"><p class="text-sm text-red-700">{{ error }}</p>
+  <p class="text-xs text-slate-500 mt-2">Tradepost's API only answers with a valid key. Nothing was changed.</p></div>
+{% else %}
+<form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
+  <div><label class="text-xs text-slate-500 block mb-1">Look back</label>
+    <select name="days" class="w-full" onchange="this.form.submit()">
+      <option value="30" {% if days == 30 %}selected{% endif %}>30 days</option>
+      <option value="60" {% if days == 60 %}selected{% endif %}>60 days</option>
+      <option value="120" {% if days == 120 %}selected{% endif %}>120 days</option>
+      <option value="365" {% if days == 365 %}selected{% endif %}>1 year</option>
+      <option value="730" {% if days == 730 %}selected{% endif %}>2 years</option>
+    </select></div>
+  <label class="text-sm text-slate-600 inline-flex items-center gap-2"><input type="checkbox" name="all" value="1" {% if show_imported %}checked{% endif %} onchange="this.form.submit()"> show already-imported fills</label>
+  <span class="text-sm text-slate-500 ml-auto">{{ n_new }} new fill{{ n_new|pluralize }} worth ${{ total_new|floatformat:2|intcomma }} · {{ n_imported }} already imported</span>
+</form>
+
+<form method="post" id="tpForm">{% csrf_token %}<input type="hidden" name="action" value="create"><input type="hidden" name="days" value="{{ days }}">
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr>
+      <th class="w-8"><input type="checkbox" id="tpAll" title="Select every new fill"></th>
+      <th>Order #</th><th>Bought</th><th>Product</th><th>Matches</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Total</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {% for f in fills %}
+      <tr class="{% if f.imported %}opacity-60{% endif %}">
+        <td>{% if not f.imported %}<input type="checkbox" name="fill" value="{{ f.id }}" class="tp-pick">{% else %}<span class="text-emerald-600" title="Already on a supplier order">✓</span>{% endif %}</td>
+        <td class="font-mono text-xs">{{ f.order_number }}</td>
+        <td class="whitespace-nowrap">{{ f.executed_at|date:"M j, Y" }}</td>
+        <td><div class="font-medium">{{ f.product_name }}</div>
+            <div class="text-xs text-slate-500">{{ f.set_name }}{% if f.condition %} · {{ f.condition }}{% endif %}{% if f.tcgplayer_id %} · TCG {{ f.tcgplayer_id }}{% endif %}</div></td>
+        <td class="text-sm">{% if f.product %}<a href="{% url 'product_detail' f.product.pk %}" class="text-indigo-600 hover:underline">{{ f.product.sku }}</a>
+            {% else %}<span class="badge bg-amber-100 text-amber-700" title="A product will be created when you import this fill">new product</span>{% endif %}</td>
+        <td class="num">{{ f.quantity }}</td>
+        <td class="num">${{ f.unit_cost|floatformat:2|intcomma }}{% if f.fees_cents %}<div class="text-[10px] text-slate-400">fees in</div>{% endif %}</td>
+        <td class="num font-medium">${{ f.line_total|floatformat:2|intcomma }}</td>
+        <td><span class="badge {% if f.status == 'SETTLED' %}bg-emerald-100 text-emerald-700{% elif f.status == 'IN_DISPUTE' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ f.status|lower|capfirst }}</span></td>
+      </tr>
+    {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">No {% if not show_imported %}new {% endif %}Tradepost purchases in the last {{ days }} days.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% if n_new %}
+<div class="mt-4 card-pad flex flex-wrap items-end gap-3">
+  <div><label class="text-xs text-slate-500 block mb-1">Reference on the supplier order <span class="text-slate-400">(optional — defaults to the Tradepost order numbers)</span></label>
+    <input type="text" name="reference" class="w-72"></div>
+  <button class="btn-primary">Create supplier order from selected</button>
+  <button class="btn-secondary" name="all_new" value="1" onclick="return confirm('Create one supplier order with every new fill listed?')">Import all {{ n_new }} new</button>
+  <span class="text-xs text-slate-500">Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you.</span>
+</div>
+{% endif %}
+</form>
+<script>
+  const all = document.getElementById("tpAll");
+  if (all) all.addEventListener("change", () => document.querySelectorAll(".tp-pick").forEach(c => { c.checked = all.checked; }));
+</script>
+{% endif %}
+{% endblock %}
