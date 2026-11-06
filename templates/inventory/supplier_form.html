@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{% if supplier %}{{ supplier.name }}{% else %}New supplier{% endif %}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
+  <h1 class="page-title">{% if supplier %}Edit supplier{% else %}New supplier{% endif %}</h1>
+  <a href="{% url 'supplier_list' %}" class="text-sm text-indigo-600 hover:underline">← Suppliers</a>
+</div>
+<div class="grid lg:grid-cols-3 gap-4">
+  <form method="post" class="card-pad space-y-3 lg:col-span-2">{% csrf_token %}
+    {% if next %}<input type="hidden" name="next" value="{{ next }}">{% endif %}
+    {% for field in form %}
+      <div class="field"><label>{{ field.label }}</label>{{ field }}
+        {% for err in field.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+    {% endfor %}
+    <p class="text-xs text-slate-500">Renaming changes the name on every past and future order from this supplier.</p>
+    <button class="btn-primary">{% if supplier %}Save{% else %}Add supplier{% endif %}</button>
+  </form>
+  {% if supplier %}
+  <div class="space-y-4">
+    <div class="card-pad">
+      <h2 class="font-semibold mb-2">Recent orders</h2>
+      {% for r in orders %}
+        <div class="flex justify-between text-sm py-1 border-b border-slate-100 last:border-0">
+          <a href="{% url 'receipt_detail' r.pk %}" class="text-indigo-600 hover:underline">RCV-{{ r.pk }}</a>
+          <span class="text-slate-500">{{ r.date|date:"M j, Y" }}</span>
+          <span>${{ r.bill_total|floatformat:2|intcomma }}</span></div>
+      {% empty %}<p class="text-sm text-slate-400">No orders yet.</p>{% endfor %}
+    </div>
+    {% if others %}
+    <form method="post" class="card-pad space-y-2" onsubmit="return confirm('Move every order from “{{ supplier.name }}” to the chosen supplier and retire this one? This cannot be undone.')">{% csrf_token %}
+      <input type="hidden" name="action" value="merge">
+      <h2 class="font-semibold">Merge duplicate</h2>
+      <p class="text-xs text-slate-500">Typed the same supplier twice? Move all of this supplier's orders into another one and retire this record.</p>
+      <select name="into" class="w-full"><option value="">— merge “{{ supplier.name }}” into —</option>
+        {% for o in others %}<option value="{{ o.pk }}">{{ o.name }}</option>{% endfor %}</select>
+      <button class="btn-secondary w-full justify-center">Merge</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

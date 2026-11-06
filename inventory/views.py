@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from core.csvutils import csv_response
 from core.models import log_activity
 from core.roles import can_see_costs, module_required
-from inventory.forms import (ReceiptBillForm, ReceiptPackageForm, AdjustmentForm, CycleCountForm, PriceListForm,
+from inventory.forms import (ReceiptBillForm, ReceiptPackageForm, SupplierForm, AdjustmentForm, CycleCountForm, PriceListForm,
                              PriceListItemForm, ProductForm, ReceiptForm,
                              ReceiptLineForm)
 from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
@@ -359,6 +359,51 @@ def product_labels(request):
 # ---------------------------------------------------------------------------
 # Receiving (supplier orders)
 # ---------------------------------------------------------------------------
+@module_required("receiving")
+def supplier_list(request):
+    from django.db.models import Count, Max
+    suppliers = (Supplier.objects.annotate(n_orders=Count("receipts", filter=models.Q(receipts__is_deleted=False)),
+                                           last_order=Max("receipts__date"))
+                 .order_by("name"))
+    rows = []
+    for sup in suppliers:
+        open_bills = [r for r in sup.receipts.filter(is_deleted=False, posted=True)
+                      .prefetch_related("lines", "supplier_payments", "adjustments") if not r.is_paid]
+        rows.append({"s": sup, "owed": sum((r.balance_due for r in open_bills), Decimal("0")),
+                     "n_unpaid": len(open_bills)})
+    return render(request, "inventory/supplier_list.html", {"rows": rows})
+
+
+@module_required("receiving")
+def supplier_edit(request, pk=None):
+    supplier = get_object_or_404(Supplier, pk=pk) if pk else None
+    form = SupplierForm(request.POST or None, instance=supplier)
+    others = Supplier.objects.exclude(pk=pk).order_by("name") if supplier else []
+    if request.method == "POST" and request.POST.get("action") == "merge" and supplier:
+        target = Supplier.objects.filter(pk=request.POST.get("into")).exclude(pk=supplier.pk).first()
+        if not target:
+            messages.error(request, "Pick the supplier to merge into.")
+            return redirect("supplier_edit", supplier.pk)
+        from django.db import transaction
+        with transaction.atomic():
+            n = Receipt.all_objects.filter(supplier=supplier).update(supplier=target)
+            supplier.is_deleted, supplier.deleted_at = True, timezone.now()
+            supplier.save(update_fields=["is_deleted", "deleted_at"])
+        log_activity(request.user, "merge", target, note=f"Merged supplier {supplier.name} ({n} orders) into {target.name}")
+        messages.success(request, f"Merged “{supplier.name}” into “{target.name}” — {n} order{'s' if n != 1 else ''} moved.")
+        return redirect("supplier_edit", target.pk)
+    if request.method == "POST" and request.POST.get("action") != "merge" and form.is_valid():
+        old = supplier.name if supplier else None
+        supplier = form.save()
+        log_activity(request.user, "update" if old else "create", supplier,
+                     changes={"name": [old, supplier.name]} if old and old != supplier.name else None)
+        messages.success(request, f"Supplier “{supplier.name}” saved." if old else f"Supplier “{supplier.name}” added.")
+        return redirect(request.POST.get("next") or "supplier_list")
+    return render(request, "inventory/supplier_form.html", {
+        "form": form, "supplier": supplier, "others": others, "next": request.GET.get("next") or "",
+        "orders": supplier.receipts.filter(is_deleted=False).order_by("-date", "-id")[:25] if supplier else []})
+
+
 @module_required("receiving")
 def receipt_list(request):
     if request.method == "POST" and request.POST.get("action") == "refresh_tracking":

@@ -18,7 +18,7 @@
     <h2 class="font-semibold mb-3">Header</h2>
     {% if receipt.posted %}
       <dl class="text-sm space-y-1.5">
-        <div class="flex justify-between"><dt class="text-slate-500">Supplier</dt><dd>{{ receipt.supplier|default:"—" }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">Supplier</dt><dd>{% if receipt.supplier %}<a href="{% url 'supplier_edit' receipt.supplier.pk %}?next={{ request.path|urlencode }}" class="text-indigo-600 hover:underline" title="Edit this supplier's name and details">{{ receipt.supplier }}</a>{% else %}—{% endif %}</dd></div>
         <div class="flex justify-between"><dt class="text-slate-500">Ordered</dt><dd>{{ receipt.date }}</dd></div>
         <div class="flex justify-between"><dt class="text-slate-500">Received</dt><dd>{{ receipt.posted_at|date:"M j, Y g:i A" }}</dd></div>
         <div class="flex justify-between"><dt class="text-slate-500">Reference</dt><dd>{{ receipt.reference|default:"—" }}</dd></div>

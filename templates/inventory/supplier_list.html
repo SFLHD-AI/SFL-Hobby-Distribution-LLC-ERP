@@ -1,0 +1,29 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Suppliers{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
+  <h1 class="page-title">Suppliers</h1>
+  <div class="flex gap-2">
+    <a href="{% url 'receipt_list' %}" class="btn-secondary">← Receiving</a>
+    <a href="{% url 'supplier_create' %}" class="btn-primary">+ New supplier</a>
+  </div>
+</div>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Supplier</th><th>Contact</th><th class="num">Orders</th><th>Last order</th><th class="num">Unpaid bills</th><th class="num">You owe</th><th></th></tr></thead>
+    <tbody>
+    {% for row in rows %}
+      <tr>
+        <td><a href="{% url 'supplier_edit' row.s.pk %}" class="text-indigo-600 font-medium hover:underline">{{ row.s.name }}</a></td>
+        <td class="text-sm text-slate-600">{{ row.s.contact_name }}{% if row.s.email %} · {{ row.s.email }}{% endif %}{% if row.s.phone %} · {{ row.s.phone }}{% endif %}</td>
+        <td class="num">{{ row.s.n_orders }}</td>
+        <td>{{ row.last_order|date:"M j, Y"|default:"—" }}</td>
+        <td class="num">{% if row.n_unpaid %}{{ row.n_unpaid }}{% else %}<span class="text-slate-400">—</span>{% endif %}</td>
+        <td class="num {% if row.owed > 0 %}font-semibold{% endif %}">${{ row.owed|floatformat:2|intcomma }}</td>
+        <td><a href="{% url 'supplier_edit' row.s.pk %}" class="text-sm text-indigo-600 hover:underline">Edit</a></td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No suppliers yet — they are created when you log a supplier order.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

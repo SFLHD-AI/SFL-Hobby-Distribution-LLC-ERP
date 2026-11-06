@@ -441,7 +441,10 @@ def build_receipt(fills, user, Receipt, ReceiptLine, Product, Supplier, referenc
     """One RCV (supplier Tradepost) with one line per TradepostFill; links the
     fills and copies their tracking numbers. Returns (receipt, new_products)."""
     from django.db import transaction
-    supplier, _ = Supplier.objects.get_or_create(name="Tradepost")
+    supplier = (Supplier.objects.filter(name__iexact="Tradepost").first()
+                or Supplier.objects.filter(name__icontains="tradepost").first())
+    if supplier is None:
+        supplier = Supplier.objects.create(name="Tradepost")
     orders = sorted({f.order_number for f in fills if f.order_number})
     joined = ", ".join(orders)
     dates = [f.executed_at for f in fills if f.executed_at]

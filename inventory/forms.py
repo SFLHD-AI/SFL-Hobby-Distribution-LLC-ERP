@@ -108,6 +108,23 @@ class AdjustmentForm(forms.ModelForm):
         fields = ["qty_delta", "reason", "unit_cost", "note"]
 
 
+class SupplierForm(forms.ModelForm):
+    class Meta:
+        model = Supplier
+        fields = ["name", "contact_name", "email", "phone", "notes"]
+        widgets = {"notes": forms.Textarea(attrs={"rows": 3})}
+
+    def clean_name(self):
+        name = (self.cleaned_data.get("name") or "").strip()
+        if not name:
+            raise forms.ValidationError("Give the supplier a name.")
+        dup = Supplier.objects.filter(name__iexact=name).exclude(pk=self.instance.pk).first()
+        if dup:
+            raise forms.ValidationError(f"There is already a supplier called “{dup.name}” — "
+                                        "open it instead, or merge this one into it below.")
+        return name
+
+
 class ReceiptForm(forms.ModelForm):
     new_supplier = forms.CharField(required=False, label="…or new supplier")
 

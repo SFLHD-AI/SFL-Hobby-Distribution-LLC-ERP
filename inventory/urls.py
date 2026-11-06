@@ -13,6 +13,9 @@ urlpatterns = [
     path("<int:pk>/mute-low-stock/", views.toggle_low_stock_mute, name="toggle_low_stock_mute"),
 
     path("receiving/", views.receipt_list, name="receipt_list"),
+    path("suppliers/", views.supplier_list, name="supplier_list"),
+    path("suppliers/new/", views.supplier_edit, name="supplier_create"),
+    path("suppliers/<int:pk>/", views.supplier_edit, name="supplier_edit"),
     path("receiving/new/", views.receipt_create, name="receipt_create"),
     path("receiving/import/", views.receipt_import, name="receipt_import"),
     path("receiving/tradepost/", views.receipt_tradepost, name="receipt_tradepost"),

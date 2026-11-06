@@ -300,6 +300,15 @@ happened after the fact. The order stays received either way.
 
 The Receiving list shows *Refund due* on orders with money coming back.
 
+### Suppliers
+
+Receiving → **Suppliers** lists every supplier with order count, last
+order, unpaid bills and what you owe. Open one to rename it (the new name
+shows on every past and future order), add contact details, or **merge**
+a duplicate into another supplier (its orders move, the duplicate is
+retired). The supplier name on any received order links straight to its
+edit page and brings you back afterwards.
+
 ### Supplier bills on Receiving
 
 A supplier order (Receiving) is also the supplier's **bill**. On the

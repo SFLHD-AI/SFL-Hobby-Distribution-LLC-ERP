@@ -1174,3 +1174,48 @@ class ReceiptAdjustmentTests(TestCase):
         inc = j.income_statement(today - timedelta(days=30), today)
         adj_rows = [r for r in inc["cogs"] if r["account"].code == "5200"]
         self.assertEqual(sum(r["amount"] for r in adj_rows), Decimal("172.00"))
+
+
+class SupplierPagesTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Supplier
+        self.client.force_login(User.objects.create_superuser("sup", password="x"))
+        self.a = Supplier.objects.create(name="Tradepost")
+        self.b = Supplier.objects.create(name="Trade Post (dupe)")
+        self.r = Receipt.objects.create(supplier=self.b, reference="x")
+
+    def test_rename_supplier(self):
+        html = self.client.get("/inventory/suppliers/").content.decode()
+        self.assertIn("Trade Post (dupe)", html)
+        r = self.client.post(f"/inventory/suppliers/{self.b.pk}/", {
+            "name": "TX-FYE (DN)", "contact_name": "Dan", "email": "", "phone": "", "notes": ""})
+        self.assertEqual(r.status_code, 302)
+        self.b.refresh_from_db()
+        self.assertEqual(self.b.name, "TX-FYE (DN)")
+        self.r.refresh_from_db()
+        self.assertEqual(str(self.r.supplier), "TX-FYE (DN)")
+
+    def test_rename_to_existing_name_is_refused(self):
+        r = self.client.post(f"/inventory/suppliers/{self.b.pk}/", {"name": "tradepost", "contact_name": "", "email": "", "phone": "", "notes": ""})
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("already a supplier", r.content.decode())
+
+    def test_merge_moves_orders(self):
+        from inventory.models import Supplier
+        r = self.client.post(f"/inventory/suppliers/{self.b.pk}/", {"action": "merge", "into": self.a.pk})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.supplier, self.a)
+        self.assertFalse(Supplier.objects.filter(pk=self.b.pk).exists())        # retired (soft-deleted)
+        self.assertTrue(Supplier.all_objects.filter(pk=self.b.pk).exists())
+
+    def test_receipt_detail_links_to_supplier_and_back(self):
+        self.r.supplier = self.a; self.r.save()
+        from inventory.models import ReceiptLine
+        p = make_product("S-1"); ReceiptLine.objects.create(receipt=self.r, product=p, qty=1, unit_cost=Decimal("1"))
+        self.r.post()
+        html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
+        self.assertIn(f"/inventory/suppliers/{self.a.pk}/?next=", html)
+        r = self.client.post(f"/inventory/suppliers/{self.a.pk}/", {"name": "Tradepost LLC", "contact_name": "", "email": "", "phone": "", "notes": "", "next": f"/inventory/receiving/{self.r.pk}/"})
+        self.assertEqual(r["Location"], f"/inventory/receiving/{self.r.pk}/")
