@@ -638,3 +638,47 @@ class MarketPriceTests(TestCase):
         self.p.refresh_from_db()
         self.assertEqual(self.p.tcgplayer_id, 777)
         self.assertEqual(self.p.market_price, Decimal("50.00"))
+
+
+class ReceivingListExpandSortTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine, Supplier
+        self.client.force_login(User.objects.create_superuser("rcvlist", password="x"))
+        a = Supplier.objects.create(name="Alpha Cards")
+        z = Supplier.objects.create(name="Zeta Hobby")
+        p1 = make_product("RL-1")
+        p2 = make_product("RL-2")
+        self.r1 = Receipt.objects.create(supplier=z, reference="B")
+        ReceiptLine.objects.create(receipt=self.r1, product=p1, qty=3, unit_cost=Decimal("10.00"))
+        self.r2 = Receipt.objects.create(supplier=a, reference="A")
+        ReceiptLine.objects.create(receipt=self.r2, product=p2, qty=5, unit_cost=Decimal("100.00"))
+
+    def test_rows_expand_to_show_lines(self):
+        html = self.client.get("/inventory/receiving/").content.decode()
+        self.assertIn('id="expandAll"', html)
+        self.assertIn(f'id="rcv-lines-{self.r1.pk}"', html)
+        self.assertIn("RL-1", html)
+        self.assertIn("$10.00", html)
+        self.assertIn("$30.00", html)        # line total 3 x 10
+        self.assertIn("$500.00", html)       # line total 5 x 100
+
+    def _order(self, qs):
+        html = self.client.get("/inventory/receiving/" + qs).content.decode()
+        return html.index(f"RCV-{self.r1.pk}") < html.index(f"RCV-{self.r2.pk}")
+
+    def test_sort_columns(self):
+        self.assertFalse(self._order(""))                      # newest (r2) first by default
+        self.assertTrue(self._order("?sort=id&dir=asc"))
+        self.assertFalse(self._order("?sort=supplier&dir=asc"))   # Alpha before Zeta
+        self.assertTrue(self._order("?sort=supplier&dir=desc"))
+        self.assertTrue(self._order("?sort=merch&dir=asc"))       # $30 before $500
+        self.assertFalse(self._order("?sort=merch&dir=desc"))
+        self.assertFalse(self._order("?sort=reference&dir=asc"))  # A before B
+        self.assertFalse(self._order("?sort=bogus"))              # falls back to newest first
+
+    def test_sort_keeps_search_and_filter(self):
+        html = self.client.get("/inventory/receiving/?q=RL&status=open").content.decode()
+        self.assertIn("q=RL", html)
+        self.assertIn("status=open", html)
+        self.assertIn("sort=merch", html)

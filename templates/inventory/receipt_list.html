@@ -23,12 +23,20 @@
   <a href="?status=unpaid" class="btn-secondary {% if request.GET.status == 'unpaid' %}!bg-slate-200{% endif %}">Unpaid bills</a>
 </div>
 <div class="card overflow-x-auto">
-  <table class="tbl">
-    <thead><tr><th>#</th><th>Supplier</th><th>Ordered</th><th>Expected</th><th>Ref</th>
-      <th class="num">Merch $</th><th class="num">Freight+duty</th><th>Status</th><th>Bill</th></tr></thead>
+  <table class="tbl" id="rcvTable">
+    <thead><tr>
+      <th class="w-10"><button type="button" id="expandAll" class="btn-secondary !px-2 !py-1 text-xs whitespace-nowrap" title="Show the products, quantities and costs in every order">⤢ Expand all</button></th>
+      {% for key, label, numeric in columns %}
+      <th class="{% if numeric %}num{% endif %}">
+        <a href="?{{ sort_base }}{% if sort_base %}&amp;{% endif %}sort={{ key }}&amp;dir={% if sort == key and dir == 'desc' %}asc{% else %}desc{% endif %}"
+           class="inline-flex items-center gap-1 hover:text-indigo-600 whitespace-nowrap {% if sort == key %}text-indigo-700{% endif %}" title="Sort by {{ label }}">
+          {{ label }}<span class="text-[10px] {% if sort != key %}text-slate-300{% endif %}">{% if sort == key and dir == 'asc' %}▲{% else %}▼{% endif %}</span></a></th>
+      {% endfor %}
+    </tr></thead>
     <tbody>
     {% for r in receipts %}
-      <tr>
+      <tr class="rcv-row" data-rcv="{{ r.pk }}">
+        <td><button type="button" class="rcv-toggle inline-flex items-center justify-center w-7 h-7 rounded-md bg-indigo-700 text-white font-bold leading-none hover:bg-indigo-800" aria-expanded="false" aria-controls="rcv-lines-{{ r.pk }}" title="Show products in this order">+</button></td>
         <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'receipt_detail' r.pk %}">RCV-{{ r.pk }}</a></td>
         <td>{{ r.supplier|default:"—" }}</td>
         <td>{{ r.date|date:"M j, Y" }}</td>
@@ -50,8 +58,64 @@
                 <button class="text-xs text-emerald-700 hover:underline">Mark paid</button></form>
             {% else %}<span class="text-xs text-slate-400">—</span>{% endif %}</td>
       </tr>
-    {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">No supplier orders yet.</td></tr>{% endfor %}
+      <tr class="rcv-lines hidden bg-slate-50" id="rcv-lines-{{ r.pk }}">
+        <td></td>
+        <td colspan="9" class="!py-2">
+          {% if r.lines.all %}
+          <table class="w-full text-sm">
+            <thead><tr class="text-xs uppercase text-slate-500">
+              <th class="text-left py-1 pr-3">SKU</th><th class="text-left py-1 pr-3">Product</th>
+              <th class="text-right py-1 pr-3">Qty</th><th class="text-right py-1 pr-3">Unit cost</th>
+              {% if r.posted %}<th class="text-right py-1 pr-3">Landed unit</th>{% endif %}
+              <th class="text-right py-1">Line total</th></tr></thead>
+            <tbody>
+            {% for l in r.lines.all %}
+              <tr class="border-t border-slate-200">
+                <td class="py-1 pr-3 font-mono text-xs"><a href="{% url 'product_detail' l.product.pk %}" class="text-indigo-600 hover:underline">{{ l.product.sku }}</a></td>
+                <td class="py-1 pr-3">{{ l.product.name }}</td>
+                <td class="py-1 pr-3 text-right font-medium">{{ l.qty|intcomma }}</td>
+                <td class="py-1 pr-3 text-right">${{ l.unit_cost|floatformat:2|intcomma }}</td>
+                {% if r.posted %}<td class="py-1 pr-3 text-right">{% if l.landed_unit_cost %}${{ l.landed_unit_cost|floatformat:2|intcomma }}{% else %}—{% endif %}</td>{% endif %}
+                <td class="py-1 text-right font-medium">${{ l.line_total|floatformat:2|intcomma }}</td>
+              </tr>
+            {% endfor %}
+            </tbody>
+            <tfoot><tr class="border-t-2 border-slate-300 font-semibold">
+              <td class="py-1 pr-3" colspan="2">{{ r.lines.all|length }} product{{ r.lines.all|length|pluralize }}</td>
+              <td class="py-1 pr-3 text-right">{{ r.total_qty|intcomma }}</td>
+              <td class="py-1 pr-3" {% if r.posted %}colspan="2"{% endif %}></td>
+              <td class="py-1 text-right">${{ r.merchandise_total|floatformat:2|intcomma }}</td>
+            </tr></tfoot>
+          </table>
+          {% else %}<span class="text-sm text-slate-400">No products on this order yet — <a href="{% url 'receipt_detail' r.pk %}" class="text-indigo-600 hover:underline">add some</a>.</span>{% endif %}
+        </td>
+      </tr>
+    {% empty %}<tr><td colspan="10" class="text-center text-slate-400 py-8">No supplier orders yet.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>
+<script>
+(function () {
+  const table = document.getElementById("rcvTable"); if (!table) return;
+  const all = document.getElementById("expandAll");
+  function setRow(btn, open) {
+    const target = document.getElementById(btn.getAttribute("aria-controls"));
+    if (!target) return;
+    target.classList.toggle("hidden", !open);
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    btn.textContent = open ? "−" : "+";
+    btn.title = open ? "Hide products" : "Show products in this order";
+  }
+  function anyClosed() { return Array.from(table.querySelectorAll(".rcv-toggle")).some(b => b.getAttribute("aria-expanded") !== "true"); }
+  function syncAll() { all.textContent = anyClosed() ? "⤢ Expand all" : "⤡ Collapse all"; }
+  table.addEventListener("click", (e) => {
+    const btn = e.target.closest(".rcv-toggle"); if (!btn) return;
+    setRow(btn, btn.getAttribute("aria-expanded") !== "true"); syncAll();
+  });
+  all.addEventListener("click", () => {
+    const open = anyClosed();
+    table.querySelectorAll(".rcv-toggle").forEach(b => setRow(b, open)); syncAll();
+  });
+})();
+</script>
 {% endblock %}

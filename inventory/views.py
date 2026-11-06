@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.db import models
 from django.utils import timezone
+from urllib.parse import urlencode
 from django.shortcuts import get_object_or_404, redirect, render
 
 from core.csvutils import csv_response
@@ -356,7 +357,8 @@ def receipt_list(request):
         else:
             messages.info(request, "No open supplier orders have a tracking number yet.")
         return redirect(request.get_full_path())
-    qs = Receipt.objects.select_related("supplier").prefetch_related("packages")
+    qs = (Receipt.objects.select_related("supplier")
+          .prefetch_related("packages", "lines__product", "supplier_payments"))
     q = (request.GET.get("q") or "").strip()
     if q:
         from django.db import models as dj
@@ -376,9 +378,48 @@ def receipt_list(request):
     elif status == "posted":
         qs = qs.filter(posted=True)
     elif status == "unpaid":
-        qs = [r for r in qs.filter(posted=True).prefetch_related("supplier_payments")
-              if not r.is_paid]
-    return render(request, "inventory/receipt_list.html", {"receipts": qs[:200], "q": q})
+        qs = [r for r in qs.filter(posted=True) if not r.is_paid]
+    receipts = list(qs[:200]) if not isinstance(qs, list) else qs[:200]
+    sort, direction = _receipt_sort(request, receipts)
+    keep = {k: v for k, v in request.GET.items() if k not in ("sort", "dir")}
+    return render(request, "inventory/receipt_list.html", {
+        "receipts": receipts, "q": q, "sort": sort, "dir": direction,
+        "sort_base": urlencode(keep), "columns": RECEIPT_SORT_COLUMNS,
+    })
+
+
+# (key, header label, numeric?) — the sortable columns on the Receiving list
+RECEIPT_SORT_COLUMNS = [
+    ("id", "#", False), ("supplier", "Supplier", False), ("date", "Ordered", False),
+    ("expected", "Expected", False), ("reference", "Ref", False), ("merch", "Merch $", True),
+    ("freight", "Freight+duty", True), ("status", "Status", False), ("bill", "Bill", False),
+]
+
+
+def _receipt_sort(request, receipts):
+    """Sort the (already filtered, ≤200) list in place by ?sort=&dir=."""
+    from datetime import date as _date
+    sort = request.GET.get("sort") or "id"
+    direction = "asc" if request.GET.get("dir") == "asc" else "desc"
+    far = _date.max
+    keys = {
+        "id": lambda r: r.pk,
+        "supplier": lambda r: (r.supplier.name if r.supplier else "").lower(),
+        "date": lambda r: (r.date, r.pk),
+        "expected": lambda r: (r.expected_date or far, r.pk),
+        "reference": lambda r: (r.reference or "").lower(),
+        "merch": lambda r: r.merchandise_total,
+        "freight": lambda r: r.freight_cost + r.duties_cost,
+        # open first, then received (most recent received last)
+        "status": lambda r: (1 if r.posted else 0, r.posted_at or timezone.now(), r.pk),
+        # overdue, then unpaid, then not yet received, then paid
+        "bill": lambda r: ((0 if r.is_overdue else 1 if (r.posted and not r.is_paid) else 2 if not r.posted else 3),
+                           r.due_date or far, r.pk),
+    }
+    if sort not in keys:
+        sort = "id"
+    receipts.sort(key=keys[sort], reverse=(direction == "desc"))
+    return sort, direction
 
 
 @module_required("receiving")

@@ -450,6 +450,10 @@ class Receipt(SoftDeleteModel):
     def landed_total(self):
         return self.merchandise_total + self.freight_cost + self.duties_cost
 
+    @property
+    def total_qty(self):
+        return sum(l.qty for l in self.lines.all())
+
     # --- inbound tracking (aggregate of packages) -----------------------------
     @property
     def tracking_numbers(self):
