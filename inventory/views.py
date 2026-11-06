@@ -153,8 +153,21 @@ def _maybe_refresh_market(request, product):
 
 @module_required("inventory")
 def product_create(request):
-    form = ProductForm(request.POST or None, request.FILES or None)
+    initial, back_fill = {}, None
+    if request.method == "GET" and request.GET.get("tradepost"):
+        from inventory.models import TradepostFill
+        back_fill = TradepostFill.objects.filter(execution_id=request.GET["tradepost"]).first()
+        if back_fill:
+            name = back_fill.product_name
+            if back_fill.set_name and back_fill.set_name.lower() not in name.lower():
+                name = f"{back_fill.set_name} — {name}"
+            initial = {"name": name[:250], "tcgplayer": back_fill.tcgplayer_id or "",
+                       "sku": f"TP-{back_fill.tcgplayer_id}" if back_fill.tcgplayer_id else "",
+                       "default_price": (back_fill.unit_cost * Decimal("1.25")).quantize(Decimal("0.01"))}
+    form = ProductForm(request.POST or None, request.FILES or None, initial=initial)
     if request.method == "POST" and form.is_valid():
+        from inventory.models import TradepostFill
+        fill_id = request.POST.get("tradepost_fill") or ""
         from django.urls import reverse
         from django.utils.html import format_html
         product = form.save()
@@ -177,6 +190,18 @@ def product_create(request):
                              + (f" at ${cost}/unit." if cost is not None else "."))
         else:
             messages.success(request, f"{product.sku} created.")
+        if fill_id:
+            fill = TradepostFill.objects.filter(execution_id=fill_id).first()
+            if fill:
+                fill.matched_product = product
+                fill.save(update_fields=["matched_product"])
+                if fill.config_id:
+                    product.tradepost_config_id = fill.config_id
+                    product.save(update_fields=["tradepost_config_id"])
+                    TradepostFill.objects.filter(config_id=fill.config_id, matched_product__isnull=True)\
+                        .update(matched_product=product)
+                messages.success(request, f"{fill.product_name} is now matched to {product.sku}.")
+                return redirect("receipt_tradepost")
         return redirect("product_detail", product.pk)
     return render(request, "inventory/product_form.html", {"form": form, "product": None})
 
@@ -609,6 +634,29 @@ def receipt_tradepost(request):
             else:
                 messages.error(request, "Enter the number of an existing supplier order, e.g. RCV-12.")
             return redirect(request.path + back)
+        if action == "match":
+            fill = TradepostFill.objects.filter(execution_id=request.POST.get("fill_id")).first()
+            pid = request.POST.get("product") or ""
+            product = Product.objects.filter(pk=int(pid)).first() if pid.isdigit() else None
+            if fill and product:
+                fill.matched_product = product
+                fill.save(update_fields=["matched_product"])
+                # remember it on the product so every later fill of this item matches itself
+                tp.product_for_fill(fill, Product)
+                # apply to the other unlogged fills of the same Tradepost product
+                n = 0
+                if fill.config_id:
+                    n = (TradepostFill.objects.filter(config_id=fill.config_id, matched_product__isnull=True)
+                         .exclude(pk=fill.pk).update(matched_product=product))
+                messages.success(request, f"{fill.product_name} → {product.sku}."
+                                          + (f" Applied to {n} other fill{'s' if n != 1 else ''} of the same item." if n else ""))
+            else:
+                messages.error(request, "Pick a product from the list first.")
+            return redirect(request.path + back)
+        if action == "unmatch":
+            n = chosen.filter(receipt__isnull=True).update(matched_product=None)
+            messages.success(request, f"Cleared the product match on {n} fill{'s' if n != 1 else ''}.")
+            return redirect(request.path + back)
         if action == "refresh_tracking":
             if not ctx["shippo"]:
                 messages.warning(request, "Add a Shippo token in Settings to track packages automatically.")
@@ -626,6 +674,12 @@ def receipt_tradepost(request):
                 picked = list(chosen.filter(receipt__isnull=True))
             if not picked:
                 messages.error(request, "Pick at least one Tradepost fill that isn't on a supplier order yet.")
+                return redirect(request.path + back)
+            unmatched = [f for f in picked if f.product is None]
+            if unmatched:
+                names = ", ".join(f"{f.order_number} ({f.product_name})" for f in unmatched[:5])
+                messages.error(request, f"Match these to a product first — pick one on the row or create it: {names}"
+                                        + (" …" if len(unmatched) > 5 else ""))
                 return redirect(request.path + back)
             receipt, new_products = tp.build_receipt(picked, request.user, Receipt, ReceiptLine,
                                                      Product, Supplier,
@@ -657,6 +711,7 @@ def receipt_tradepost(request):
     else:                                  # "open" (default): anything not closed
         qs = qs.filter(closed=False)
     fills = list(qs[:500])
+    ctx["products"] = Product.objects.filter(active=True).only("pk", "sku", "name", "upc").order_by("sku")
     from inventory.tracking import carrier_url
     for f in fills:
         for p in f.packages or []:

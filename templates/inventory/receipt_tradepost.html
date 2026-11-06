@@ -65,7 +65,20 @@
         <td class="whitespace-nowrap">{{ f.executed_at|date:"M j, Y" }}</td>
         <td><div class="font-medium">{{ f.product_name }}</div>
             <div class="text-xs text-slate-500">{{ f.set_name }}{% if f.condition %} · {{ f.condition }}{% endif %}{% if f.tcgplayer_id %} · TCG {{ f.tcgplayer_id }}{% endif %}
-              {% if f.product %} · <a href="{% url 'product_detail' f.product.pk %}" class="text-indigo-600 hover:underline">{{ f.product.sku }}</a>{% else %} · <span class="text-amber-700">new product on import</span>{% endif %}</div></td>
+              {% if f.product %} · <a href="{% url 'product_detail' f.product.pk %}" class="text-indigo-600 hover:underline">{{ f.product.sku }}</a>{% if f.matched_product_id %} <span class="text-slate-400">(matched by you)</span>{% endif %}{% endif %}</div>
+            {% if not f.product and not f.receipt %}
+            <div class="mt-1 p-2 rounded-md bg-amber-50 border border-amber-200">
+              <div class="text-xs text-amber-800 mb-1">Not in your inventory yet — match it to a product or create one:</div>
+              <div class="flex flex-wrap gap-1 items-center">
+                <select name="match_{{ f.execution_id }}" data-combobox data-combobox-placeholder="Search your products…" class="w-64 text-xs" data-match="{{ f.execution_id }}">
+                  <option value="">— pick a product —</option>
+                  {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name }}</option>{% endfor %}
+                </select>
+                <button type="button" class="btn-secondary !px-2 !py-1 text-xs" data-match-btn="{{ f.execution_id }}">Match</button>
+                <a href="{% url 'product_create' %}?tradepost={{ f.execution_id }}" class="text-xs text-indigo-600 hover:underline whitespace-nowrap">+ create product</a>
+              </div>
+            </div>
+            {% endif %}</td>
         <td class="text-sm">
           {% if f.receipt %}
             <a href="{% url 'receipt_detail' f.receipt.pk %}" class="badge bg-emerald-100 text-emerald-700">RCV-{{ f.receipt.pk }}</a>
@@ -112,15 +125,23 @@
   <span class="mx-2 text-slate-300">|</span>
   {% if view != 'closed' %}<button class="btn-secondary" name="action" value="close" title="Mark the ticked orders closed — done, or old ones you don't need to log. They stay under the Closed tab.">✓ Close selected</button>{% endif %}
   {% if view == 'closed' or view == 'all' %}<button class="btn-secondary" name="action" value="reopen">Reopen selected</button>{% endif %}
+  <button class="btn-secondary" name="action" value="unmatch" title="Forget the product you matched on the ticked fills">Clear match</button>
   {% if view == 'logged' or view == 'all' %}<button class="btn-secondary" name="action" value="unlink" onclick="return confirm('Unlink the ticked fills from their supplier orders? (The orders themselves are kept.)')">Unlink selected</button>{% endif %}
   <button class="btn-secondary" name="action" value="refresh_tracking" title="Re-check the ticked fills' packages with Shippo">📦 Track selected</button>
 </div>
 </form>
+<form method="post" id="matchForm" class="hidden">{% csrf_token %}<input type="hidden" name="action" value="match"><input type="hidden" name="fill_id" id="matchFill"><input type="hidden" name="product" id="matchProduct"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="days" value="{{ days }}"></form>
 <form method="post" id="linkForm" class="hidden">{% csrf_token %}<input type="hidden" name="action" value="link"><input type="hidden" name="fill_id" id="linkFill"><input type="hidden" name="rcv" id="linkRcv"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="days" value="{{ days }}"></form>
-<p class="text-xs text-slate-500 mt-3"><strong>Open</strong> is everything still in play. An order closes by itself when its supplier order is marked received; close anything else by hand (old orders you won't log, for example) and it stays under <strong>Closed</strong>. Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you. <strong>Disputed</strong> fills are logged at the <em>original</em> price and quantity you bought; once Tradepost settles the dispute, record the outcome (damaged write-off or return with the credit) on the supplier order.</p>
+<p class="text-xs text-slate-500 mt-3"><strong>Open</strong> is everything still in play. An order closes by itself when its supplier order is marked received; close anything else by hand (old orders you won't log, for example) and it stays under <strong>Closed</strong>. Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything that doesn't match stays put until you pick a product or create one — nothing is created behind your back. <strong>Disputed</strong> fills are logged at the <em>original</em> price and quantity you bought; once Tradepost settles the dispute, record the outcome (damaged write-off or return with the credit) on the supplier order.</p>
 <script>
   const all = document.getElementById("tpAll");
   if (all) all.addEventListener("change", () => document.querySelectorAll(".tp-pick").forEach(c => { c.checked = all.checked; }));
+  document.querySelectorAll("[data-match-btn]").forEach(b => b.addEventListener("click", () => {
+    const id = b.dataset.matchBtn, sel = document.querySelector('[data-match="' + id + '"]');
+    if (!sel.value) { (sel._comboInput || sel).focus(); return; }
+    document.getElementById("matchFill").value = id; document.getElementById("matchProduct").value = sel.value;
+    document.getElementById("matchForm").submit();
+  }));
   document.querySelectorAll("[data-link-btn]").forEach(b => b.addEventListener("click", () => {
     const id = b.dataset.linkBtn, inp = document.querySelector('[data-link="' + id + '"]');
     if (!inp.value.trim()) { inp.focus(); return; }

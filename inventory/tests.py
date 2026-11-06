@@ -871,7 +871,7 @@ class TradepostImportTests(TestCase):
         html = self.client.get("/inventory/receiving/tradepost/").content.decode()
         self.assertIn("TPST-AAAA0001", html)
         self.assertIn("PE-BUNDLE", html)                      # matched by TCGplayer id
-        self.assertIn("new product on import", html)          # OP-17 has no match yet
+        self.assertIn("Not in your inventory yet", html)      # OP-17 has no match yet
         self.assertNotIn("TPST-AAAA0003", html)               # reversed fills are not purchases
         self.assertIn("1 of 2 delivered", html)               # Shippo said one box landed
         self.assertIn("ETA Tue Nov 10", html)
@@ -901,8 +901,44 @@ class TradepostImportTests(TestCase):
         self.assertNotIn("TPST-AAAA0001", html)
         self.assertIn("TPST-AAAA0002", html)
 
+    def test_unmatched_fill_is_never_auto_created(self):
+        from inventory.models import Receipt, TradepostFill
+        self.client.get("/inventory/receiving/tradepost/")
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.assertIn("Not in your inventory yet", html)
+        self.assertIn(f"?tradepost=aaaa-2", html)
+        r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-2"]}, follow=True)
+        self.assertEqual(Receipt.objects.count(), 0)
+        self.assertEqual(Product.objects.count(), 1)              # nothing created behind your back
+        self.assertIn("Match these to a product first", r.content.decode())
+        # match it to a product by hand → remembered on the product and logs fine
+        op17 = make_product("OP17-DP", name="One Piece OP-17 Double Pack")
+        self.client.post("/inventory/receiving/tradepost/", {"action": "match", "fill_id": "aaaa-2", "product": op17.pk})
+        fill = TradepostFill.objects.get(execution_id="aaaa-2")
+        self.assertEqual(fill.matched_product, op17)
+        op17.refresh_from_db()
+        self.assertEqual(op17.tradepost_config_id, "cfg-2")
+        self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-2"]})
+        self.assertEqual(Receipt.objects.get().lines.get().product, op17)
+
+    def test_create_product_from_fill_prefills_and_matches(self):
+        from inventory.models import TradepostFill
+        self.client.get("/inventory/receiving/tradepost/")
+        html = self.client.get("/inventory/new/?tradepost=aaaa-2").content.decode()
+        self.assertIn("One Piece: OP-17 — OP-17 Double Pack", html)
+        self.assertIn('name="tradepost_fill" value="aaaa-2"', html)
+        r = self.client.post("/inventory/new/?tradepost=aaaa-2", {
+            "sku": "OP17-DP", "name": "OP-17 Double Pack", "default_price": "50.00", "unit_of_measure": "each",
+            "case_pack_qty": "1", "reorder_point": "0", "tradepost_fill": "aaaa-2"})
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r["Location"].endswith("/inventory/receiving/tradepost/"))
+        p = Product.objects.get(sku="OP17-DP")
+        self.assertEqual(TradepostFill.objects.get(execution_id="aaaa-2").matched_product, p)
+        self.assertEqual(p.tradepost_config_id, "cfg-2")
+
     def test_create_receipt_from_selected_fills(self):
         from inventory.models import Receipt, TradepostFill
+        self.op17 = make_product("OP17-DP", name="OP-17 Double Pack")      # exact-name match
         self.client.get("/inventory/receiving/tradepost/")
         r = self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1", "aaaa-2"]})
         self.assertEqual(r.status_code, 302)
@@ -914,9 +950,9 @@ class TradepostImportTests(TestCase):
         self.assertEqual(lines["aaaa-1"].product, self.existing)
         self.assertEqual(lines["aaaa-1"].unit_cost, Decimal("1760.0000"))
         self.assertEqual(lines["aaaa-2"].qty, 13)
-        new = lines["aaaa-2"].product
-        self.assertTrue(new.sku.startswith("TP-"))
-        self.assertEqual(new.tradepost_config_id, "cfg-2")
+        self.assertEqual(lines["aaaa-2"].product, self.op17)
+        self.op17.refresh_from_db()
+        self.assertEqual(self.op17.tradepost_config_id, "cfg-2")
         self.existing.refresh_from_db()
         self.assertEqual(self.existing.tradepost_config_id, "cfg-1")
         self.assertEqual(rcv.packages.count(), 2)
@@ -927,12 +963,14 @@ class TradepostImportTests(TestCase):
 
     def test_log_all_new(self):
         from inventory.models import Receipt
+        make_product("OP17-DP", name="OP-17 Double Pack")
         self.client.get("/inventory/receiving/tradepost/")
         self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
         self.assertEqual(Receipt.objects.get().lines.count(), 2)
 
     def test_close_reopen_and_manual_link(self):
         from inventory.models import Receipt, Supplier, TradepostFill
+        make_product("OP17-DP", name="OP-17 Double Pack")
         self.client.get("/inventory/receiving/tradepost/")
         self.client.post("/inventory/receiving/tradepost/", {"action": "close", "fill": ["aaaa-2"]})
         self.assertTrue(TradepostFill.objects.get(execution_id="aaaa-2").closed)

@@ -295,35 +295,24 @@ def match_product(fill, Product):
     return None
 
 
-def product_for_fill(fill, Product, create=True):
-    """Match, or create a new product named after the Tradepost listing."""
-    p = match_product(fill, Product)
-    if p:
-        changed = False
-        if fill.config_id and not p.tradepost_config_id:
-            p.tradepost_config_id = fill.config_id
-            changed = True
-        if fill.tcgplayer_id and not p.tcgplayer_id:
-            p.tcgplayer_id = fill.tcgplayer_id
-            changed = True
-        if changed:
-            p.save(update_fields=["tradepost_config_id", "tcgplayer_id"])
-        return p, False
-    if not create:
-        return None, False
-    name = fill.product_name or f"Tradepost {fill.order_number}"
-    if fill.set_name and fill.set_name.lower() not in name.lower():
-        name = f"{fill.set_name} — {name}"
-    sku = f"TP-{fill.tcgplayer_id}" if fill.tcgplayer_id else f"TP-{fill.config_id[:8].upper()}"
-    base, n = sku, 1
-    while Product.all_objects.filter(sku=sku).exists():
-        n += 1
-        sku = f"{base}-{n}"
-    p = Product.objects.create(
-        sku=sku, name=name[:250], tcgplayer_id=fill.tcgplayer_id,
-        tradepost_config_id=fill.config_id,
-        default_price=(fill.unit_cost * Decimal("1.25")).quantize(CENTS))
-    return p, True
+def product_for_fill(fill, Product):
+    """The product this fill logs to: the one you matched by hand, else an
+    automatic match. Remembers the Tradepost / TCGplayer ids on the product
+    so the next fill of the same item matches on its own. Never creates
+    products — that is your call, from the Tradepost screen."""
+    p = getattr(fill, "matched_product", None) or match_product(fill, Product)
+    if p is None:
+        return None
+    changed = []
+    if fill.config_id and not p.tradepost_config_id:
+        p.tradepost_config_id = fill.config_id
+        changed.append("tradepost_config_id")
+    if fill.tcgplayer_id and not p.tcgplayer_id:
+        p.tcgplayer_id = fill.tcgplayer_id
+        changed.append("tcgplayer_id")
+    if changed:
+        p.save(update_fields=changed)
+    return p
 
 
 def sync_fills(client, since=None):
@@ -464,8 +453,9 @@ def build_receipt(fills, user, Receipt, ReceiptLine, Product, Supplier, referenc
             notes="Imported from Tradepost: " + joined)
         new_products = 0
         for f in fills:
-            product, created = product_for_fill(f, Product)
-            new_products += created
+            product = product_for_fill(f, Product)
+            if product is None:
+                raise ValueError(f"{f.order_number} ({f.product_name}) is not matched to a product yet.")
             ReceiptLine.objects.create(receipt=receipt, product=product, qty=f.quantity,
                                        unit_cost=f.unit_cost, tradepost_execution_id=f.execution_id,
                                        tradepost_order_number=f.order_number)

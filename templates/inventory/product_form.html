@@ -3,7 +3,8 @@
 {% block content %}
 <h1 class="page-title mb-5">{% if product %}Edit {{ product.sku }}{% else %}New product{% endif %}</h1>
 <form method="post" enctype="multipart/form-data" class="max-w-3xl space-y-6">
-  {% csrf_token %}
+  {% csrf_token %}{% if request.GET.tradepost %}<input type="hidden" name="tradepost_fill" value="{{ request.GET.tradepost }}">
+  <div class="card-pad mb-4 border-l-4 border-indigo-400 text-sm text-slate-700">Creating this product for a Tradepost purchase — the name, TCGplayer ID and a suggested price are filled in from the order. Adjust what you like; after saving you go back to the Tradepost screen with the fill matched.</div>{% endif %}
   {% if form.errors %}<div class="rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3">{{ form.errors }}</div>{% endif %}
   <div class="card-pad space-y-4">
     <div class="grid md:grid-cols-3 gap-4">

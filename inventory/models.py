@@ -842,6 +842,9 @@ class TradepostFill(models.Model):
     packages = models.JSONField(default=list, blank=True)
     receipt = models.ForeignKey(Receipt, null=True, blank=True, on_delete=models.SET_NULL,
                                 related_name="tradepost_fills")
+    matched_product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL,
+                                        related_name="tradepost_fills",
+                                        help_text="Product you matched this fill to by hand")
     closed = models.BooleanField(default=False, db_index=True,
                                  help_text="Done with this order (received, or nothing left to do)")
     fetched_at = models.DateTimeField(auto_now=True)
@@ -864,7 +867,7 @@ class TradepostFill(models.Model):
     def product(self):
         if not hasattr(self, "_product"):
             from inventory.tradepost import match_product
-            self._product = match_product(self, Product)
+            self._product = self.matched_product or match_product(self, Product)
         return self._product
 
     # --- tracking summary (mirrors Receipt.tracking_badge for the fill's own packages) ---

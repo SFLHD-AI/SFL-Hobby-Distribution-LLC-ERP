@@ -255,8 +255,12 @@ How the screen works:
   order**, or **Log all new**: one RCV, supplier "Tradepost", one line per
   fill at the fees-in unit cost, order numbers in both Supplier invoice #
   and Reference. Products are matched by Tradepost ID, TCGplayer ID, then
-  exact name, created when unknown (SKU `TP-<tcgplayer id>`) and
-  remembered for next time.
+  exact name. A fill that matches nothing is **never** turned into a
+  product on its own: the row shows a product picker (match it to
+  something you already carry) and a **+ create product** link that opens
+  a new-product form prefilled from the order and returns here with the
+  fill matched. Either way the match is remembered on the product, so
+  every later fill of that item matches itself. *Clear match* forgets it.
 * **Open vs closed.** *Open* (the default tab) is every order still in
   play. An order closes by itself when its supplier order is marked
   received; close anything else by hand (**Close selected** — e.g. old
