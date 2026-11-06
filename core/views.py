@@ -84,6 +84,20 @@ def _money_widgets(user, today):
             inv_value += (Decimal(qty) * cost)
         inv_value = Decimal(inv_value).quantize(Decimal("0.01"))
 
+        # Incoming: open supplier orders not yet received, at what you're paying
+        from inventory.models import Receipt
+        inc_units = inc_value = Decimal("0")
+        inc_orders = 0
+        for r in (Receipt.objects.filter(is_deleted=False, posted=False)
+                  .prefetch_related("lines")):
+            lines = [l for l in r.lines.all() if not l.is_deleted]
+            if not lines:
+                continue
+            inc_orders += 1
+            inc_units += sum(l.qty for l in lines)
+            inc_value += r.landed_total
+        inc_value = inc_value.quantize(Decimal("0.01"))
+
         snaps = {CASH: dashboard_snapshot(CASH, today),
                  ACCRUAL: dashboard_snapshot(ACCRUAL, today)}
         trend = equity_trend(ACCRUAL, 2, as_of=today)
@@ -91,6 +105,7 @@ def _money_widgets(user, today):
         ctx["money"] = {
             "accounts": rows, "cash": cash, "cards": cards, "net": cash - cards,
             "inventory_value": inv_value, "inventory_units": inv_units,
+            "incoming_value": inc_value, "incoming_units": int(inc_units), "incoming_orders": inc_orders,
             "basis": default_basis, "other_basis": other_basis,
             "basis_label": "cash" if default_basis == CASH else "accrual",
             "other_label": "cash" if other_basis == CASH else "accrual",

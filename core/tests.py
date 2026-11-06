@@ -680,3 +680,21 @@ class ThemeTests(TestCase):
         self.assertIn('data-theme="dark"', self.client.get("/").content.decode())
         self.assertIn('data-theme="dark"', self.client.get("/accounts/login/").content.decode())
         self.assertIn("Appearance", self.client.get("/settings/").content.decode())
+
+
+class DashboardIncomingTileTests(TestCase):
+    def test_incoming_inventory_tile(self):
+        from decimal import Decimal
+        from django.contrib.auth.models import User
+        from inventory.models import Product, Receipt, ReceiptLine
+        self.client.force_login(User.objects.create_superuser("dash", password="x"))
+        p = Product.objects.create(sku="IN-1", name="Box", default_price=Decimal("10"))
+        open_r = Receipt.objects.create(reference="open", freight_cost=Decimal("20"))
+        ReceiptLine.objects.create(receipt=open_r, product=p, qty=4, unit_cost=Decimal("100"))
+        done = Receipt.objects.create(reference="done")
+        ReceiptLine.objects.create(receipt=done, product=p, qty=9, unit_cost=Decimal("50"))
+        done.post()
+        html = self.client.get("/").content.decode()
+        self.assertIn("Incoming inventory", html)
+        self.assertIn("4 units on 1 open order", html)
+        self.assertIn("420.00", html)          # 4 × 100 + 20 freight; received order not counted
