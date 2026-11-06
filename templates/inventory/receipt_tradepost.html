@@ -30,10 +30,11 @@
 
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-center field-inline">
   <div class="flex gap-1 text-sm">
-    <a href="?view=all&days={{ days }}" class="btn-secondary {% if view == 'all' %}!bg-slate-200{% endif %}">All</a>
+    <a href="?view=open&days={{ days }}" class="btn-secondary {% if view == 'open' %}!bg-slate-200{% endif %}">Open <span class="badge bg-sky-100 text-sky-700 ml-1">{{ n_open }}</span></a>
     <a href="?view=new&days={{ days }}" class="btn-secondary {% if view == 'new' %}!bg-slate-200{% endif %}">To log <span class="badge bg-amber-100 text-amber-700 ml-1">{{ n_new }}</span></a>
     <a href="?view=logged&days={{ days }}" class="btn-secondary {% if view == 'logged' %}!bg-slate-200{% endif %}">Logged <span class="badge bg-emerald-100 text-emerald-700 ml-1">{{ n_logged }}</span></a>
-    <a href="?view=dismissed&days={{ days }}" class="btn-secondary {% if view == 'dismissed' %}!bg-slate-200{% endif %}">Hidden <span class="badge bg-slate-100 text-slate-600 ml-1">{{ n_dismissed }}</span></a>
+    <a href="?view=closed&days={{ days }}" class="btn-secondary {% if view == 'closed' %}!bg-slate-200{% endif %}">Closed <span class="badge bg-slate-100 text-slate-600 ml-1">{{ n_closed }}</span></a>
+    <a href="?view=all&days={{ days }}" class="btn-secondary {% if view == 'all' %}!bg-slate-200{% endif %}">All</a>
   </div>
   <input type="hidden" name="view" value="{{ view }}">
   <div><label class="text-xs text-slate-500 block mb-1">Pull fills from the last</label>
@@ -56,7 +57,7 @@
     </tr></thead>
     <tbody>
     {% for f in fills %}
-      <tr class="{% if f.dismissed %}opacity-60{% endif %}">
+      <tr class="{% if f.closed %}opacity-60{% endif %}">
         <td><input type="checkbox" name="fill" value="{{ f.execution_id }}" class="tp-pick"></td>
         <td class="font-mono text-xs whitespace-nowrap">{{ f.order_number }}
             <div class="mt-0.5"><span class="badge {% if f.status == 'SETTLED' %}bg-emerald-100 text-emerald-700{% elif f.status == 'IN_DISPUTE' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ f.status|lower|capfirst }}</span></div></td>
@@ -67,8 +68,8 @@
         <td class="text-sm">
           {% if f.receipt %}
             <a href="{% url 'receipt_detail' f.receipt.pk %}" class="badge bg-emerald-100 text-emerald-700">RCV-{{ f.receipt.pk }}</a>
-            <div class="text-xs text-slate-500 mt-0.5">{% if f.receipt.posted %}received {{ f.receipt.posted_at|date:"M j" }}{% else %}open{% endif %}</div>
-          {% elif f.dismissed %}<span class="badge bg-slate-100 text-slate-600">hidden</span>
+            <div class="text-xs text-slate-500 mt-0.5">{% if f.receipt.posted %}received {{ f.receipt.posted_at|date:"M j" }}{% else %}not received yet{% endif %}{% if f.closed %} · closed{% endif %}</div>
+          {% elif f.closed %}<span class="badge bg-slate-100 text-slate-600">closed · not logged</span>
           {% else %}
             <span class="badge bg-amber-100 text-amber-700">not logged</span>
             <details class="mt-1"><summary class="text-xs text-indigo-600 cursor-pointer">already logged? link it</summary>
@@ -97,7 +98,7 @@
         </td>
       </tr>
     {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">
-      {% if view == 'new' %}Everything from Tradepost is logged — nothing to do.{% elif view == 'logged' %}No fills are linked to supplier orders yet.{% elif view == 'dismissed' %}Nothing hidden.{% else %}No Tradepost purchases in the last {{ days }} days.{% endif %}</td></tr>{% endfor %}
+      {% if view == 'new' %}Everything from Tradepost is logged — nothing to do.{% elif view == 'logged' %}No fills are linked to supplier orders yet.{% elif view == 'closed' %}No closed orders yet.{% elif view == 'open' %}No open Tradepost orders — everything is closed.{% else %}No Tradepost purchases in the last {{ days }} days.{% endif %}</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>
@@ -108,14 +109,14 @@
   <button class="btn-secondary" name="action" value="create" onclick="document.getElementById('allNew').value='1'; return confirm('Create one supplier order with every unlogged fill?')">Log all {{ n_new }} new</button>
   <input type="hidden" name="all_new" id="allNew" value="">
   <span class="mx-2 text-slate-300">|</span>
-  <button class="btn-secondary" name="action" value="dismiss" title="Hide the ticked fills — for old orders you don't need to log">🗑 Hide selected</button>
-  {% if view == 'dismissed' %}<button class="btn-secondary" name="action" value="restore">Restore selected</button>{% endif %}
+  {% if view != 'closed' %}<button class="btn-secondary" name="action" value="close" title="Mark the ticked orders closed — done, or old ones you don't need to log. They stay under the Closed tab.">✓ Close selected</button>{% endif %}
+  {% if view == 'closed' or view == 'all' %}<button class="btn-secondary" name="action" value="reopen">Reopen selected</button>{% endif %}
   {% if view == 'logged' or view == 'all' %}<button class="btn-secondary" name="action" value="unlink" onclick="return confirm('Unlink the ticked fills from their supplier orders? (The orders themselves are kept.)')">Unlink selected</button>{% endif %}
   <button class="btn-secondary" name="action" value="refresh_tracking" title="Re-check the ticked fills' packages with Shippo">📦 Track selected</button>
 </div>
 </form>
 <form method="post" id="linkForm" class="hidden">{% csrf_token %}<input type="hidden" name="action" value="link"><input type="hidden" name="fill_id" id="linkFill"><input type="hidden" name="rcv" id="linkRcv"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="days" value="{{ days }}"></form>
-<p class="text-xs text-slate-500 mt-3">Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you.</p>
+<p class="text-xs text-slate-500 mt-3"><strong>Open</strong> is everything still in play. An order closes by itself when its supplier order is marked received; close anything else by hand (old orders you won't log, for example) and it stays under <strong>Closed</strong>. Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you.</p>
 <script>
   const all = document.getElementById("tpAll");
   if (all) all.addEventListener("change", () => document.querySelectorAll(".tp-pick").forEach(c => { c.checked = all.checked; }));

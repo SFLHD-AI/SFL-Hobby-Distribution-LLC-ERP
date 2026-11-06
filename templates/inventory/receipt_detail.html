@@ -61,10 +61,23 @@
         {% elif receipt.paid_date or linked_payments %}<span class="badge bg-sky-100 text-sky-700">Prepaid</span>{% endif %}
       </h2>
       <dl class="text-sm space-y-1 mb-3">
-        <div class="flex justify-between"><dt class="text-slate-500">Bill total</dt><dd>${{ receipt.landed_total|floatformat:2|intcomma }}</dd></div>
+        {% if receipt.credits_total %}
+        <div class="flex justify-between"><dt class="text-slate-500">Landed total</dt><dd>${{ receipt.landed_total|floatformat:2|intcomma }}</dd></div>
+        <div class="flex justify-between text-emerald-700"><dt>Supplier credits</dt><dd>−${{ receipt.credits_total|floatformat:2|intcomma }}</dd></div>
+        {% endif %}
+        <div class="flex justify-between"><dt class="text-slate-500">Bill total</dt><dd>${{ receipt.bill_total|floatformat:2|intcomma }}</dd></div>
         <div class="flex justify-between"><dt class="text-slate-500">Paid so far</dt><dd>${{ receipt.amount_paid|floatformat:2|intcomma }}</dd></div>
+        {% if receipt.refund_due %}
+        <div class="flex justify-between font-semibold text-sky-700"><dt>Supplier owes you</dt><dd>${{ receipt.refund_due|floatformat:2|intcomma }}</dd></div>
+        {% else %}
         <div class="flex justify-between font-semibold"><dt class="text-slate-500">Balance</dt><dd>${{ receipt.balance_due|floatformat:2|intcomma }}</dd></div>
+        {% endif %}
       </dl>
+      {% if receipt.refund_due %}
+      <form method="post" class="mb-3">{% csrf_token %}<input type="hidden" name="action" value="refund_received">
+        <button class="btn-secondary w-full justify-center">✓ Refund received from supplier</button>
+        <p class="text-xs text-slate-500 mt-1">Click when the credit lands in your account (or tie the bank deposit to this order in Banking).</p></form>
+      {% elif receipt.credit_refunded_date %}<p class="text-xs text-emerald-700 mb-3">Refund received {{ receipt.credit_refunded_date|date:"M j, Y" }}.</p>{% endif %}
       {% if not receipt.is_paid and not linked_payments %}
       <form method="post" class="mb-3">{% csrf_token %}<input type="hidden" name="action" value="mark_paid">
         <button class="btn-success w-full justify-center">✓ Mark paid today</button>
@@ -166,6 +179,75 @@
       {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-6">No items yet — add below{% if receipt.posted %}.{% endif %}</td></tr>{% endfor %}
       </tbody>
     </table>
+
+    {% if receipt.posted %}
+    {# ---------- After the fact: damaged boxes, returns ---------- #}
+    <div class="mt-2 pt-4 border-t border-slate-100">
+      <h2 class="font-semibold mb-1 flex items-center gap-2 flex-wrap">Damaged or returned boxes
+        {% if receipt.units_written_off %}<span class="badge bg-red-100 text-red-700">{{ receipt.units_written_off }} written off</span>{% endif %}
+        {% if receipt.units_returned %}<span class="badge bg-amber-100 text-amber-700">{{ receipt.units_returned }} returned</span>{% endif %}</h2>
+      <p class="text-xs text-slate-500 mb-3">The order stays received. <strong>Damaged</strong> boxes you can't sell are taken out of stock at average cost and booked as a loss (less any credit the supplier gives you). <strong>Returned</strong> boxes go back at the cost they came in at, the weighted average cost is rolled back, and the supplier's credit comes off this bill.</p>
+      {% if adjustments %}
+      <table class="tbl mb-3 text-sm">
+        <thead><tr><th>Date</th><th>What</th><th>Product</th><th class="num">Qty</th><th class="num">Value out</th><th class="num">Supplier credit</th><th class="num">Your loss</th><th></th></tr></thead>
+        <tbody>
+        {% for a in adjustments %}
+          <tr class="{% if a.reversed %}line-through text-slate-400{% endif %}">
+            <td>{{ a.date|date:"M j, Y" }}</td>
+            <td>{% if a.kind == 'return' %}<span class="badge bg-amber-100 text-amber-700">Returned</span>{% else %}<span class="badge bg-red-100 text-red-700">Damaged</span>{% endif %}{% if a.note %}<div class="text-xs text-slate-500">{{ a.note }}</div>{% endif %}</td>
+            <td>{{ a.line.product.sku }}</td>
+            <td class="num">{{ a.qty }}</td>
+            <td class="num">${{ a.value_removed|floatformat:2|intcomma }}</td>
+            <td class="num">{% if a.credit_amount %}${{ a.credit_amount|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+            <td class="num {% if a.loss > 0 and not a.reversed %}text-red-700{% endif %}">${{ a.loss|floatformat:2|intcomma }}</td>
+            <td>{% if not a.reversed %}<form method="post" onsubmit="return confirm('Put these {{ a.qty }} units back in stock?')">{% csrf_token %}
+                <input type="hidden" name="action" value="undo_adjust"><input type="hidden" name="adjustment_id" value="{{ a.pk }}">
+                <button class="text-xs text-slate-500 hover:text-red-600">undo</button></form>{% else %}<span class="text-xs">undone</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      <form method="post" class="flex flex-wrap gap-3 items-end field-inline bg-slate-50 rounded-lg p-3" id="adjForm">
+        {% csrf_token %}<input type="hidden" name="action" value="adjust">
+        <div class="basis-full lg:basis-auto lg:flex-1 min-w-0"><label class="text-xs text-slate-500 block mb-1">Boxes</label>
+          <select name="line_id" required class="w-full" id="adjLine">
+            {% for l in lines %}<option value="{{ l.pk }}" data-cost="{{ l.unit_cost }}" data-landed="{{ l.landed_unit_cost|default:l.unit_cost }}">{{ l.product.sku }} — {{ l.product.name|truncatechars:40 }} ({{ l.qty }} received @ ${{ l.unit_cost|floatformat:2 }})</option>{% endfor %}
+          </select></div>
+        <div><label class="text-xs text-slate-500 block mb-1">What happened</label>
+          <select name="kind" class="w-full" id="adjKind">
+            <option value="damaged">Damaged — can't sell, write off</option>
+            <option value="return">Returned to supplier</option>
+          </select></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Qty</label>
+          <input type="number" name="qty" min="1" value="1" required class="w-full sm:w-20" id="adjQty"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Supplier credit $ <span class="text-slate-400">(total)</span></label>
+          <input type="number" name="credit" step="0.01" min="0" value="0" class="w-full sm:w-28" id="adjCredit"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Date</label>
+          <input type="date" name="date" value="{% now 'Y-m-d' %}" class="w-full sm:w-36"></div>
+        <div class="basis-full lg:basis-auto lg:flex-1 min-w-0"><label class="text-xs text-slate-500 block mb-1">Note</label>
+          <input type="text" name="note" placeholder="crushed corner, RMA #…" class="w-full"></div>
+        <button class="btn-secondary" onclick="return confirm('Take these boxes out of stock? You can undo from the list above.')">Record</button>
+      </form>
+      <script>
+        (function () {
+          const kind = document.getElementById("adjKind"), qty = document.getElementById("adjQty"),
+                line = document.getElementById("adjLine"), credit = document.getElementById("adjCredit");
+          let touched = false;
+          credit.addEventListener("input", () => { touched = true; });
+          function suggest() {
+            if (touched) return;
+            if (kind.value === "return") {
+              const unit = parseFloat(line.options[line.selectedIndex].dataset.cost || "0");
+              credit.value = (unit * (parseInt(qty.value || "0", 10))).toFixed(2);
+            } else { credit.value = "0"; }
+          }
+          [kind, qty, line].forEach(el => el.addEventListener("change", suggest));
+          qty.addEventListener("input", suggest);
+        })();
+      </script>
+    </div>
+    {% endif %}
 
     {% if not receipt.posted %}
     <form method="post" class="flex flex-wrap gap-3 items-end field-inline bg-slate-50 rounded-lg p-3">

@@ -94,7 +94,7 @@ def receipt_matches(txn):
           .order_by("-date", "-id"))
     out = []
     for r in qs[:300]:
-        total = r.landed_total
+        total = r.bill_total
         if total > 0 and abs(total - amt) <= tol:
             out.append(r)
         if len(out) >= 10:

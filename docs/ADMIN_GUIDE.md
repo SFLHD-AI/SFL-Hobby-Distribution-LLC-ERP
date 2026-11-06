@@ -251,9 +251,11 @@ How the screen works:
   and Reference. Products are matched by Tradepost ID, TCGplayer ID, then
   exact name, created when unknown (SKU `TP-<tcgplayer id>`) and
   remembered for next time.
-* **Hiding old fills.** Tick fills you don't need to log and **Hide
-  selected**; they move to the *Hidden* tab and are never offered again
-  (restore from that tab).
+* **Open vs closed.** *Open* (the default tab) is every order still in
+  play. An order closes by itself when its supplier order is marked
+  received; close anything else by hand (**Close selected** — e.g. old
+  orders you won't log). Closed orders stay under the *Closed* tab and can
+  be reopened. Nothing is ever deleted.
 * **Shipping.** Each fill shows its packages (an order can have several):
   carrier, tracking link, status and ETA. Tradepost's label status is shown
   immediately; with Shippo, every undelivered package is re-checked hourly
@@ -265,6 +267,28 @@ Technical notes: GraphQL `platform-api.tradepost.co/graphql`, header
 `includePnl`, `includeTransfers` (labels via `shipmentGroup.shippingLabels`),
 keyset pagination. Cache model `TradepostFill`; code in
 `inventory/tradepost.py`; hourly job `inventory.tasks.sync_tradepost`.
+
+### Damaged boxes and returns (after receiving)
+
+On a received supplier order, **Damaged or returned boxes** records what
+happened after the fact. The order stays received either way.
+
+* **Damaged — write off.** Boxes that arrived unsellable are taken out of
+  stock at the product's average cost. The value is booked as a loss to
+  *Inventory adjustments & shrinkage* (5200), less any credit or discount
+  the supplier gives you, which comes off the bill. The average cost of the
+  remaining units does not change.
+* **Returned to supplier.** Boxes sent back leave stock at the landed cost
+  they came in at and the weighted average cost is rolled back
+  (`(on-hand × avg − qty × landed) ÷ remaining`). The supplier credit
+  (defaults to qty × unit cost) reduces the bill; any freight you don't
+  get back shows as a small loss.
+* **Credits after you paid.** If the bill was already paid, the credit
+  becomes *Supplier owes you* on the bill. Click **Refund received** when
+  the money comes back (cash basis books the refund on that date).
+* **Undo** on any row puts the units back exactly as they were taken out.
+
+The Receiving list shows *Refund due* on orders with money coming back.
 
 ### Supplier bills on Receiving
 

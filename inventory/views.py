@@ -358,7 +358,7 @@ def receipt_list(request):
             messages.info(request, "No open supplier orders have a tracking number yet.")
         return redirect(request.get_full_path())
     qs = (Receipt.objects.select_related("supplier")
-          .prefetch_related("packages", "lines__product", "supplier_payments"))
+          .prefetch_related("packages", "lines__product", "supplier_payments", "adjustments"))
     q = (request.GET.get("q") or "").strip()
     if q:
         from django.db import models as dj
@@ -546,7 +546,7 @@ def receipt_tradepost(request):
     from shipping.providers import get_provider
     company = CompanySettings.get()
     client = tp.TradepostClient(company.tradepost_api_key)
-    view = request.GET.get("view") or request.POST.get("view") or "all"
+    view = request.GET.get("view") or request.POST.get("view") or "open"
     try:
         days = max(1, min(int(request.GET.get("days") or request.POST.get("days") or 120), 730))
     except ValueError:
@@ -567,7 +567,7 @@ def receipt_tradepost(request):
         n = 0
         if refresh and ctx["shippo"]:
             provider = get_provider("shippo")
-            for fill in TradepostFill.objects.filter(dismissed=False).exclude(packages=[]):
+            for fill in TradepostFill.objects.filter(closed=False).exclude(packages=[]):
                 if _fill_needs_refresh(fill):
                     n += tp.refresh_fill_tracking(fill, provider)
         ctx["sync_note"] = (f"Synced with Tradepost: {new} new fill{'s' if new != 1 else ''}, {upd} updated"
@@ -585,13 +585,13 @@ def receipt_tradepost(request):
             else:
                 messages.error(request, ctx["error"])
             return redirect(request.path + back)
-        if action == "dismiss":
-            n = chosen.filter(receipt__isnull=True).update(dismissed=True)
-            messages.success(request, f"Hidden {n} fill{'s' if n != 1 else ''} — they won't be offered for logging again.")
+        if action == "close":
+            n = chosen.update(closed=True)
+            messages.success(request, f"Closed {n} order{'s' if n != 1 else ''}. Find them under the Closed tab any time.")
             return redirect(request.path + back)
-        if action == "restore":
-            n = chosen.update(dismissed=False)
-            messages.success(request, f"Restored {n} fill{'s' if n != 1 else ''}.")
+        if action == "reopen":
+            n = chosen.update(closed=False)
+            messages.success(request, f"Reopened {n} order{'s' if n != 1 else ''}.")
             return redirect(request.path + back)
         if action == "unlink":
             n = chosen.filter(receipt__isnull=False).update(receipt=None)
@@ -602,8 +602,8 @@ def receipt_tradepost(request):
             num = (request.POST.get("rcv") or "").upper().replace("RCV-", "").replace("RCV", "").strip()
             receipt = Receipt.objects.filter(pk=int(num)).first() if num.isdigit() else None
             if fill and receipt:
-                fill.receipt, fill.dismissed = receipt, False
-                fill.save(update_fields=["receipt", "dismissed"])
+                fill.receipt, fill.closed = receipt, False
+                fill.save(update_fields=["receipt", "closed"])
                 tp.mirror_packages(fill)
                 messages.success(request, f"{fill.order_number} linked to RCV-{receipt.pk}.")
             else:
@@ -614,13 +614,13 @@ def receipt_tradepost(request):
                 messages.warning(request, "Add a Shippo token in Settings to track packages automatically.")
                 return redirect(request.path + back)
             provider = get_provider("shippo")
-            qs = chosen if ids else TradepostFill.objects.filter(dismissed=False).exclude(packages=[])
+            qs = chosen if ids else TradepostFill.objects.filter(closed=False).exclude(packages=[])
             n = sum(tp.refresh_fill_tracking(f, provider, force=bool(ids)) for f in qs)
             messages.success(request, f"Tracking refreshed on {n} package{'s' if n != 1 else ''}.")
             return redirect(request.path + back)
         if action == "create":
             if request.POST.get("all_new"):
-                picked = list(TradepostFill.objects.filter(receipt__isnull=True, dismissed=False)
+                picked = list(TradepostFill.objects.filter(receipt__isnull=True, closed=False)
                               .exclude(status__in=["FAILED", "REVERSED"]))
             else:
                 picked = list(chosen.filter(receipt__isnull=True))
@@ -647,13 +647,15 @@ def receipt_tradepost(request):
 
     qs = TradepostFill.objects.select_related("receipt").exclude(status__in=["FAILED", "REVERSED"])
     if view == "new":
-        qs = qs.filter(receipt__isnull=True, dismissed=False)
+        qs = qs.filter(receipt__isnull=True, closed=False)
     elif view == "logged":
-        qs = qs.filter(receipt__isnull=False)
-    elif view == "dismissed":
-        qs = qs.filter(dismissed=True)
-    else:
-        qs = qs.filter(dismissed=False)
+        qs = qs.filter(receipt__isnull=False, closed=False)
+    elif view == "closed":
+        qs = qs.filter(closed=True)
+    elif view == "all":
+        pass
+    else:                                  # "open" (default): anything not closed
+        qs = qs.filter(closed=False)
     fills = list(qs[:500])
     from inventory.tracking import carrier_url
     for f in fills:
@@ -661,10 +663,11 @@ def receipt_tradepost(request):
             p["url"] = carrier_url(p.get("carrier"), p.get("tracking"))
     ctx["fills"] = fills
     allq = TradepostFill.objects.exclude(status__in=["FAILED", "REVERSED"])
-    ctx["n_new"] = allq.filter(receipt__isnull=True, dismissed=False).count()
-    ctx["n_logged"] = allq.filter(receipt__isnull=False).count()
-    ctx["n_dismissed"] = allq.filter(dismissed=True).count()
-    ctx["total_new"] = sum((f.line_total for f in allq.filter(receipt__isnull=True, dismissed=False)), Decimal("0"))
+    ctx["n_open"] = allq.filter(closed=False).count()
+    ctx["n_new"] = allq.filter(receipt__isnull=True, closed=False).count()
+    ctx["n_logged"] = allq.filter(receipt__isnull=False, closed=False).count()
+    ctx["n_closed"] = allq.filter(closed=True).count()
+    ctx["total_new"] = sum((f.line_total for f in allq.filter(receipt__isnull=True, closed=False)), Decimal("0"))
     return render(request, "inventory/receipt_tradepost.html", ctx)
 
 
@@ -766,6 +769,42 @@ def receipt_detail(request, pk):
                                          else ". No default bank account is set, so it counts as paid personally."))
         nxt = request.POST.get("next")
         return redirect(nxt if nxt and nxt.startswith("/") else "receipt_detail", *([] if nxt and nxt.startswith("/") else [pk]))
+    if request.method == "POST" and request.POST.get("action") == "adjust":
+        from inventory.models import ReceiptAdjustment
+        line = get_object_or_404(ReceiptLine, pk=request.POST.get("line_id"), receipt=receipt)
+        try:
+            d = request.POST.get("date")
+            adj = ReceiptAdjustment.create_and_apply(
+                receipt=receipt, line=line, kind=request.POST.get("kind") or "damaged",
+                qty=request.POST.get("qty") or 0, credit_amount=request.POST.get("credit") or 0,
+                date=timezone.datetime.fromisoformat(d).date() if d else None,
+                note=request.POST.get("note") or "", user=request.user)
+        except (ValidationError, ValueError, InvalidOperation) as e:
+            messages.error(request, "; ".join(getattr(e, "messages", [str(e)])))
+            return redirect("receipt_detail", pk)
+        if adj.kind == "return":
+            messages.success(request, f"Returned {adj.qty} × {line.product.sku}: stock and average cost rolled back"
+                                      f"{', $' + format(adj.credit_amount, ',.2f') + ' credit from the supplier' if adj.credit_amount else ''}.")
+        else:
+            messages.success(request, f"Wrote off {adj.qty} × {line.product.sku} as damaged: "
+                                      f"${adj.loss:,.2f} loss booked to Inventory adjustments & shrinkage"
+                                      f"{' after a $' + format(adj.credit_amount, ',.2f') + ' supplier credit' if adj.credit_amount else ''}.")
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "undo_adjust":
+        from inventory.models import ReceiptAdjustment
+        adj = get_object_or_404(ReceiptAdjustment, pk=request.POST.get("adjustment_id"), receipt=receipt)
+        try:
+            adj.undo(user=request.user)
+            messages.success(request, "Undone — the units are back in stock.")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "refund_received":
+        receipt.credit_refunded_date = timezone.localdate()
+        receipt.save(update_fields=["credit_refunded_date"])
+        log_activity(request.user, "supplier_refund", receipt, note=f"Refund received {receipt.credit_refunded_date}")
+        messages.success(request, "Refund recorded — the supplier no longer owes you on this order.")
+        return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "save_bill":
         # Bill / payment details stay editable after receiving
         bill_form = ReceiptBillForm(request.POST, instance=receipt)
@@ -811,6 +850,7 @@ def receipt_detail(request, pk):
         "bill_form": bill_form, "linked_payments": linked_payments,
         "package_form": package_form, "packages": receipt.packages.all(),
         "lines": receipt.lines.filter(is_deleted=False).select_related("product"),
+        "adjustments": receipt.adjustments.select_related("line__product", "created_by"),
         "products": Product.objects.filter(active=True),
     })
 

@@ -45,6 +45,6 @@ def sync_tradepost():
     n = 0
     provider = get_provider("shippo")
     if provider.is_configured():
-        for fill in TradepostFill.objects.filter(dismissed=False).exclude(packages=[]):
+        for fill in TradepostFill.objects.filter(closed=False).exclude(packages=[]):
             n += tp.refresh_fill_tracking(fill, provider)
     return f"{new} new, {upd} updated, {linked} linked, {n} packages tracked."

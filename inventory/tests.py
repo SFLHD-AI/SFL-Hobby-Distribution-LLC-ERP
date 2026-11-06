@@ -891,20 +891,24 @@ class TradepostImportTests(TestCase):
         self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
         self.assertEqual(Receipt.objects.get().lines.count(), 2)
 
-    def test_hide_restore_and_manual_link(self):
+    def test_close_reopen_and_manual_link(self):
         from inventory.models import Receipt, Supplier, TradepostFill
         self.client.get("/inventory/receiving/tradepost/")
-        self.client.post("/inventory/receiving/tradepost/", {"action": "dismiss", "fill": ["aaaa-2"]})
-        self.assertTrue(TradepostFill.objects.get(execution_id="aaaa-2").dismissed)
-        html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+        self.client.post("/inventory/receiving/tradepost/", {"action": "close", "fill": ["aaaa-2"]})
+        self.assertTrue(TradepostFill.objects.get(execution_id="aaaa-2").closed)
+        html = self.client.get("/inventory/receiving/tradepost/").content.decode()     # Open tab by default
         self.assertNotIn("TPST-AAAA0002", html)
-        html = self.client.get("/inventory/receiving/tradepost/?view=dismissed").content.decode()
+        html = self.client.get("/inventory/receiving/tradepost/?view=closed").content.decode()
         self.assertIn("TPST-AAAA0002", html)
-        # "log all new" skips hidden fills
+        # "log all new" skips closed fills
         self.client.post("/inventory/receiving/tradepost/", {"action": "create", "all_new": "1"})
-        self.assertEqual(Receipt.objects.get().lines.count(), 1)
-        self.client.post("/inventory/receiving/tradepost/", {"action": "restore", "fill": ["aaaa-2"]})
-        self.assertFalse(TradepostFill.objects.get(execution_id="aaaa-2").dismissed)
+        rcv1 = Receipt.objects.get()
+        self.assertEqual(rcv1.lines.count(), 1)
+        self.client.post("/inventory/receiving/tradepost/", {"action": "reopen", "fill": ["aaaa-2"]})
+        self.assertFalse(TradepostFill.objects.get(execution_id="aaaa-2").closed)
+        # receiving the supplier order closes its Tradepost order automatically
+        rcv1.post()
+        self.assertTrue(TradepostFill.objects.get(execution_id="aaaa-1").closed)
         rcv = Receipt.objects.create(supplier=Supplier.objects.get(name="Tradepost"), reference="manual")
         self.client.post("/inventory/receiving/tradepost/", {"action": "link", "fill_id": "aaaa-2", "rcv": f"RCV-{rcv.pk}"})
         self.assertEqual(TradepostFill.objects.get(execution_id="aaaa-2").receipt, rcv)
@@ -954,3 +958,141 @@ class TradepostImportTests(TestCase):
             fills = self.real_list_buys(c)
         self.assertEqual(len(calls), 2)
         self.assertEqual(fills[0].order_number, "TPST-AAAA0002")
+
+
+class ReceiptAdjustmentTests(TestCase):
+    """Damaged write-offs and supplier returns on a received order."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine, Supplier
+        self.user = User.objects.create_superuser("adj", password="x")
+        self.client.force_login(self.user)
+        self.p = make_product("BOX-1", name="Hobby Box")
+        # opening stock: 10 @ $100 avg
+        StockAdjustment.create_and_apply(product=self.p, qty_delta=10, reason="opening", unit_cost=Decimal("100"))
+        sup = Supplier.objects.create(name="Tradepost")
+        self.r = Receipt.objects.create(supplier=sup, reference="R1", freight_cost=Decimal("20"))
+        # 10 more @ $120 + $2 freight each → landed 122; avg becomes 111
+        self.line = ReceiptLine.objects.create(receipt=self.r, product=self.p, qty=10, unit_cost=Decimal("120"))
+        self.r.post(user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual((self.p.qty_on_hand, self.p.avg_cost), (20, Decimal("111.0000")))
+
+    def test_requires_received_order(self):
+        from inventory.models import Receipt, ReceiptAdjustment, ReceiptLine
+        r2 = Receipt.objects.create(reference="open")
+        l2 = ReceiptLine.objects.create(receipt=r2, product=self.p, qty=1, unit_cost=Decimal("1"))
+        with self.assertRaises(ValidationError):
+            ReceiptAdjustment.create_and_apply(receipt=r2, line=l2, kind="damaged", qty=1)
+
+    def test_damaged_write_off_is_a_loss_at_average_cost(self):
+        from inventory.models import ReceiptAdjustment, StockMovement
+        adj = ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=2,
+                                                 credit_amount=Decimal("50"), note="crushed", user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, 18)
+        self.assertEqual(self.p.avg_cost, Decimal("111.0000"))         # removals never move the average
+        self.assertEqual(adj.unit_cost_removed, Decimal("111.0000"))
+        self.assertEqual(adj.value_removed, Decimal("222.00"))
+        self.assertEqual(adj.loss, Decimal("172.00"))                  # 222 out, 50 credit back
+        self.assertEqual(adj.movement.movement_type, "write_off")
+        self.assertTrue(self.r.posted)                                 # still received
+        self.assertEqual(self.r.units_written_off, 2)
+        self.assertEqual(self.r.credits_total, Decimal("50.00"))
+        self.assertEqual(self.r.bill_total, Decimal("1170.00"))        # 1220 landed − 50
+        self.assertEqual(self.r.balance_due, Decimal("1170.00"))
+
+    def test_return_rolls_back_weighted_average(self):
+        from inventory.models import ReceiptAdjustment
+        adj = ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="return", qty=5,
+                                                 credit_amount=Decimal("600"), user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, 15)
+        # (20×111 − 5×122) / 15 = (2220 − 610) / 15 = 107.3333
+        self.assertEqual(self.p.avg_cost, Decimal("107.3333"))
+        self.assertEqual(adj.unit_cost_removed, Decimal("122.0000"))   # landed cost it came in at
+        self.assertEqual(adj.movement.movement_type, "supplier_return")
+        self.assertEqual(adj.loss, Decimal("10.00"))                   # freight not refunded
+        self.assertEqual(self.r.bill_total, Decimal("620.00"))
+
+    def test_cannot_adjust_more_than_received_or_on_hand(self):
+        from inventory.models import ReceiptAdjustment
+        with self.assertRaises(ValidationError):
+            ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=11)
+        ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=6)
+        with self.assertRaises(ValidationError):
+            ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="return", qty=5)   # 4 left
+
+    def test_undo_puts_units_back(self):
+        from inventory.models import ReceiptAdjustment
+        adj = ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="return", qty=5,
+                                                 credit_amount=Decimal("600"), user=self.user)
+        adj.undo(user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, 20)
+        self.assertEqual(self.p.avg_cost, Decimal("111.0000"))
+        self.assertTrue(adj.reversed)
+        self.assertEqual(self.r.credits_total, Decimal("0.00"))
+        self.assertEqual(self.r.units_returned, 0)
+
+    def test_credit_after_hand_payment_is_a_refund_due(self):
+        from datetime import timedelta
+        from inventory.models import ReceiptAdjustment
+        self.r.paid_date = timezone.localdate() - timedelta(days=3)
+        self.r.save()
+        self.assertEqual(self.r.amount_paid, Decimal("1220.00"))
+        ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=1,
+                                           credit_amount=Decimal("120"), user=self.user)
+        self.assertEqual(self.r.credits_after_payment, Decimal("120.00"))
+        self.assertEqual(self.r.amount_paid, Decimal("1220.00"))        # you really paid the full bill
+        self.assertEqual(self.r.balance_due, Decimal("-120.00"))
+        self.assertEqual(self.r.refund_due, Decimal("120.00"))
+        self.assertTrue(self.r.is_paid)
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "refund_received"})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.refund_due, Decimal("0.00"))
+        self.assertEqual(self.r.amount_paid, Decimal("1100.00"))
+
+    def test_credit_before_hand_payment_reduces_what_you_pay(self):
+        from inventory.models import ReceiptAdjustment
+        ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="return", qty=2,
+                                           credit_amount=Decimal("240"), user=self.user)
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "mark_paid"})
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.amount_paid, Decimal("980.00"))
+        self.assertEqual(self.r.balance_due, Decimal("0.00"))
+        self.assertEqual(self.r.refund_due, Decimal("0.00"))
+
+    def test_detail_page_form_and_list(self):
+        html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
+        self.assertIn("Damaged or returned boxes", html)
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {
+            "action": "adjust", "line_id": self.line.pk, "kind": "damaged", "qty": "1", "credit": "30", "note": "dented"})
+        self.assertEqual(r.status_code, 302)
+        html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
+        self.assertIn("1 written off", html)
+        self.assertIn("dented", html)
+        self.assertIn("Supplier credits", html)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, 19)
+
+    def test_ledger_books_loss_and_credit(self):
+        from datetime import timedelta
+        from accounting.ledger import ACCRUAL, Journal
+        from inventory.models import ReceiptAdjustment
+        ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=2,
+                                           credit_amount=Decimal("50"), user=self.user)
+        today = timezone.localdate()
+        j = Journal(ACCRUAL, [today])
+        tb = j.trial_balance(today)
+        self.assertTrue(tb["balanced"])
+        by_code = {r["account"].code: r for r in tb["rows"]}
+        # inventory asset: 1000 opening + 1220 received − 222 written off
+        self.assertEqual(by_code["1300"]["debit"] - by_code["1300"]["credit"], Decimal("1998.00"))
+        # AP: owes 1220 less the 50 credit
+        self.assertEqual(by_code["2000"]["credit"] - by_code["2000"]["debit"], Decimal("1170.00"))
+        inc = j.income_statement(today - timedelta(days=30), today)
+        adj_rows = [r for r in inc["cogs"] if r["account"].code == "5200"]
+        self.assertEqual(sum(r["amount"] for r in adj_rows), Decimal("172.00"))

@@ -478,8 +478,10 @@ class Journal:
 
     # 6. stock ledger (accrual): inventory asset & COGS -------------------------
     def _stock_movements(self):
-        from inventory.models import StockAdjustment, StockMovement
+        from inventory.models import ReceiptAdjustment, StockAdjustment, StockMovement
         adj_reasons = {str(a.pk): a.reason for a in StockAdjustment.objects.all()}
+        # damaged / returned boxes: the supplier's credit comes off AP, the rest is a loss
+        rcv_adj = {str(a.pk): a for a in ReceiptAdjustment.objects.select_related("receipt")}
         qs = (StockMovement.objects.select_related("product")
               .order_by("product_id", "timestamp", "id"))
         prev_avg = defaultdict(lambda: ZERO)
@@ -515,6 +517,18 @@ class Journal:
                         offset = self.sys("ap")
                     else:
                         offset = self.sys("inventory_adj")
+            elif m.movement_type in ("supplier_return", "write_off") and m.source_type == "ReceiptAdjustment":
+                a = rcv_adj.get(m.source_id)
+                credit = q(a.credit_amount) if (a and not a.reversed and m.qty_delta < 0) else ZERO
+                tag = f"s{a.receipt.supplier_id}" if (a and a.receipt.supplier_id) else ""
+                # value_delta is negative (stock went out). Dr AP for the credit,
+                # Dr inventory adjustments for the loss, Cr inventory for the value.
+                e.add(inv, credit=-value_delta)
+                if credit:
+                    e.add(self.sys("ap"), debit=credit, tag=tag)
+                e.add(self.sys("inventory_adj"), debit=-value_delta - credit)
+                self._add(e)
+                continue
             else:   # revalue, cycle_count, backorder_release
                 offset = self.sys("inventory_adj")
             # positive value_delta = inventory went up
@@ -558,11 +572,21 @@ class Journal:
             linked = [t for t in r.supplier_payments.all()
                       if not t.is_deleted and t.status != "ignored"]
             if not linked and r.paid_date:
-                e = Entry(r.paid_date, f"Paid {label}", "Receipt", f"{r.pk}:paid",
-                          source_url=f"/inventory/receiving/{r.pk}/")
-                debit = self.sys("ap") if self.basis == ACCRUAL else self.sys("inventory_purchases")
-                e.pair(debit, self._source_account(r.paid_from), landed, tag=tag)
-                self._add(e)
+                credits_after = q(r.credits_after_payment)
+                paid = landed - (q(r.credits_total) - credits_after)   # what the bill was that day
+                if paid > 0:
+                    e = Entry(r.paid_date, f"Paid {label}", "Receipt", f"{r.pk}:paid",
+                              source_url=f"/inventory/receiving/{r.pk}/")
+                    debit = self.sys("ap") if self.basis == ACCRUAL else self.sys("inventory_purchases")
+                    e.pair(debit, self._source_account(r.paid_from), paid, tag=tag)
+                    self._add(e)
+                # credits granted after paying, refunded by the supplier
+                if credits_after > 0 and r.credit_refunded_date:
+                    e = Entry(r.credit_refunded_date, f"Supplier refund {label}", "Receipt", f"{r.pk}:refund",
+                              source_url=f"/inventory/receiving/{r.pk}/")
+                    credit_acct = self.sys("ap") if self.basis == ACCRUAL else self.sys("inventory_purchases")
+                    e.pair(self._source_account(r.paid_from), credit_acct, credits_after, tag=tag)
+                    self._add(e)
 
     # 9. expenses -------------------------------------------------------------
     def _expenses(self):

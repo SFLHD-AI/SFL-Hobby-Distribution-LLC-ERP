@@ -303,7 +303,7 @@ def aging_bucket(due, as_of):
 def receipt_balance_as_of(receipt, as_of):
     """What was still owed on a supplier receipt at the end of ``as_of``."""
     from banking.models import BankTransaction
-    landed = receipt.landed_total
+    landed = receipt.bill_total
     linked = receipt.supplier_payments.filter(is_deleted=False, date__lte=as_of).exclude(
         status=BankTransaction.IGNORED)
     if linked.exists():

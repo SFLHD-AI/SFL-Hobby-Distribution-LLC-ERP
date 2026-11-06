@@ -344,7 +344,7 @@ def link_logged_fills(Receipt, ReceiptLine):
     from django.db.models import Q
     from inventory.models import TradepostFill
     linked = 0
-    for fill in TradepostFill.objects.filter(receipt__isnull=True, dismissed=False):
+    for fill in TradepostFill.objects.filter(receipt__isnull=True, closed=False):
         receipt = None
         line = ReceiptLine.objects.filter(tradepost_execution_id=fill.execution_id,
                                           receipt__is_deleted=False).select_related("receipt").first()

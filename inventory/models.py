@@ -335,6 +335,8 @@ class StockMovement(models.Model):
         ("cycle_count", "Cycle count"),
         ("credit_restock", "Credit memo restock"),
         ("backorder_release", "Backorder release"),
+        ("supplier_return", "Returned to supplier"),
+        ("write_off", "Damaged / written off"),
     ]
     product = models.ForeignKey(Product, on_delete=models.PROTECT, related_name="movements")
     movement_type = models.CharField(max_length=20, choices=TYPES, db_index=True)
@@ -429,6 +431,9 @@ class Receipt(SoftDeleteModel):
     paid_from = models.ForeignKey("banking.BankAccount", null=True, blank=True,
                                   on_delete=models.SET_NULL, related_name="supplier_bills",
                                   help_text="Account the supplier was paid from")
+    credit_refunded_date = models.DateField(
+        null=True, blank=True,
+        help_text="When the supplier refunded credits granted after you had already paid")
     payment_reference = models.CharField(max_length=100, blank=True,
                                          help_text="Check # / wire confirmation")
     # Carriers offered for inbound packages (see ReceiptPackage)
@@ -452,6 +457,43 @@ class Receipt(SoftDeleteModel):
     @property
     def landed_total(self):
         return self.merchandise_total + self.freight_cost + self.duties_cost
+
+    # --- after-the-fact credits: damaged boxes, returns -------------------------
+    def _active_adjustments(self):
+        return [a for a in self.adjustments.all() if not a.reversed]
+
+    @property
+    def credits_total(self):
+        """Supplier credits granted on this order (damage allowances, returns)."""
+        return sum((a.credit_amount for a in self._active_adjustments()), Decimal("0.00"))
+
+    @property
+    def credits_after_payment(self):
+        """Credits recorded after the bill was paid by hand → supplier owes a refund."""
+        if self.paid_date is None:
+            return Decimal("0.00")
+        return sum((a.credit_amount for a in self._active_adjustments() if a.date > self.paid_date),
+                   Decimal("0.00"))
+
+    @property
+    def bill_total(self):
+        """What the order really costs you: landed total less supplier credits."""
+        return self.landed_total - self.credits_total
+
+    @property
+    def refund_due(self):
+        """Money the supplier still owes you back (credits that came after you paid)."""
+        if self.credit_refunded_date is not None:
+            return Decimal("0.00")
+        return max(Decimal("0.00"), -self.balance_due)
+
+    @property
+    def units_written_off(self):
+        return sum(a.qty for a in self._active_adjustments() if a.kind == "damaged")
+
+    @property
+    def units_returned(self):
+        return sum(a.qty for a in self._active_adjustments() if a.kind == "return")
 
     @property
     def total_qty(self):
@@ -512,12 +554,17 @@ class Receipt(SoftDeleteModel):
         if linked.exists():
             return sum((abs(t.amount) for t in linked), Decimal("0.00"))
         if self.paid_date is not None:
-            return self.landed_total
+            # paid by hand: you paid what the bill was on that day
+            paid = self.landed_total - (self.credits_total - self.credits_after_payment)
+            if self.credit_refunded_date is not None:
+                paid -= self.credits_after_payment      # supplier sent the difference back
+            return paid
         return Decimal("0.00")
 
     @property
     def balance_due(self):
-        return self.landed_total - self.amount_paid
+        """Positive: you still owe. Negative: the supplier owes you (see refund_due)."""
+        return self.bill_total - self.amount_paid
 
     @property
     def is_paid(self):
@@ -571,6 +618,8 @@ class Receipt(SoftDeleteModel):
                     note=f"Received from {self.supplier or 'supplier'}")
             self.posted = True
             self.posted_at = timezone.now()
+            # the Tradepost order (if any) is done once the boxes are in
+            self.tradepost_fills.update(closed=True)
             # It's here: the arrival date is today and tracking is settled,
             # whatever the carrier last said.
             self.expected_date = timezone.localdate()
@@ -647,10 +696,130 @@ class ReceiptLine(SoftDeleteModel):
         return (Decimal(self.qty) * self.unit_cost).quantize(CENTS, ROUND_HALF_UP)
 
 
+class ReceiptAdjustment(models.Model):
+    """Something that happened to a received order after the fact:
+
+    * ``damaged`` — boxes arrived unsellable. They stay received (they were
+      really delivered) but are written off: stock goes down at average cost
+      and the value lands in *Inventory adjustments & shrinkage* as a loss,
+      less whatever credit the supplier gave.
+    * ``return`` — boxes sent back to the supplier. Stock goes down at the
+      landed cost they came in at and the weighted average cost is rolled
+      back accordingly; the credit reduces what you owe (or is a refund due).
+    """
+
+    KINDS = [("damaged", "Damaged — written off"), ("return", "Returned to supplier")]
+    receipt = models.ForeignKey(Receipt, on_delete=models.CASCADE, related_name="adjustments")
+    line = models.ForeignKey(ReceiptLine, on_delete=models.PROTECT, related_name="adjustments")
+    kind = models.CharField(max_length=10, choices=KINDS)
+    qty = models.PositiveIntegerField()
+    unit_cost_removed = models.DecimalField(max_digits=12, decimal_places=4, default=0,
+                                            help_text="Cost per unit taken out of inventory")
+    credit_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0,
+                                        help_text="Total credit / discount the supplier gave for these units")
+    date = models.DateField(default=timezone.localdate)
+    note = models.CharField(max_length=300, blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
+                                   on_delete=models.SET_NULL, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    movement = models.OneToOneField(StockMovement, null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="receipt_adjustment")
+    reversed = models.BooleanField(default=False)
+    reversal = models.OneToOneField(StockMovement, null=True, blank=True, on_delete=models.SET_NULL,
+                                    related_name="receipt_adjustment_reversal")
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return f"{self.get_kind_display()} {self.qty} × {self.line.product.sku} on RCV-{self.receipt_id}"
+
+    @property
+    def value_removed(self):
+        return (self.unit_cost_removed * self.qty).quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def loss(self):
+        """What the business lost: inventory value gone minus the supplier's credit."""
+        return self.value_removed - self.credit_amount
+
+    @classmethod
+    def create_and_apply(cls, *, receipt, line, kind, qty, credit_amount=0, date=None, note="", user=None):
+        if not receipt.posted:
+            raise ValidationError("Mark the order received first — only received boxes can be damaged or returned.")
+        if line.receipt_id != receipt.pk:
+            raise ValidationError("That line is not on this order.")
+        line = ReceiptLine.objects.get(pk=line.pk)      # fresh: landed cost is set at receive time
+        qty = int(qty)
+        if qty <= 0:
+            raise ValidationError("Quantity must be at least 1.")
+        already = sum(a.qty for a in line.adjustments.all() if not a.reversed)
+        if already + qty > line.qty:
+            raise ValidationError(f"Only {line.qty - already} of the {line.qty} received on that line are left to adjust.")
+        credit_amount = Decimal(credit_amount or 0).quantize(CENTS, ROUND_HALF_UP)
+        if credit_amount < 0:
+            raise ValidationError("The supplier credit can't be negative.")
+        product = line.product
+        with transaction.atomic():
+            on_hand = Product.all_objects.get(pk=product.pk).qty_on_hand
+            if on_hand < qty:
+                raise ValidationError(f"Only {on_hand} of {product.sku} on hand — some have already been sold.")
+            if kind == "return":
+                unit = line.landed_unit_cost or line.unit_cost
+                remaining = on_hand - qty
+                if remaining > 0:
+                    new_avg = ((Decimal(on_hand) * product.avg_cost - Decimal(qty) * unit)
+                               / Decimal(remaining)).quantize(FOURPLACES, ROUND_HALF_UP)
+                    if new_avg < 0:
+                        new_avg = Decimal("0.0000")
+                else:
+                    new_avg = product.avg_cost      # nothing left: keep the last known cost
+                mtype, label = "supplier_return", "Returned to supplier"
+            else:
+                unit = product.avg_cost
+                new_avg = None
+                mtype, label = "write_off", "Damaged, written off"
+            adj = cls.objects.create(receipt=receipt, line=line, kind=kind, qty=qty,
+                                     unit_cost_removed=unit, credit_amount=credit_amount,
+                                     date=date or timezone.localdate(), note=note[:300],
+                                     created_by=user if getattr(user, "is_authenticated", False) else None)
+            adj.movement = product.apply_movement(
+                movement_type=mtype, qty_delta=-qty, user=user, unit_cost=unit, new_avg_cost=new_avg,
+                reference=f"RCV-{receipt.pk}", source=adj,
+                note=f"{label}: {note}"[:500] if note else label)
+            adj.save(update_fields=["movement"])
+            log_activity(user, "receipt_adjustment", receipt,
+                         changes={"kind": kind, "qty": qty, "sku": product.sku,
+                                  "credit": str(credit_amount)}, note=note)
+        return adj
+
+    def undo(self, user=None):
+        """Put the units back exactly as they were taken out."""
+        if self.reversed:
+            return
+        product = self.line.product
+        with transaction.atomic():
+            on_hand = Product.all_objects.get(pk=product.pk).qty_on_hand
+            unit = self.unit_cost_removed
+            if self.kind == "return":
+                new_avg = ((Decimal(on_hand) * product.avg_cost + Decimal(self.qty) * unit)
+                           / Decimal(on_hand + self.qty)).quantize(FOURPLACES, ROUND_HALF_UP)
+            else:
+                new_avg = None
+            self.reversal = product.apply_movement(
+                movement_type=self.movement.movement_type if self.movement else "adjustment",
+                qty_delta=self.qty, user=user, unit_cost=unit, new_avg_cost=new_avg,
+                reference=f"RCV-{self.receipt_id}", source=self, note=f"Undo {self.get_kind_display()}")
+            self.reversed = True
+            self.save(update_fields=["reversed", "reversal"])
+            log_activity(user, "receipt_adjustment_undo", self.receipt,
+                         changes={"kind": self.kind, "qty": self.qty, "sku": product.sku})
+
+
 class TradepostFill(models.Model):
     """A purchase (order execution) pulled from Tradepost's API. Cached so the
     Tradepost screen loads instantly, remembers which supplier order each
-    fill went to, which ones were dismissed, and the latest package tracking."""
+    fill went to, which ones are closed, and the latest package tracking."""
 
     execution_id = models.CharField(max_length=40, unique=True)
     order_number = models.CharField(max_length=20, db_index=True)
@@ -670,7 +839,8 @@ class TradepostFill(models.Model):
     packages = models.JSONField(default=list, blank=True)
     receipt = models.ForeignKey(Receipt, null=True, blank=True, on_delete=models.SET_NULL,
                                 related_name="tradepost_fills")
-    dismissed = models.BooleanField(default=False, db_index=True)
+    closed = models.BooleanField(default=False, db_index=True,
+                                 help_text="Done with this order (received, or nothing left to do)")
     fetched_at = models.DateTimeField(auto_now=True)
 
     class Meta:
