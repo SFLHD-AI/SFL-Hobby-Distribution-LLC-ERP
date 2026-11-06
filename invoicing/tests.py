@@ -451,3 +451,8 @@ class InvoicePdfViewerPhoneTests(TestCase):
         self.assertIn("isIOS", html)
         self.assertIn("Open the PDF", html)
         self.assertIn('class="card-pad sm:hidden', html)      # phone layout, no iframe
+        # the PDF itself must be embeddable in the preview page (same origin),
+        # otherwise browsers show "refused to connect" instead of the invoice
+        r = self.client.get(f"/invoices/{inv.pk}/pdf/")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.headers.get("X-Frame-Options"), "SAMEORIGIN")

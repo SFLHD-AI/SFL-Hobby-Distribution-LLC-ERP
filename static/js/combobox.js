@@ -33,9 +33,24 @@
 
     const list = document.createElement("div");
     list.className = "sfl-combo-list";
-    list.style.cssText = "position:absolute;left:0;right:0;z-index:40;background:#fff;border:1px solid #cbd5e1;" +
-      "border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.15);max-height:min(60vh,22rem);overflow-y:auto;display:none;margin-top:4px;";
-    wrap.appendChild(list);
+    // The list is appended to <body> and positioned "fixed" so no scrolling
+    // card, table wrapper or overflow:hidden box can clip it — it always
+    // renders on top of everything else.
+    list.style.cssText = "position:fixed;z-index:1000;background:#fff;border:1px solid #cbd5e1;" +
+      "border-radius:10px;box-shadow:0 10px 30px rgba(15,23,42,.15);max-height:min(60vh,22rem);overflow-y:auto;display:none;";
+    document.body.appendChild(list);
+    function place() {
+      const r = input.getBoundingClientRect();
+      const vh = window.innerHeight, vw = window.innerWidth;
+      const below = vh - r.bottom - 8, above = r.top - 8;
+      const maxH = Math.min(22 * 16, vh * 0.6);
+      const openUp = below < 160 && above > below;
+      list.style.left = Math.max(8, r.left) + "px";
+      list.style.width = Math.min(r.width, vw - 16) + "px";
+      list.style.maxHeight = Math.max(120, Math.min(maxH, openUp ? above : below)) + "px";
+      if (openUp) { list.style.top = ""; list.style.bottom = (vh - r.top + 4) + "px"; }
+      else { list.style.bottom = ""; list.style.top = (r.bottom + 4) + "px"; }
+    }
     select._comboInput = input;
 
     const options = Array.from(select.options).filter(o => o.value !== "");
@@ -77,7 +92,9 @@
         list.appendChild(d);
       }
     }
-    function open() { render(input.value); list.style.display = "block"; input.setAttribute("aria-expanded", "true"); }
+    function open() { render(input.value); place(); list.style.display = "block"; input.setAttribute("aria-expanded", "true"); }
+    window.addEventListener("resize", () => { if (list.style.display === "block") place(); });
+    window.addEventListener("scroll", () => { if (list.style.display === "block") place(); }, true);
     function close() { list.style.display = "none"; active = -1; input.setAttribute("aria-expanded", "false"); }
     function choose(o) {
       select.value = o.value;
@@ -112,6 +129,7 @@
       });
     }
     syncFromSelect();
+    select._comboList = list;
   }
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
   function init(root) { (root || document).querySelectorAll("select[data-combobox]").forEach(build); }

@@ -6,6 +6,7 @@ from django.core.mail import EmailMessage
 from django.db import models
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_sameorigin
 
 from core.csvutils import csv_response
 from core.models import CompanySettings, log_activity
@@ -207,6 +208,7 @@ def invoice_detail(request, pk):
 
 
 @module_required("invoices")
+@xframe_options_sameorigin  # embedded in the preview page (same site only)
 def invoice_pdf(request, pk):
     invoice = get_object_or_404(Invoice, pk=pk)
     company = CompanySettings.get()
