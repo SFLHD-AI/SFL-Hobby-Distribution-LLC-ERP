@@ -245,6 +245,12 @@ How the screen works:
   invoice #**, Reference or Notes — so orders you logged by hand show up as
   *Logged* with a link to the RCV. If one didn't match, open
   *already logged? link it* on the row and type the RCV number.
+* **Disputes.** A fill in dispute (or with an open dispute) is logged at
+  the *original* price and quantity you bought — the cross price, not
+  Tradepost's post-dispute figures, which can move while it is open. The
+  row says *original price* and shows the dispute reason. When Tradepost
+  settles it, record the outcome on the supplier order (Damaged write-off
+  or Return with the credit you received).
 * **Logging new fills.** Tick fills and **Log selected as a supplier
   order**, or **Log all new**: one RCV, supplier "Tradepost", one line per
   fill at the fees-in unit cost, order numbers in both Supplier invoice #

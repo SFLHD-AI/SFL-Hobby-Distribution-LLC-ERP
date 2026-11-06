@@ -40,6 +40,7 @@ _FILL_FIELDS = """
   key { name }
   pnl { boughtQuantity buyUnitPriceCents buyFeesCents }
   transfers { id status shipmentGroup { id shippingLabels { id trackingCode carrier currentStatus estimatedDeliveryDate updatedAt } } }
+  disputes { id status reason createdAt resolvedAt }
 """
 
 _LIST_QUERY = """
@@ -72,6 +73,8 @@ class Fill:
     condition: str = ""
     tcgplayer_id: int | None = None
     labels: list = field(default_factory=list)   # [{"tracking", "carrier", "tp_status", "tp_eta"}]
+    disputed: bool = False        # in dispute (or a dispute is open): costed at the ORIGINAL price
+    dispute_note: str = ""
     raw: dict = field(default_factory=dict)
 
     @property
@@ -139,6 +142,7 @@ class TradepostClient:
         for _ in range(max_pages):
             inp = {"side": "BUY", "executedAfter": since.isoformat().replace("+00:00", "Z"),
                    "includeProductData": True, "includePnl": True, "includeTransfers": True,
+                   "includeDisputes": True,
                    "pagination": {"first": page_size}}
             if status:
                 inp["status"] = status
@@ -173,6 +177,22 @@ class TradepostClient:
         fees_cents = int(pnl.get("buyFeesCents") or 0) if pnl.get("buyFeesCents") not in (None, "") else 0
         unit_cents = pnl.get("buyUnitPriceCents")
         unit_cents = int(unit_cents) if unit_cents not in (None, "") else price_cents
+        # A dispute may move Tradepost's "outcome" quantity and cash-actual
+        # price while it is open. Log the order at what you ORIGINALLY paid
+        # (cross price × units bought); whatever the dispute settles is
+        # recorded afterwards as a damaged / returned adjustment on the RCV.
+        disputes = [d for d in (row.get("disputes") or []) if d]
+        open_disputes = [d for d in disputes
+                         if not d.get("resolvedAt") and (d.get("status") or "").upper() not in
+                         ("RESOLVED", "CLOSED", "WITHDRAWN", "REJECTED", "DENIED", "CANCELED", "CANCELLED")]
+        disputed = (row.get("status") == "IN_DISPUTE") or bool(open_disputes)
+        dispute_note = ""
+        if disputes:
+            d = (open_disputes or disputes)[0]
+            dispute_note = " · ".join(x for x in ((d.get("status") or "").replace("_", " ").title(),
+                                                  (d.get("reason") or "")[:120]) if x)
+        if disputed:
+            unit_cents = price_cents
         tcg = _tcgplayer_id(cfg.get("externalId"), cfg.get("externalIds"), cfg.get("data"))
         executed = None
         if row.get("executedAt"):
@@ -192,7 +212,7 @@ class TradepostClient:
                 labels.append({"tracking": code, "carrier": normalize_carrier(lb.get("carrier"), code),
                                "tp_status": lb.get("currentStatus") or "", "tp_eta": eta[:10] if eta else ""})
         return Fill(
-            labels=labels,
+            labels=labels, disputed=disputed, dispute_note=dispute_note,
             id=str(row.get("id") or ""), order_number=row.get("orderNumber") or "",
             status=row.get("status") or "", executed_at=executed, quantity=qty,
             unit_cost=(Decimal(unit_cents) / 100).quantize(Decimal("0.0001")),
@@ -325,7 +345,7 @@ def sync_fills(client, since=None):
                       quantity=f.quantity, unit_cost=f.unit_cost, price_cents=f.price_cents,
                       fees_cents=f.fees_cents, config_id=f.config_id, product_name=f.product_name[:250],
                       set_name=f.set_name[:250], condition=f.condition[:40], tcgplayer_id=f.tcgplayer_id,
-                      packages=packages)
+                      packages=packages, disputed=f.disputed, dispute_note=f.dispute_note[:200])
         if existing:
             for k, v in fields.items():
                 setattr(existing, k, v)

@@ -826,6 +826,46 @@ class TradepostImportTests(TestCase):
         self.assertIsNone(g.tcgplayer_id)
         self.assertEqual(g.labels, [])
 
+    def test_disputed_fill_uses_original_price(self):
+        import copy
+        from inventory.tradepost import TradepostClient
+        row = copy.deepcopy(self.SAMPLE[0])
+        row["status"] = "IN_DISPUTE"
+        row["pnl"] = {"boughtQuantity": 1, "buyUnitPriceCents": "88000", "buyFeesCents": "0"}   # dispute moved it
+        row["disputes"] = [{"id": "d1", "status": "OPEN", "reason": "Box arrived crushed", "createdAt": "x", "resolvedAt": None}]
+        f = TradepostClient.parse_fill(row)
+        self.assertTrue(f.disputed)
+        self.assertEqual(f.quantity, 2)                              # what you bought, not the outcome qty
+        self.assertEqual(f.unit_cost, Decimal("1737.3700"))          # the cross price you originally paid
+        self.assertIn("Box arrived crushed", f.dispute_note)
+        # a settled fill with a resolved dispute goes back to the fees-in price
+        row["status"] = "SETTLED"
+        row["disputes"][0].update(status="RESOLVED", resolvedAt="2026-11-05T00:00:00Z")
+        g = TradepostClient.parse_fill(row)
+        self.assertFalse(g.disputed)
+        self.assertEqual(g.unit_cost, Decimal("880.0000"))
+        # and an open dispute on a SETTLING fill still counts as disputed
+        row["status"] = "SETTLING"
+        row["disputes"][0].update(status="OPEN", resolvedAt=None)
+        self.assertTrue(TradepostClient.parse_fill(row).disputed)
+
+    def test_disputed_fill_logs_rcv_at_original_price(self):
+        import copy
+        from unittest import mock
+        from inventory import tradepost as tp
+        from inventory.models import Receipt
+        rows = copy.deepcopy(self.SAMPLE)
+        rows[0]["status"] = "IN_DISPUTE"
+        rows[0]["pnl"] = {"boughtQuantity": 1, "buyUnitPriceCents": "88000", "buyFeesCents": "0"}
+        rows[0]["disputes"] = [{"id": "d1", "status": "OPEN", "reason": "crushed", "createdAt": "x", "resolvedAt": None}]
+        parse = tp.TradepostClient.parse_fill
+        with mock.patch.object(tp.TradepostClient, "list_buys", lambda self, since=None, **kw: [parse(r) for r in rows]):
+            html = self.client.get("/inventory/receiving/tradepost/").content.decode()
+            self.assertIn("original price", html)
+            self.client.post("/inventory/receiving/tradepost/", {"action": "create", "fill": ["aaaa-1"]})
+        line = Receipt.objects.get().lines.get()
+        self.assertEqual((line.qty, line.unit_cost), (2, Decimal("1737.3700")))
+
     def test_first_visit_syncs_and_tracks(self):
         from inventory.models import TradepostFill
         html = self.client.get("/inventory/receiving/tradepost/").content.decode()

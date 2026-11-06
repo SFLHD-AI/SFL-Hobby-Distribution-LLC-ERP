@@ -834,6 +834,9 @@ class TradepostFill(models.Model):
     set_name = models.CharField(max_length=250, blank=True)
     condition = models.CharField(max_length=40, blank=True)
     tcgplayer_id = models.PositiveIntegerField(null=True, blank=True)
+    disputed = models.BooleanField(default=False,
+                                   help_text="A dispute is open on this fill; unit_cost is the original price paid")
+    dispute_note = models.CharField(max_length=200, blank=True)
     # [{"tracking": "1Z…", "carrier": "ups", "tp_status": "IN_TRANSIT", "tp_eta": "2026-11-09",
     #   "status": "TRANSIT", "detail": "…", "location": "…", "eta": "2026-11-09", "checked_at": "…"}]
     packages = models.JSONField(default=list, blank=True)

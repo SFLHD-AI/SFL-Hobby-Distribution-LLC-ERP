@@ -60,7 +60,8 @@
       <tr class="{% if f.closed %}opacity-60{% endif %}">
         <td><input type="checkbox" name="fill" value="{{ f.execution_id }}" class="tp-pick"></td>
         <td class="font-mono text-xs whitespace-nowrap">{{ f.order_number }}
-            <div class="mt-0.5"><span class="badge {% if f.status == 'SETTLED' %}bg-emerald-100 text-emerald-700{% elif f.status == 'IN_DISPUTE' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ f.status|lower|capfirst }}</span></div></td>
+            <div class="mt-0.5"><span class="badge {% if f.status == 'SETTLED' %}bg-emerald-100 text-emerald-700{% elif f.status == 'IN_DISPUTE' %}bg-red-100 text-red-700{% else %}bg-amber-100 text-amber-700{% endif %}">{{ f.status|lower|capfirst }}</span>{% if f.disputed and f.status != 'IN_DISPUTE' %} <span class="badge bg-red-100 text-red-700">Dispute</span>{% endif %}</div>
+            {% if f.dispute_note %}<div class="text-[10px] text-red-600 mt-0.5 max-w-[12rem] whitespace-normal">{{ f.dispute_note }}</div>{% endif %}</td>
         <td class="whitespace-nowrap">{{ f.executed_at|date:"M j, Y" }}</td>
         <td><div class="font-medium">{{ f.product_name }}</div>
             <div class="text-xs text-slate-500">{{ f.set_name }}{% if f.condition %} · {{ f.condition }}{% endif %}{% if f.tcgplayer_id %} · TCG {{ f.tcgplayer_id }}{% endif %}
@@ -78,7 +79,7 @@
           {% endif %}
         </td>
         <td class="num">{{ f.quantity }}</td>
-        <td class="num">${{ f.unit_cost|floatformat:2|intcomma }}{% if f.fees_cents %}<div class="text-[10px] text-slate-400">fees in</div>{% endif %}</td>
+        <td class="num">${{ f.unit_cost|floatformat:2|intcomma }}{% if f.disputed %}<div class="text-[10px] text-red-600" title="Dispute open — logged at the original price you paid; record the outcome on the supplier order afterwards">original price</div>{% elif f.fees_cents %}<div class="text-[10px] text-slate-400">fees in</div>{% endif %}</td>
         <td class="num font-medium">${{ f.line_total|floatformat:2|intcomma }}</td>
         <td class="text-xs">
           {% if f.tracking_badge %}
@@ -116,7 +117,7 @@
 </div>
 </form>
 <form method="post" id="linkForm" class="hidden">{% csrf_token %}<input type="hidden" name="action" value="link"><input type="hidden" name="fill_id" id="linkFill"><input type="hidden" name="rcv" id="linkRcv"><input type="hidden" name="view" value="{{ view }}"><input type="hidden" name="days" value="{{ days }}"></form>
-<p class="text-xs text-slate-500 mt-3"><strong>Open</strong> is everything still in play. An order closes by itself when its supplier order is marked received; close anything else by hand (old orders you won't log, for example) and it stays under <strong>Closed</strong>. Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you.</p>
+<p class="text-xs text-slate-500 mt-3"><strong>Open</strong> is everything still in play. An order closes by itself when its supplier order is marked received; close anything else by hand (old orders you won't log, for example) and it stays under <strong>Closed</strong>. Fills are matched to orders you logged by hand when the Tradepost order number appears in the order's <strong>Supplier invoice #</strong>, Reference or Notes. New supplier orders created here get the order numbers in both. Products are matched by Tradepost ID, TCGplayer ID, then exact name; anything else is created for you. <strong>Disputed</strong> fills are logged at the <em>original</em> price and quantity you bought; once Tradepost settles the dispute, record the outcome (damaged write-off or return with the credit) on the supplier order.</p>
 <script>
   const all = document.getElementById("tpAll");
   if (all) all.addEventListener("change", () => document.querySelectorAll(".tp-pick").forEach(c => { c.checked = all.checked; }));
