@@ -62,20 +62,21 @@
         <td></td>
         <td colspan="9" class="!py-2">
           {% if r.lines.all %}
-          <table class="w-full text-sm">
+          <table class="w-full text-sm table-fixed">
+            <colgroup><col class="w-40"><col><col class="w-16"><col class="w-28"><col class="w-28"><col class="w-28"></colgroup>
             <thead><tr class="text-xs uppercase text-slate-500">
               <th class="text-left py-1 pr-3">SKU</th><th class="text-left py-1 pr-3">Product</th>
               <th class="text-right py-1 pr-3">Qty</th><th class="text-right py-1 pr-3">Unit cost</th>
-              {% if r.posted %}<th class="text-right py-1 pr-3">Landed unit</th>{% endif %}
+              <th class="text-right py-1 pr-3">Landed unit</th>
               <th class="text-right py-1">Line total</th></tr></thead>
             <tbody>
             {% for l in r.lines.all %}
               <tr class="border-t border-slate-200">
-                <td class="py-1 pr-3 font-mono text-xs"><a href="{% url 'product_detail' l.product.pk %}" class="text-indigo-600 hover:underline">{{ l.product.sku }}</a></td>
-                <td class="py-1 pr-3">{{ l.product.name }}</td>
+                <td class="py-1 pr-3 font-mono text-xs truncate"><a href="{% url 'product_detail' l.product.pk %}" class="text-indigo-600 hover:underline" title="{{ l.product.sku }}">{{ l.product.sku }}</a></td>
+                <td class="py-1 pr-3 truncate" title="{{ l.product.name }}">{{ l.product.name }}</td>
                 <td class="py-1 pr-3 text-right font-medium">{{ l.qty|intcomma }}</td>
                 <td class="py-1 pr-3 text-right">${{ l.unit_cost|floatformat:2|intcomma }}</td>
-                {% if r.posted %}<td class="py-1 pr-3 text-right">{% if l.landed_unit_cost %}${{ l.landed_unit_cost|floatformat:2|intcomma }}{% else %}—{% endif %}</td>{% endif %}
+                <td class="py-1 pr-3 text-right {% if not r.posted %}text-slate-400{% endif %}">{% if r.posted and l.landed_unit_cost %}${{ l.landed_unit_cost|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
                 <td class="py-1 text-right font-medium">${{ l.line_total|floatformat:2|intcomma }}</td>
               </tr>
             {% endfor %}
@@ -83,7 +84,7 @@
             <tfoot><tr class="border-t-2 border-slate-300 font-semibold">
               <td class="py-1 pr-3" colspan="2">{{ r.lines.all|length }} product{{ r.lines.all|length|pluralize }}</td>
               <td class="py-1 pr-3 text-right">{{ r.total_qty|intcomma }}</td>
-              <td class="py-1 pr-3" {% if r.posted %}colspan="2"{% endif %}></td>
+              <td class="py-1 pr-3" colspan="2"></td>
               <td class="py-1 text-right">${{ r.merchandise_total|floatformat:2|intcomma }}</td>
             </tr></tfoot>
           </table>
