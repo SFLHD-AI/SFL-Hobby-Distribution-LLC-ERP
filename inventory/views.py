@@ -17,7 +17,7 @@ from inventory.forms import (ReceiptBillForm, ReceiptPackageForm, AdjustmentForm
                              ReceiptLineForm)
 from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
                               PriceList, PriceListItem, Product, Receipt,
-                              ReceiptLine, StockAdjustment, StockMovement)
+                              ReceiptLine, StockAdjustment, StockMovement, Supplier)
 
 
 # ---------------------------------------------------------------------------
@@ -420,6 +420,128 @@ def _receipt_sort(request, receipts):
         sort = "id"
     receipts.sort(key=keys[sort], reverse=(direction == "desc"))
     return sort, direction
+
+
+@module_required("receiving")
+def receipt_import(request):
+    """
+    Paste / upload a supplier order (Tradepost export, order-confirmation
+    email, any distributor CSV) → review the matched lines → draft RCV.
+    """
+    from inventory.order_import import ParsedLine, match_products, parse_text
+    suppliers = Supplier.objects.order_by("name")
+    ctx = {"suppliers": suppliers, "text": "", "lines": None,
+           "products": Product.objects.filter(active=True).only("pk", "sku", "name", "upc").order_by("sku"),
+           "supplier_id": request.GET.get("supplier") or "", "new_supplier": "",
+           "reference": "", "date": timezone.localdate().isoformat(), "expected_date": "",
+           "freight_cost": "", "notes": ""}
+    if request.method != "POST":
+        return render(request, "inventory/receipt_import.html", ctx)
+
+    for k in ("supplier_id", "new_supplier", "reference", "date", "expected_date", "freight_cost", "notes"):
+        ctx[k] = (request.POST.get(k) or "").strip()
+    action = request.POST.get("action")
+
+    if action == "preview":
+        text = (request.POST.get("paste") or request.POST.get("text") or "")
+        if request.FILES.get("file"):
+            text = request.FILES["file"].read().decode("utf-8-sig", errors="replace")
+        ctx["text"] = text
+        lines = match_products(parse_text(text), Product)
+        if not lines:
+            messages.error(request, "Couldn't find any order lines in that text. Paste the item rows "
+                                    "(one per line) or upload the order's CSV export.")
+        ctx["lines"] = lines
+        return render(request, "inventory/receipt_import.html", ctx)
+
+    if action == "create":
+        # rebuild the reviewed lines from the form
+        lines, errors = [], []
+        n = int(request.POST.get("n") or 0)
+        for i in range(n):
+            if request.POST.get(f"skip_{i}"):
+                continue
+            ln = ParsedLine(code=request.POST.get(f"code_{i}", "").strip(),
+                            name=request.POST.get(f"name_{i}", "").strip(),
+                            qty=None, cost=None)
+            try:
+                ln.qty = int(request.POST.get(f"qty_{i}") or 0)
+                ln.cost = Decimal(request.POST.get(f"cost_{i}") or "")
+            except (ValueError, InvalidOperation):
+                errors.append(f"Line {i + 1}: quantity and unit cost must be numbers.")
+                continue
+            if ln.qty <= 0 or ln.cost < 0:
+                errors.append(f"Line {i + 1}: quantity must be at least 1 and cost can't be negative.")
+                continue
+            pid = request.POST.get(f"product_{i}") or ""
+            if pid.isdigit():
+                ln.product_id = int(pid)
+            elif request.POST.get(f"create_{i}"):
+                ln.product_id = None          # create below
+            else:
+                errors.append(f"Line {i + 1}: pick a product or tick “create it”.")
+                continue
+            lines.append(ln)
+        supplier = None
+        if ctx["new_supplier"]:
+            supplier, _ = Supplier.objects.get_or_create(name=ctx["new_supplier"])
+        elif ctx["supplier_id"].isdigit():
+            supplier = Supplier.objects.filter(pk=int(ctx["supplier_id"])).first()
+        if not lines and not errors:
+            errors.append("Nothing to import — every line was skipped.")
+        if errors:
+            for e in errors:
+                messages.error(request, e)
+            ctx["lines"] = match_products(parse_text(request.POST.get("text") or ""), Product)
+            ctx["text"] = request.POST.get("text") or ""
+            return render(request, "inventory/receipt_import.html", ctx)
+
+        from django.db import transaction
+        with transaction.atomic():
+            receipt = Receipt(supplier=supplier, reference=ctx["reference"][:100],
+                              notes=ctx["notes"], created_by=request.user)
+            for f in ("date", "expected_date"):
+                if ctx[f]:
+                    try:
+                        setattr(receipt, f, timezone.datetime.fromisoformat(ctx[f]).date())
+                    except ValueError:
+                        pass
+            if ctx["freight_cost"]:
+                try:
+                    receipt.freight_cost = Decimal(ctx["freight_cost"])
+                except InvalidOperation:
+                    pass
+            receipt.save()
+            created_products = 0
+            for ln in lines:
+                if ln.product_id is None:
+                    sku = ln.code or _next_import_sku()
+                    product = Product.objects.filter(sku=sku).first()
+                    if product is None:
+                        product = Product.objects.create(
+                            sku=sku, name=(ln.name or sku)[:250],
+                            upc=ln.code if ln.code.isdigit() else "",
+                            default_price=(ln.cost * Decimal("1.25")).quantize(Decimal("0.01")))
+                        created_products += 1
+                    ln.product_id = product.pk
+                ReceiptLine.objects.create(receipt=receipt, product_id=ln.product_id,
+                                           qty=ln.qty, unit_cost=ln.cost)
+        log_activity(request.user, "create", receipt)
+        msg = f"Imported {len(lines)} line{'s' if len(lines) != 1 else ''} into RCV-{receipt.pk}."
+        if created_products:
+            msg += f" {created_products} new product{'s' if created_products != 1 else ''} created — " \
+                   "set their prices and categories when you get a chance."
+        messages.success(request, msg)
+        return redirect("receipt_detail", receipt.pk)
+    return render(request, "inventory/receipt_import.html", ctx)
+
+
+def _next_import_sku():
+    base = "IMP-"
+    n = Product.all_objects.filter(sku__startswith=base).count() + 1
+    while Product.all_objects.filter(sku=f"{base}{n:04d}").exists():
+        n += 1
+    return f"{base}{n:04d}"
 
 
 @module_required("receiving")

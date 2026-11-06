@@ -207,6 +207,28 @@ Also under Expenses:
   (`Expenses → ?review=yes`, also the dashboard link) lists rows created by
   a rule or a recurring template that still want a human glance.
 
+### Importing a supplier order (Tradepost, distributor portals)
+
+Receiving → **Import an order** turns a supplier's order into a draft RCV
+without typing each line:
+
+1. Copy the item rows from the order page or confirmation email (or download
+   the portal's CSV export) and paste / upload them.
+2. Click **Match products**. Each line is matched to a product by UPC, extra
+   barcode or SKU. Unmatched lines can be pointed at an existing product or
+   ticked to create a new one (SKU = the code on the order).
+3. Fix any amber quantity / cost cells, then **Create supplier order**. You
+   land on the new RCV, still open, ready for tracking numbers and
+   **Mark received**.
+
+Headers such as `UPC, Description, Qty, Unit Price, Total` are recognised;
+without headers each line is scanned for a barcode, a quantity (`x4`,
+`Qty: 4`, or a lone number) and the money amounts.
+
+Tradepost's own API is available only to approved partners through their
+Partner Exchange; once SFL has keys and docs, the same importer can be fed
+directly from the API.
+
 ### Supplier bills on Receiving
 
 A supplier order (Receiving) is also the supplier's **bill**. On the

@@ -682,3 +682,65 @@ class ReceivingListExpandSortTests(TestCase):
         self.assertIn("q=RL", html)
         self.assertIn("status=open", html)
         self.assertIn("sort=merch", html)
+
+
+class OrderImportTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.client.force_login(User.objects.create_superuser("imp", password="x"))
+        self.p = make_product("TOPPS-1", name="Topps Chrome Hobby Box", upc="887521161300")
+
+    def test_parser_csv_with_headers(self):
+        from inventory.order_import import parse_text
+        lines = parse_text("UPC,Description,Qty,Unit Price,Total\n"
+                           "887521161300,Topps Chrome Hobby Box,4,$1288.76,$5155.04\n"
+                           "810199502014,OP-17 Double Pack,13,,481.52\n")
+        self.assertEqual([(l.code, l.qty, l.cost) for l in lines],
+                         [("887521161300", 4, Decimal("1288.76")), ("810199502014", 13, Decimal("37.04"))])
+
+    def test_parser_freeform_lines(self):
+        from inventory.order_import import parse_text
+        lines = parse_text("Order #555\n"
+                           "887521161300  2025/26 Topps Chrome Hobby Box   4   $1,288.76   $5,155.04\n"
+                           "SV Prismatic Bundle - Sealed Case x1 $1,737.37\n"
+                           "Subtotal $6,892.41")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual((lines[0].code, lines[0].qty, lines[0].cost), ("887521161300", 4, Decimal("1288.76")))
+        self.assertEqual((lines[1].code, lines[1].name, lines[1].qty, lines[1].cost),
+                         ("", "SV Prismatic Bundle - Sealed Case", 1, Decimal("1737.37")))
+
+    def test_preview_matches_products_by_upc(self):
+        r = self.client.post("/inventory/receiving/import/", {
+            "action": "preview", "paste": "887521161300  Topps Chrome Hobby Box  4  $1,288.76\n"
+                                          "000000000001  Mystery Item  2  $5.00"})
+        html = r.content.decode()
+        self.assertIn("matched", html)
+        self.assertIn("TOPPS-1", html)
+        self.assertIn("create it as a new product", html)
+
+    def test_create_builds_receipt_and_new_product(self):
+        from inventory.models import Receipt, Supplier
+        r = self.client.post("/inventory/receiving/import/", {
+            "action": "create", "new_supplier": "Tradepost", "reference": "TP-1001", "n": "3",
+            "code_0": "887521161300", "name_0": "Topps", "product_0": str(self.p.pk), "qty_0": "4", "cost_0": "1288.76",
+            "code_1": "000000000001", "name_1": "Mystery Item", "product_1": "", "create_1": "1", "qty_1": "2", "cost_1": "5.00",
+            "code_2": "", "name_2": "Skipped", "product_2": "", "qty_2": "1", "cost_2": "1", "skip_2": "1",
+        })
+        self.assertEqual(r.status_code, 302)
+        rcv = Receipt.objects.get(reference="TP-1001")
+        self.assertEqual(rcv.supplier, Supplier.objects.get(name="Tradepost"))
+        self.assertEqual(rcv.lines.count(), 2)
+        self.assertFalse(rcv.posted)
+        self.assertEqual(rcv.merchandise_total, Decimal("5165.04"))
+        new = Product.objects.get(sku="000000000001")
+        self.assertEqual(new.upc, "000000000001")
+        self.assertEqual(new.name, "Mystery Item")
+
+    def test_create_refuses_unmatched_line_without_create_flag(self):
+        from inventory.models import Receipt
+        r = self.client.post("/inventory/receiving/import/", {
+            "action": "create", "n": "1", "code_0": "999", "name_0": "X", "product_0": "", "qty_0": "1", "cost_0": "1",
+            "text": "999 X 1 $1",
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(Receipt.objects.count(), 0)

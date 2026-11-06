@@ -1,0 +1,93 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Import a supplier order{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
+  <h1 class="page-title">Import a supplier order</h1>
+  <a href="{% url 'receipt_list' %}" class="text-sm text-indigo-600 hover:underline">← Receiving</a>
+</div>
+
+<form method="post" enctype="multipart/form-data" class="space-y-4" id="importForm">{% csrf_token %}
+  <input type="hidden" name="text" value="{{ text }}">
+  <div class="card-pad grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+    <div><label class="text-xs text-slate-500 block mb-1">Supplier</label>
+      <select name="supplier_id" class="w-full"><option value="">— pick —</option>
+        {% for s in suppliers %}<option value="{{ s.pk }}" {% if supplier_id == s.pk|stringformat:"s" %}selected{% endif %}>{{ s.name }}</option>{% endfor %}</select></div>
+    <div><label class="text-xs text-slate-500 block mb-1">…or new supplier</label>
+      <input type="text" name="new_supplier" value="{{ new_supplier }}" placeholder="Tradepost" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Their order # / reference</label>
+      <input type="text" name="reference" value="{{ reference }}" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Order date</label>
+      <input type="date" name="date" value="{{ date }}" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Expected delivery</label>
+      <input type="date" name="expected_date" value="{{ expected_date }}" class="w-full"></div>
+    <div><label class="text-xs text-slate-500 block mb-1">Freight ($)</label>
+      <input type="number" step="0.01" min="0" name="freight_cost" value="{{ freight_cost }}" class="w-full"></div>
+    <div class="sm:col-span-2"><label class="text-xs text-slate-500 block mb-1">Notes</label>
+      <input type="text" name="notes" value="{{ notes }}" class="w-full"></div>
+  </div>
+
+  {% if lines is None or not lines %}
+  <div class="card-pad space-y-3">
+    <p class="text-sm text-slate-600">
+      Paste the item lines from the order — a Tradepost order page or confirmation email, a distributor's CSV export, or a
+      spreadsheet selection. Each line needs a <strong>UPC or SKU</strong> (or the product name), a <strong>quantity</strong>
+      and a <strong>unit cost</strong>; headers like <code>UPC, Description, Qty, Unit Price</code> are picked up automatically.
+    </p>
+    <textarea name="paste" rows="10" class="w-full font-mono text-xs" placeholder="887521161300  2025/26 Topps Chrome Update Basketball Hobby Box   4   $1,288.76
+810199502014  OP-17 Double Pack   13   $37.04
+…or a CSV with headers: UPC, Description, Qty, Unit Price, Total">{{ text }}</textarea>
+    <div class="flex flex-wrap items-center gap-3">
+      <label class="text-sm text-slate-600">or upload a file <input type="file" name="file" accept=".csv,.txt,.tsv" class="text-sm"></label>
+      <button class="btn-primary" name="action" value="preview">Match products →</button>
+    </div>
+  </div>
+  {% else %}
+  <div class="card overflow-x-auto">
+    <table class="tbl">
+      <thead><tr><th class="w-8">Use</th><th>From the order</th><th>Product in SFL ERP</th><th class="num w-20">Qty</th><th class="num w-28">Unit cost</th><th class="num w-28">Line</th></tr></thead>
+      <tbody>
+      {% for l in lines %}
+        <tr class="{% if l.problems %}bg-amber-50{% endif %}">
+          <td><input type="checkbox" name="skip_{{ forloop.counter0 }}" value="1" class="hidden" id="skip_{{ forloop.counter0 }}">
+              <input type="checkbox" checked data-skip="skip_{{ forloop.counter0 }}" title="Untick to leave this line out"></td>
+          <td class="text-xs">
+            <input type="hidden" name="code_{{ forloop.counter0 }}" value="{{ l.code }}">
+            <input type="hidden" name="name_{{ forloop.counter0 }}" value="{{ l.name }}">
+            {% if l.code %}<span class="font-mono">{{ l.code }}</span><br>{% endif %}<span class="text-slate-600">{{ l.name|default:l.raw }}</span></td>
+          <td>
+            {% if l.product_id %}
+              <input type="hidden" name="product_{{ forloop.counter0 }}" value="{{ l.product_id }}">
+              <span class="badge bg-emerald-100 text-emerald-700">matched</span> <span class="text-sm">{{ l.product_label }}</span>
+            {% else %}
+              <select name="product_{{ forloop.counter0 }}" data-combobox data-combobox-placeholder="Search for the product…" class="w-full">
+                <option value="">— not found: pick one —</option>
+                {% for p in products %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.upc }}">{{ p.sku }} — {{ p.name }}</option>{% endfor %}
+              </select>
+              <label class="text-xs text-slate-600 mt-1 inline-flex items-center gap-1">
+                <input type="checkbox" name="create_{{ forloop.counter0 }}" value="1" {% if l.name %}checked{% endif %}> create it as a new product{% if l.code %} (SKU/UPC {{ l.code }}){% endif %}</label>
+            {% endif %}
+          </td>
+          <td class="num"><input type="number" name="qty_{{ forloop.counter0 }}" value="{{ l.qty|default:'' }}" min="1" class="w-20 text-right {% if 'quantity' in l.problems %}border-amber-500{% endif %}"></td>
+          <td class="num"><input type="number" step="0.0001" name="cost_{{ forloop.counter0 }}" value="{{ l.cost|default_if_none:'' }}" min="0" class="w-28 text-right {% if 'unit cost' in l.problems %}border-amber-500{% endif %}"></td>
+          <td class="num text-sm">{% if l.line_total is not None %}${{ l.line_total|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <input type="hidden" name="n" value="{{ lines|length }}">
+  <div class="flex flex-wrap items-center gap-3">
+    <button class="btn-primary" name="action" value="create">Create supplier order</button>
+    <button class="btn-secondary" name="action" value="preview" formnovalidate>↻ Re-match</button>
+    <a href="{% url 'receipt_import' %}" class="text-sm text-slate-500 hover:underline">start over</a>
+    <span class="text-xs text-slate-500">Amber rows need a quantity, cost or product before they can be imported.</span>
+  </div>
+  <script>
+    document.querySelectorAll("[data-skip]").forEach(cb => cb.addEventListener("change", () => {
+      document.getElementById(cb.dataset.skip).checked = !cb.checked;
+      cb.closest("tr").classList.toggle("opacity-40", !cb.checked);
+    }));
+  </script>
+  {% endif %}
+</form>
+{% endblock %}
