@@ -1,12 +1,24 @@
 {% extends "base.html" %}{% load humanize %}
 {% block title %}Category rules{% endblock %}
 {% block header_actions %}
-<form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'bank_rules' %}"><button class="btn-secondary" {% if not unreviewed %}disabled{% endif %}>⚡ Run on {{ unreviewed }} waiting</button></form>
+<form method="post" action="{% url 'bank_rules_starters' %}" class="inline">{% csrf_token %}<button class="btn-secondary" title="Add ready-made rules for Shippo, USPS, Tradepost, Amex payments, Stripe, Uline, bank fees and more">✨ Add starter rules</button></form>
+<form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{% url 'bank_rules' %}"><button class="btn-secondary" {% if not unreviewed %}disabled{% endif %}>⚡ Auto-categorize {{ unreviewed }} waiting</button></form>
 <a href="{% url 'bank_rule_create' %}" class="btn-primary">+ New rule</a>
 {% endblock %}
 {% block content %}
 <h1 class="page-title mb-1">Category rules</h1>
 <p class="text-sm text-slate-500 mb-3">"When a transaction looks like X, it is Y." Rules run on every new transaction. Lower priority numbers run first; the first match wins. Tick "Always categorize like this" in the inbox to create one in a click.</p>
+<div class="card-pad mb-4 text-sm text-slate-600 space-y-1">
+  <p><strong>What runs automatically on every import</strong> (and on ⚡ Auto-categorize), in this order:</p>
+  <ol class="list-decimal ml-5 space-y-0.5">
+    <li><strong>Your rules</strong>, then the starter rules (priority 200). Rules marked <em>suggest only</em> pre-fill the category for you to confirm.</li>
+    <li><strong>Transfers</strong>: the same amount going out of one of your accounts and into another within 3 days is paired as a transfer — card payments, moves to savings.</li>
+    <li><strong>Matches</strong>: an outflow equal to exactly one unpaid supplier bill, a deposit equal to exactly one customer payment, or an amount equal to one hand-entered expense is linked to it.</li>
+    <li><strong>Vendors you've saved</strong> pre-fill their default category.</li>
+    <li><strong>What you did before</strong>: a merchant you've categorized the same way 3+ times is categorized for real; fewer times, it's suggested.</li>
+  </ol>
+  <p>Everything auto-applied keeps an "auto" mark and can be undone from the inbox.</p>
+</div>
 {% include "banking/_subnav.html" %}
 <div class="card overflow-x-auto">
   <table class="tbl">

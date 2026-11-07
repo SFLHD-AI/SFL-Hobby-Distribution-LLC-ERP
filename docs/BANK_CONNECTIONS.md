@@ -263,3 +263,27 @@ semicolons and tabs. If it still fails the file is probably an Excel
 workbook (`.xlsx`) or a PDF statement; open it in Excel/Numbers and *Save
 as CSV (comma delimited)*. Quicken `.qfx/.ofx` files are not supported —
 pick CSV on the bank's download screen instead.
+
+
+## Automatic categorization
+
+Every import (and ⚡ **Auto-categorize** in the inbox) runs these passes in
+order; anything applied automatically carries an *auto* mark and can be
+undone from the inbox:
+
+1. **Your rules**, then the **starter rules** (Banking → Rules → *Add
+   starter rules*: Shippo, USPS, Pirate Ship, Tradepost, TCGplayer, GTS,
+   Stripe/Square/PayPal fees, Uline, Amex/Chase fees and interest, card
+   payments, Zelle, …). Suggest-only rules pre-fill the category for you to
+   confirm; ambiguous merchants (Amazon, Walmart, Target, UPS) are always
+   suggest-only.
+2. **Transfers between your own accounts** — same amount, opposite sign,
+   another account, within 3 days — are paired without any rule (credit
+   card payments, moves to savings). A card payment whose other side isn't
+   imported yet is held with a note instead of being categorized.
+3. **Exactly one open document** for the amount: an unpaid supplier bill
+   (within 1 %), a customer payment, or a hand-entered expense is linked.
+   Two candidates → left for a person.
+4. **Saved vendors** pre-fill their default category.
+5. **What you did before**: a merchant you categorized the same way 3+
+   times (≥ 90 % agreement) is categorized for real; fewer, it's suggested.

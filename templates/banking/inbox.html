@@ -3,7 +3,7 @@
 {% block header_actions %}
 <a href="{% url 'bank_import' %}" class="btn-secondary hidden sm:inline-flex">⬆ Import CSV</a>
 {% if connections %}<form method="post" action="{% url 'bank_sync_now' %}" class="inline">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}"><button class="btn-secondary">🔄 Sync now</button></form>{% endif %}
-<form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">{% if filters.account %}<input type="hidden" name="account" value="{{ filters.account }}">{% endif %}<button class="btn-primary">⚡ Run rules</button></form>
+<form method="post" action="{% url 'bank_rules_run' %}">{% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">{% if filters.account %}<input type="hidden" name="account" value="{{ filters.account }}">{% endif %}<button class="btn-primary" title="Rules, transfers between your accounts, matches to bills and payments, and what you've done before">⚡ Auto-categorize</button></form>
 {% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-end justify-between gap-3 mb-3">
@@ -71,7 +71,7 @@
     <option value="categorize">Categorize as…</option>
     <option value="personal">Personal (owner)</option>
     <option value="ignore">Ignore</option>
-    <option value="run_rules">Run rules</option>
+    <option value="run_rules">Auto-categorize</option>
     <option value="reset">Send back to review</option>
   </select>
   <span id="bulkCategoryWrap" class="min-w-[14rem]">{% include "banking/_category_select.html" with name="bulk_category" groups=category_groups selected=None %}</span>

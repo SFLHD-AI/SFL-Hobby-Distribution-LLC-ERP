@@ -36,7 +36,10 @@ LEARN_SCAN_LIMIT = 3000   # categorized rows scanned per account when learning
 
 def _empty_counts():
     return {"scanned": 0, "auto": 0, "suggested": 0, "ignored": 0, "transfers": 0,
-            "vendor": 0, "learned": 0, "unmatched": 0}
+            "matched": 0, "vendor": 0, "learned": 0, "unmatched": 0}
+
+LEARN_AUTO_MIN_VOTES = 3      # a description seen this often, always the same way, is applied for real
+LEARN_AUTO_AGREEMENT = 0.9
 
 
 def find_transfer_twin(txn, days=3, include_flagged=True):
@@ -163,6 +166,12 @@ def apply_rules(transactions, user=None):
         if not settled:
             leftovers.append(txn)
 
+    # smart passes that need no rule at all:
+    #   1. the other side of a transfer between your own accounts
+    #   2. exactly one open document with this amount (supplier bill,
+    #      customer payment, hand-entered expense)
+    leftovers = _smart_pass(leftovers, user, counts)
+
     # vendor recognition
     still_open = []
     for txn in leftovers:
@@ -200,18 +209,80 @@ def apply_rules(transactions, user=None):
             if not votes:
                 unmatched.append(txn)
                 continue
-            cat_id = votes.most_common(1)[0][0]
+            cat_id, top = votes.most_common(1)[0]
             if cat_id not in account_cache:
                 account_cache[cat_id] = Account.objects.filter(pk=cat_id, active=True).first()
             acct = account_cache[cat_id]
             if acct is None:
                 unmatched.append(txn)
                 continue
+            total = sum(votes.values())
+            if top >= LEARN_AUTO_MIN_VOTES and top / total >= LEARN_AUTO_AGREEMENT:
+                # you've categorized this merchant the same way every time: just do it
+                txn.auto_categorized = True
+                txn.categorize(acct, user=user, auto=True,
+                               note=(txn.notes or f"Auto: categorized like the last {top} times")[:500])
+                counts["auto"] += 1
+                continue
             txn.suggested_account = acct
             txn.save(update_fields=["suggested_account"])
             counts["learned"] += 1
     counts["unmatched"] = len(unmatched)
     return counts
+
+
+def _smart_pass(txns, user, counts):
+    """Settle what can be settled without a rule; return the rest."""
+    from banking.matching import expense_matches, payment_matches, receipt_matches
+    from banking.starter_rules import TRANSFER_HINTS
+    rest = []
+    for txn in txns:
+        if txn.status != BankTransaction.UNREVIEWED:
+            continue
+        # 1. transfer twin: same amount, opposite sign, another of your accounts, ±3 days
+        twins = find_transfer_twin(txn)
+        if len(twins) == 1 or (twins and all(t.account_id == twins[0].account_id for t in twins)):
+            with transaction.atomic():
+                txn.auto_categorized = True
+                txn.mark_transfer(twins[0], user=user)
+            counts["transfers"] += 1
+            continue
+        hay = f"{txn.description} {txn.original_description} {txn.merchant_name}".lower()
+        if any(h in hay for h in TRANSFER_HINTS):
+            # card payment whose other side isn't imported yet: hold it with a note
+            if not txn.notes:
+                txn.notes = "Looks like a payment between your own accounts — import the other account " \
+                            "and it pairs up by itself, or click Transfer."
+                txn.save(update_fields=["notes"])
+            counts["suggested"] += 1
+            rest.append(txn)
+            continue
+        # 2. exactly one open document for this amount
+        if txn.amount < 0:
+            receipts = receipt_matches(txn)
+            if len(receipts) == 1:
+                with transaction.atomic():
+                    txn.auto_categorized = True
+                    txn.link_receipts(receipts, user=user)
+                counts["matched"] += 1
+                continue
+        else:
+            exact, groups = payment_matches(txn)
+            if len(exact) == 1 and not groups:
+                with transaction.atomic():
+                    txn.auto_categorized = True
+                    txn.link_payments(exact, user=user)
+                counts["matched"] += 1
+                continue
+        expenses = expense_matches(txn)
+        if len(expenses) == 1:
+            with transaction.atomic():
+                txn.auto_categorized = True
+                txn.link_expense(expenses[0], user=user)
+            counts["matched"] += 1
+            continue
+        rest.append(txn)
+    return rest
 
 
 def apply_single_rule(rule, user=None, limit=5000):

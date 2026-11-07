@@ -1634,7 +1634,7 @@ class QueryStringRobustnessTests(BankingBase):
         self.assertEqual(self.client.get(reverse("bank_transaction_add") + "?account=abc").status_code, 200)
         self.assertEqual(self.client.get(reverse("bank_import") + "?account=abc").status_code, 200)
         resp = self.client.post(reverse("bank_rules_run"), {"account": "abc"}, follow=True)
-        self.assertContains(resp, "Rules checked")
+        self.assertContains(resp, "Auto-categorize checked")
         t = BankTransaction.objects.get()
         resp = self.client.post(reverse("bank_inbox_action", args=[t.pk]), {"action": "save", "category": "abc"},
                                 follow=True)
@@ -1992,3 +1992,107 @@ class InboxDateAliasTests(BankingBase):
         self.assertEqual(self.client.get(reverse("bank_inbox") + "?start=garbage&end=2025-13-45").status_code, 200)
         self.assertEqual(self.client.get(reverse("bank_inbox") + "?start=2025-03-01").context["transactions"][0].pk,
                          after.pk)
+
+
+class SmartAutoCategorizeTests(BankingBase):
+    """The passes that run with no rule at all."""
+
+    def test_card_payment_pairs_as_transfer_without_a_rule(self):
+        out = self.txn(account=self.checking, desc="AMERICAN EXPRESS ACH PMT 1234", amount="-4200.00")
+        inn = self.txn(account=self.card, desc="PAYMENT RECEIVED - THANK YOU", amount="4200.00", day=TODAY - timedelta(days=1))
+        c = apply_rules([out, inn])
+        out.refresh_from_db(); inn.refresh_from_db()
+        self.assertEqual(c["transfers"], 1)
+        self.assertEqual(out.status, BankTransaction.TRANSFER)
+        self.assertEqual(out.transfer_peer, inn)
+        self.assertEqual(inn.status, BankTransaction.TRANSFER)
+
+    def test_card_payment_without_other_side_waits_with_note(self):
+        out = self.txn(account=self.checking, desc="AMERICAN EXPRESS ACH PMT 1234", amount="-4200.00")
+        c = apply_rules([out])
+        out.refresh_from_db()
+        self.assertEqual(out.status, BankTransaction.UNREVIEWED)
+        self.assertIn("between your own accounts", out.notes)
+        self.assertEqual(c["suggested"], 1)
+
+    def test_outflow_matching_one_unpaid_bill_is_linked(self):
+        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        p = Product.objects.create(sku="B-1", name="Box", default_price=D("1"))
+        r = Receipt.objects.create(supplier=Supplier.objects.create(name="Tradepost"), reference="x")
+        ReceiptLine.objects.create(receipt=r, product=p, qty=2, unit_cost=D("600.00"))
+        r.post()
+        t = self.txn(account=self.checking, desc="TRADEPOST INC", amount="-1200.00")
+        c = apply_rules([t])
+        t.refresh_from_db(); r.refresh_from_db()
+        self.assertEqual(c["matched"], 1)
+        self.assertEqual(t.status, BankTransaction.MATCHED)
+        self.assertEqual(list(t.receipts.all()), [r])
+        self.assertEqual(r.paid_date, TODAY)
+
+    def test_two_candidate_bills_are_left_for_a_person(self):
+        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        p = Product.objects.create(sku="B-2", name="Box", default_price=D("1"))
+        sup = Supplier.objects.create(name="GTS")
+        for ref in ("a", "b"):
+            r = Receipt.objects.create(supplier=sup, reference=ref)
+            ReceiptLine.objects.create(receipt=r, product=p, qty=1, unit_cost=D("500.00"))
+            r.post()
+        t = self.txn(account=self.checking, desc="GTS DISTRIBUTION", amount="-500.00")
+        c = apply_rules([t])
+        t.refresh_from_db()
+        self.assertEqual(c["matched"], 0)
+        self.assertEqual(t.status, BankTransaction.UNREVIEWED)
+
+    def test_deposit_matching_one_customer_payment_is_linked(self):
+        from customers.models import Customer
+        from payments.models import Payment
+        cust = Customer.objects.create(business_name="Ross Cards")
+        pay = Payment.objects.create(customer=cust, amount=D("850.21"), date=TODAY - timedelta(days=1), method="ach")
+        t = self.txn(account=self.checking, desc="ROSS CARDS LLC ACH", amount="850.21")
+        c = apply_rules([t])
+        t.refresh_from_db()
+        self.assertEqual(c["matched"], 1)
+        self.assertEqual(t.status, BankTransaction.MATCHED)
+        self.assertEqual(list(t.payments.all()), [pay])
+
+    def test_learned_three_times_is_applied_for_real(self):
+        for i in range(3):
+            t = self.txn(desc=f"SHIPPO CHARGE 8812345{i}", amount="-12.00")
+            t.categorize(self.shipping_acct, user=self.user)
+        new = self.txn(desc="SHIPPO CHARGE 88199999", amount="-9.00")
+        c = apply_rules([new])
+        new.refresh_from_db()
+        self.assertEqual(c["auto"], 1)
+        self.assertEqual(new.status, BankTransaction.CATEGORIZED)
+        self.assertEqual(new.category_account, self.shipping_acct)
+        self.assertTrue(new.auto_categorized)
+        # only twice before → still just a suggestion
+        for i in range(2):
+            t = self.txn(desc=f"ULINE 7712345{i}", amount="-30.00")
+            t.categorize(self.software_acct, user=self.user)
+        new2 = self.txn(desc="ULINE 77199999", amount="-31.00")
+        c = apply_rules([new2])
+        new2.refresh_from_db()
+        self.assertEqual(new2.status, BankTransaction.UNREVIEWED)
+        self.assertEqual(new2.suggested_account, self.software_acct)
+
+    def test_starter_rules_install_and_apply(self):
+        from banking.starter_rules import STARTER_RULES, install
+        created, skipped = install(user=self.user)
+        self.assertEqual(created, len(STARTER_RULES))
+        self.assertEqual(skipped, 0)
+        created2, skipped2 = install(user=self.user)
+        self.assertEqual((created2, skipped2), (0, len(STARTER_RULES)))
+        shippo = self.txn(desc="SHIPPO 866-555-1234", amount="-14.30")
+        amazon = self.txn(desc="AMAZON MKTPL*AB12 Amzn.com/bill", amount="-45.00")
+        fee = self.txn(account=self.checking, desc="MONTHLY SERVICE FEE", amount="-15.00")
+        c = apply_rules([shippo, amazon, fee])
+        shippo.refresh_from_db(); amazon.refresh_from_db(); fee.refresh_from_db()
+        self.assertEqual(shippo.status, BankTransaction.CATEGORIZED)
+        self.assertEqual(shippo.category_account.system_key, "shipping_expense")
+        self.assertEqual(amazon.status, BankTransaction.UNREVIEWED)             # suggest-only
+        self.assertEqual(amazon.suggested_account.name, "Supplies & packaging")
+        self.assertEqual(fee.status, BankTransaction.CATEGORIZED)
+        self.assertEqual(fee.category_account.name, "Bank fees & interest")
+        resp = self.client.post("/banking/rules/starters/", follow=True)
+        self.assertContains(resp, "already in place")

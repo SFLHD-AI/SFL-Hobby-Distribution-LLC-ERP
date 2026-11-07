@@ -8,6 +8,7 @@ urlpatterns = [
     path("inbox/<int:pk>/action/", views.inbox_action, name="bank_inbox_action"),
     path("inbox/bulk/", views.inbox_bulk, name="bank_inbox_bulk"),
     path("rules/run/", views.rules_run, name="bank_rules_run"),
+    path("rules/starters/", views.rules_install_starters, name="bank_rules_starters"),
     path("sync/", views.sync_now, name="bank_sync_now"),
     # transactions
     path("transactions/add/", views.transaction_add, name="bank_transaction_add"),

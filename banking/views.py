@@ -376,9 +376,24 @@ def inbox_bulk(request):
 
 
 def _rules_message(c):
-    return (f"Rules checked {c['scanned']} transaction{'s' if c['scanned'] != 1 else ''}: "
-            f"{c['auto']} categorized, {c['ignored']} ignored, {c['transfers']} paired as transfers, "
-            f"{c['suggested'] + c['vendor'] + c['learned']} suggestions, {c['unmatched']} still open.")
+    return (f"Auto-categorize checked {c['scanned']} transaction{'s' if c['scanned'] != 1 else ''}: "
+            f"{c['auto']} categorized, {c['matched']} matched to bills / payments / expenses, "
+            f"{c['transfers']} paired as transfers, {c['ignored']} ignored, "
+            f"{c['suggested'] + c['vendor'] + c['learned']} suggestions to confirm, {c['unmatched']} still open.")
+
+
+@module_required("banking")
+@require_POST
+def rules_install_starters(request):
+    from banking.starter_rules import install
+    created, skipped = install(user=request.user, readd_removed=request.POST.get("readd") == "1")
+    if created:
+        messages.success(request, f"Added {created} starter rule{'s' if created != 1 else ''}"
+                                  + (f" ({skipped} already there)." if skipped else ".")
+                                  + " Run them on what's waiting with ⚡ Auto-categorize.")
+    else:
+        messages.info(request, "All starter rules are already in place.")
+    return redirect("bank_rules")
 
 
 @module_required("banking")
