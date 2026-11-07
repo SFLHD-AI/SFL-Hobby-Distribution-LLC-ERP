@@ -2091,7 +2091,7 @@ class SmartAutoCategorizeTests(BankingBase):
         self.assertEqual(shippo.status, BankTransaction.CATEGORIZED)
         self.assertEqual(shippo.category_account.system_key, "shipping_expense")
         self.assertEqual(amazon.status, BankTransaction.UNREVIEWED)             # suggest-only
-        self.assertEqual(amazon.suggested_account.name, "Supplies & packaging")
+        self.assertEqual(amazon.suggested_account.name, "Shipping supplies")
         for desc in ("TOPPS COMPANY INC", "PANINI AMERICA", "WAL-MART #1234", "TARGET T-0456", "FANATICS COLLECTIBLES"):
             t = self.txn(desc=desc, amount="-120.00")
             apply_rules([t]); t.refresh_from_db()
@@ -2100,9 +2100,9 @@ class SmartAutoCategorizeTests(BankingBase):
         tesla = self.txn(desc="TESLA SUPERCHARGER US MIAMI FL", amount="-18.40")
         apply_rules([tesla]); tesla.refresh_from_db()
         self.assertEqual(tesla.status, BankTransaction.CATEGORIZED)
-        self.assertEqual(tesla.category_account.name, "Vehicle & charging")
+        self.assertEqual(tesla.category_account.name, "Vehicle & fuel")
         self.assertEqual(fee.status, BankTransaction.CATEGORIZED)
-        self.assertEqual(fee.category_account.name, "Bank fees & interest")
+        self.assertEqual(fee.category_account.name, "Bank & merchant fees")
         resp = self.client.post("/banking/rules/starters/", follow=True)
         self.assertContains(resp, "already in place")
 
@@ -2189,3 +2189,33 @@ class FlipSingleTransactionTests(BankingBase):
         self.assertNotEqual(t.category_account, self.software_acct)     # back through the rules
         html = self.client.get(f"/banking/transactions/{t.pk}/").content.decode()
         self.assertIn("Flip money in/out", html)
+
+
+class DuplicateCategoryMergeTests(BankingBase):
+    def test_duplicates_from_old_starter_pack_are_merged_into_defaults(self):
+        from banking.models import CategoryRule
+        from banking.starter_rules import merge_duplicate_categories
+        from expenses.models import Expense, ExpenseCategory, Vendor
+        keep = ExpenseCategory.objects.create(name="Meals (50% deductible)", deductible_pct=50, tax_line="24b")
+        dup = ExpenseCategory.objects.create(name="Meals")
+        dup_acct, keep_acct = dup.ensure_account(), keep.ensure_account()
+        t = self.txn(desc="FLEXIBLE BUSINESS CREDIT", amount="20.00")
+        t.categorize(dup_acct, user=self.user)
+        exp = Expense.objects.create(date=TODAY, category=dup, amount=D("40"), vendor="Bar")
+        rule = CategoryRule.objects.create(name="r", pattern="grubhub", action="categorize", category_account=dup_acct)
+        ven = Vendor.objects.create(name="Grubhub", default_category=dup)
+        merged = merge_duplicate_categories()
+        self.assertIn("Meals", merged)
+        for obj in (t, exp, rule, ven):
+            obj.refresh_from_db()
+        self.assertEqual(t.category_account, keep_acct)
+        self.assertEqual(t.expense.category, keep)
+        self.assertEqual(exp.category, keep)
+        self.assertEqual(rule.category_account, keep_acct)
+        self.assertEqual(ven.default_category, keep)
+        self.assertFalse(ExpenseCategory.objects.filter(name="Meals").exists())
+        dup_acct.refresh_from_db()
+        self.assertFalse(dup_acct.active)
+        self.assertEqual(ExpenseCategory.objects.get(name="Meals (50% deductible)").deductible_pct, 50)
+        # safe to run again
+        self.assertEqual(merge_duplicate_categories(), [])
