@@ -8,6 +8,7 @@ urlpatterns = [
     path("company-logo/", views.company_logo, name="company_logo"),
     path("activity/", views.activity_log, name="activity_log"),
     path("search/", views.global_search, name="global_search"),
+    path("search/suggest/", views.search_suggest, name="search_suggest"),
 
     # Users & roles (admin only)
     path("users/", users_views.user_list, name="user_list"),

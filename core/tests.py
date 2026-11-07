@@ -698,3 +698,44 @@ class DashboardIncomingTileTests(TestCase):
         self.assertIn("Incoming inventory", html)
         self.assertIn("4 units on 1 open order", html)
         self.assertIn("420.00", html)          # 4 × 100 + 20 freight; received order not counted
+
+
+class SearchSuggestTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.client.force_login(User.objects.create_superuser("s", password="x"))
+
+    def test_pages_products_and_customers(self):
+        from decimal import Decimal
+        from customers.models import Customer
+        from inventory.models import Product
+        Product.objects.create(sku="887521161300", name="Topps Chrome Hobby Box", default_price=Decimal("1"))
+        Customer.objects.create(business_name="Ross Cards")
+        r = self.client.get("/search/suggest/?q=balance")
+        labels = [p["label"] for p in r.json()["pages"]]
+        self.assertIn("Balance sheet", labels)
+        r = self.client.get("/search/suggest/?q=topps")
+        self.assertEqual(r.json()["products"][0]["label"], "887521161300")
+        r = self.client.get("/search/suggest/?q=ross")
+        self.assertEqual(r.json()["customers"][0]["label"], "Ross Cards")
+        r = self.client.get("/search/suggest/?q=tax summary")
+        self.assertEqual(r.json()["pages"][0]["label"], "Tax summary (cash basis)")
+        self.assertEqual(self.client.get("/search/suggest/?q=a").json()["pages"], [])
+
+    def test_pages_respect_modules(self):
+        from django.contrib.auth.models import User
+        from core.models import Role, UserProfile
+        u = User.objects.create_user("wh", password="x")
+        role = Role.objects.create(name="Books", modules=["dashboard", "banking", "accounting"])
+        UserProfile.objects.create(user=u, role=role)
+        self.client.force_login(u)
+        data = self.client.get("/search/suggest/?q=balance").json()
+        self.assertIn("Balance sheet", [p["label"] for p in data["pages"]])
+        self.assertEqual(self.client.get("/search/suggest/?q=pick queue").json()["pages"], [])   # no picking module
+        self.assertEqual(self.client.get("/search/suggest/?q=settings").json()["pages"], [])     # not an admin
+        self.assertEqual(self.client.get("/search/suggest/?q=topps").json()["products"], [])    # no inventory module
+
+    def test_search_page_lists_pages(self):
+        html = self.client.get("/search/?q=equity").content.decode()
+        self.assertIn("Pages & reports", html)
+        self.assertIn("Equity trend", html)

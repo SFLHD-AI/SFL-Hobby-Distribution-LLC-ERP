@@ -41,6 +41,11 @@
   }
   /* iPhone notch / status bar / home indicator: keep bars out from under them */
   .app-header, .safe-top { padding-top: env(safe-area-inset-top, 0px); }
+  /* The header is pinned on every screen size; its white background runs up
+     under the iPhone status bar (black-translucent, viewport-fit=cover) so
+     the buttons start below the notch instead of behind it. */
+  .app-header { padding-top: max(env(safe-area-inset-top, 0px), 0px); }
+  .sfl-search-row:hover { background: #f1f5f9; }
   .safe-bottom { padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); }
   .min-h-16 { min-height: 4rem; }
   html { -webkit-text-size-adjust: 100%; }

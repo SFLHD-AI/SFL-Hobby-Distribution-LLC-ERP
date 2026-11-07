@@ -260,11 +260,62 @@ def activity_log(request):
     })
 
 
+@login_required
+def search_suggest(request):
+    """JSON for the top-bar dropdown: pages the user may open, then records."""
+    from django.http import JsonResponse
+    from django.urls import reverse
+    from core.roles import user_modules
+    from core.search_registry import match_pages
+    q = (request.GET.get("q") or "").strip()
+    out = {"q": q, "pages": [], "products": [], "customers": [], "orders": [], "invoices": [],
+           "suppliers": [], "receipts": []}
+    if len(q) < 2:
+        return JsonResponse(out)
+    mods = user_modules(request.user)
+    out["pages"] = match_pages(request.user, q)
+    if "inventory" in mods or "orders" in mods or "receiving" in mods:
+        for p in Product.objects.filter(Product.code_filter(q)).distinct().order_by("sku")[:6]:
+            out["products"].append({"label": p.sku, "sub": p.name, "right": f"{p.qty_on_hand} on hand",
+                                    "url": reverse("product_detail", args=[p.pk])})
+    if "customers" in mods:
+        for c in Customer.objects.filter(is_deleted=False).filter(
+                models.Q(business_name__icontains=q) | models.Q(email__icontains=q)).order_by("business_name")[:5]:
+            out["customers"].append({"label": c.business_name, "sub": c.email or "", "right": "",
+                                     "url": reverse("customer_detail", args=[c.pk])})
+    if "orders" in mods:
+        for po in (PurchaseOrder.objects.filter(models.Q(number__icontains=q) | models.Q(customer_po_ref__icontains=q)
+                                                | models.Q(customer__business_name__icontains=q))
+                   .select_related("customer").order_by("-id")[:5]):
+            out["orders"].append({"label": po.number, "sub": po.customer.business_name, "right": po.get_status_display(),
+                                  "url": reverse("po_detail", args=[po.pk])})
+    if "invoices" in mods:
+        from invoicing.models import Invoice as Inv
+        for inv in Inv.objects.filter(number__icontains=q).select_related("customer").order_by("-id")[:5]:
+            out["invoices"].append({"label": inv.number, "sub": inv.customer.business_name, "right": f"${inv.total:,.2f}",
+                                    "url": reverse("invoice_detail", args=[inv.pk])})
+    if "receiving" in mods:
+        from inventory.models import Receipt, Supplier
+        for sup in Supplier.objects.filter(name__icontains=q).order_by("name")[:4]:
+            out["suppliers"].append({"label": sup.name, "sub": "", "right": "", "url": reverse("supplier_edit", args=[sup.pk])})
+        num = q.upper().replace("RCV-", "").replace("RCV", "").strip()
+        rq = Receipt.objects.filter(is_deleted=False).filter(
+            models.Q(reference__icontains=q) | models.Q(supplier_invoice_number__icontains=q))
+        if num.isdigit():
+            rq = rq | Receipt.objects.filter(is_deleted=False, pk=int(num))
+        for r in rq.select_related("supplier").order_by("-id")[:4]:
+            out["receipts"].append({"label": f"RCV-{r.pk}", "sub": f"{r.supplier or ''} {r.reference or r.supplier_invoice_number or ''}".strip(),
+                                    "right": "received" if r.posted else "open", "url": reverse("receipt_detail", args=[r.pk])})
+    return JsonResponse(out)
+
+
 @module_required("dashboard")
 def global_search(request):
     q = (request.GET.get("q") or "").strip()
     results = {"q": q}
     if q:
+        from core.search_registry import match_pages
+        results["pages"] = match_pages(request.user, q, limit=12)
         from invoicing.models import Invoice as Inv
         from shipping.models import Shipment
         results["products"] = Product.objects.filter(Product.code_filter(q)).distinct()[:20]

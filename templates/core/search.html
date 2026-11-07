@@ -4,6 +4,11 @@
 <h1 class="page-title mb-5">Search results for “{{ q }}”</h1>
 {% if not q %}<p class="text-slate-500">Type something in the search box above.</p>{% endif %}
 
+{% if pages %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Pages & reports</h2>
+  <div class="flex flex-wrap gap-2">{% for pg in pages %}<a href="{{ pg.url }}" class="btn-secondary">{{ pg.label }} →</a>{% endfor %}</div></div>
+{% endif %}
+
 {% if products %}
 <div class="card-pad mb-4"><h2 class="font-semibold mb-2">Products</h2>
   <table class="tbl"><tbody>

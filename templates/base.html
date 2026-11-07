@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#ffffff">
   <meta name="apple-mobile-web-app-title" content="{{ company.company_name }}">
   <title>{% block title %}SFL ERP System{% endblock %} · {{ company.company_name }}</title>
   <script>(function(){var h=document.documentElement;if(h.getAttribute('data-theme')==='auto'){h.setAttribute('data-theme',matchMedia('(prefers-color-scheme: dark)').matches?'dark':'classic');}})();</script>
@@ -56,7 +57,7 @@
 
   <div class="flex-1 flex flex-col min-w-0">
     {# ---------- Topbar: menu (mobile) + back + home ---------- #}
-    <header class="app-header min-h-16 bg-white border-b border-slate-200 flex items-center gap-2 lg:gap-3 px-3 lg:px-6 lg:sticky lg:top-0 z-30">
+    <header class="app-header min-h-16 bg-white border-b border-slate-200 flex items-center gap-2 lg:gap-3 px-3 lg:px-6 sticky top-0 z-30">
       {% if not u_warehouse_only %}
       <button onclick="toggleMenu(true)" title="Menu"
               class="lg:hidden shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg text-slate-600">☰</button>
@@ -67,9 +68,9 @@
          class="shrink-0 w-10 h-10 rounded-lg border border-slate-300 bg-white text-lg flex items-center justify-center hover:bg-slate-50">🏠</a>
       {% if not u_warehouse_only %}
       <form action="{% url 'global_search' %}" method="get" class="flex-1 max-w-xl">
-        <input name="q" value="{{ request.GET.q }}" placeholder="Search… (📷 scans a barcode)"
+        <input name="q" id="globalSearch" value="{{ request.GET.q }}" placeholder="Search products, reports, pages… (📷 scans)"
                class="w-full rounded-lg border-slate-300 bg-slate-50 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500"
-               autocomplete="off" data-scan data-scan-submit>
+               autocomplete="off" data-scan data-scan-submit data-suggest-url="{% url 'search_suggest' %}">
       </form>
       {% endif %}
       <div class="ml-auto flex items-center gap-3">
@@ -101,6 +102,7 @@ function toggleMenu(open) {
 </script>
 <script src="{% static 'js/combobox.js' %}" defer></script>
 <script src="{% static 'js/scanner.js' %}" defer></script>
+<script src="{% static 'js/search.js' %}" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

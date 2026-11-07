@@ -26,6 +26,7 @@
     input.type = "text";
     input.autocomplete = "off";
     input.className = "sfl-combo-input w-full rounded-lg border-slate-300 text-sm";
+    input.style.cssText = "flex:1 1 auto;min-width:0;";      // keeps its width next to the 📷 button
     input.placeholder = select.getAttribute("data-combobox-placeholder") || "Type a SKU, UPC or name to search…";
     input.setAttribute("role", "combobox");
     input.setAttribute("aria-expanded", "false");
