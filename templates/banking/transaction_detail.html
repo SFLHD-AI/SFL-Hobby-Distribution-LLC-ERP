@@ -83,6 +83,12 @@
           {% if txn.status != 'unreviewed' %}<button name="action" value="reset" class="btn-secondary ml-auto">Undo review</button>{% endif %}
         </div>
       </form>
+      <form method="post" action="{% url 'bank_inbox_action' txn.pk %}" class="mt-3 pt-3 border-t border-slate-100 text-xs text-slate-500 flex flex-wrap items-center gap-2"
+            onsubmit="return confirm('Flip this transaction to {% if txn.amount < 0 %}money IN{% else %}money OUT{% endif %} ${{ txn.amount|floatformat:2|cut:"-" }}? Use this only when the bank file got the sign wrong — check your bank\'s own activity first.')">
+        {% csrf_token %}<input type="hidden" name="action" value="flip">
+        <span>Shown as {% if txn.amount < 0 %}money out{% else %}money <strong>in</strong>{% endif %}, but your bank says it was the opposite?</span>
+        <button class="btn-secondary !py-1 !px-2 text-xs">⇅ Flip money in/out</button>
+      </form>
     </div>
 
     {% if can_split %}

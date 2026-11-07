@@ -2174,3 +2174,18 @@ class ImportBatchFixTests(BankingBase):
         self.assertEqual(BankTransaction.objects.filter(import_batch=b).count(), 0)
         self.assertEqual(BankTransaction.all_objects.filter(import_batch=b).count(), 6)
         self.assertTrue(BankTransaction.objects.filter(pk=other.pk).exists())
+
+
+class FlipSingleTransactionTests(BankingBase):
+    def test_flip_one_row(self):
+        t = self.txn(desc="PANINI AMERICA IRVING TX", amount="4349.70")
+        t.categorize(self.software_acct, user=self.user)
+        r = self.client.post(f"/banking/inbox/{t.pk}/action/", {"action": "flip"})
+        self.assertEqual(r.status_code, 302)
+        t.refresh_from_db()
+        self.assertEqual(t.amount, D("-4349.70"))
+        self.assertIn("Sign flipped", t.notes)
+        self.assertEqual(t.fingerprint, BankTransaction.make_fingerprint(t.account_id, t.date, t.amount, t.description))
+        self.assertNotEqual(t.category_account, self.software_acct)     # back through the rules
+        html = self.client.get(f"/banking/transactions/{t.pk}/").content.decode()
+        self.assertIn("Flip money in/out", html)

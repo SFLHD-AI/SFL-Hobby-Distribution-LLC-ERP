@@ -324,6 +324,20 @@ def inbox_action(request, pk):
         txn.reset_review(user=request.user)
         log_activity(request.user, "bank_txn_reset", txn)
         messages.success(request, "Back in the review inbox.")
+    elif action == "flip":
+        # one row the bank exported with the wrong sign (a charge shown as a credit)
+        with db_transaction.atomic():
+            txn.reset_review(user=request.user)
+            txn.amount = -txn.amount
+            txn.fingerprint = BankTransaction.make_fingerprint(txn.account_id, txn.date, txn.amount, txn.description)
+            txn.notes = (txn.notes + " · " if txn.notes else "") + "Sign flipped by hand"
+            txn.save(update_fields=["amount", "fingerprint", "notes"])
+        c = apply_rules([txn], user=request.user)
+        log_activity(request.user, "bank_txn_flipped", txn, note=str(txn.amount))
+        messages.success(request, f"Now {'money out' if txn.amount < 0 else 'money in'} ${abs(txn.amount):,.2f}"
+                                  + (" and categorized by your rules." if c["auto"] or c["matched"] else
+                                     " — back in review; pick its category."))
+        return redirect("bank_transaction_detail", txn.pk)
     else:
         messages.error(request, "Unknown action.")
     return redirect(nxt)
