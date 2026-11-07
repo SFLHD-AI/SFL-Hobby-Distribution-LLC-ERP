@@ -2092,6 +2092,15 @@ class SmartAutoCategorizeTests(BankingBase):
         self.assertEqual(shippo.category_account.system_key, "shipping_expense")
         self.assertEqual(amazon.status, BankTransaction.UNREVIEWED)             # suggest-only
         self.assertEqual(amazon.suggested_account.name, "Supplies & packaging")
+        for desc in ("TOPPS COMPANY INC", "PANINI AMERICA", "WAL-MART #1234", "TARGET T-0456", "FANATICS COLLECTIBLES"):
+            t = self.txn(desc=desc, amount="-120.00")
+            apply_rules([t]); t.refresh_from_db()
+            self.assertEqual(t.status, BankTransaction.CATEGORIZED, desc)
+            self.assertEqual(t.category_account.system_key, "inventory_purchases", desc)
+        tesla = self.txn(desc="TESLA SUPERCHARGER US MIAMI FL", amount="-18.40")
+        apply_rules([tesla]); tesla.refresh_from_db()
+        self.assertEqual(tesla.status, BankTransaction.CATEGORIZED)
+        self.assertEqual(tesla.category_account.name, "Vehicle & charging")
         self.assertEqual(fee.status, BankTransaction.CATEGORIZED)
         self.assertEqual(fee.category_account.name, "Bank fees & interest")
         resp = self.client.post("/banking/rules/starters/", follow=True)
@@ -2118,3 +2127,9 @@ class AutoCategorizeCommandTests(BankingBase):
         CategoryRule.objects.get(name="Shippo labels").delete()
         call_command("auto_categorize", stdout=StringIO())
         self.assertFalse(CategoryRule.objects.filter(name="Shippo labels").exists())
+        # an old suggest-only starter rule is retired in favour of its replacement
+        CategoryRule.objects.create(name="Walmart (check what it was)", pattern="walmart", priority=200,
+                                    action="categorize", category_account=self.software_acct, auto_confirm=False)
+        call_command("auto_categorize", stdout=StringIO())
+        self.assertFalse(CategoryRule.objects.filter(name="Walmart (check what it was)").exists())
+        self.assertTrue(CategoryRule.objects.filter(name="Walmart purchases").exists())

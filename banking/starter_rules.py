@@ -49,6 +49,15 @@ STARTER_RULES = [
     ("Magazine Exchange", "magazine exchange", "out", "categorize", "inventory_purchases", True),
     ("Alliance / Diamond distribution", "alliance game", "out", "categorize", "inventory_purchases", True),
     ("ACD Distribution", "acd distribution", "out", "categorize", "inventory_purchases", True),
+    ("Topps direct", "topps", "out", "categorize", "inventory_purchases", True),
+    ("Panini direct", "panini", "out", "categorize", "inventory_purchases", True),
+    ("Fanatics Collectibles", "fanatics", "out", "categorize", "inventory_purchases", True),
+    ("Upper Deck", "upper deck", "out", "categorize", "inventory_purchases", True),
+    ("Leaf Trading Cards", "leaf trading", "out", "categorize", "inventory_purchases", True),
+    ("Walmart purchases", "walmart", "out", "categorize", "inventory_purchases", True),
+    ("Walmart purchases (alt)", "wal-mart", "out", "categorize", "inventory_purchases", True),
+    ("Walmart purchases (alt 2)", "wm supercenter", "out", "categorize", "inventory_purchases", True),
+    ("Target purchases", "target", "out", "categorize", "inventory_purchases", True),
     ("Whatnot purchases", "whatnot", "out", "categorize", "inventory_purchases", False),
     ("eBay purchases", "ebay", "out", "categorize", "inventory_purchases", False),
 
@@ -84,8 +93,6 @@ STARTER_RULES = [
     ("Home Depot", "home depot", "out", "categorize", ("category", "Supplies & packaging"), False),
     ("Office Depot", "office depot", "out", "categorize", ("category", "Supplies & packaging"), True),
     ("Staples", "staples", "out", "categorize", ("category", "Supplies & packaging"), True),
-    ("Walmart (check what it was)", "walmart", "out", "categorize", ("category", "Supplies & packaging"), False),
-    ("Target (check what it was)", "target", "out", "categorize", ("category", "Supplies & packaging"), False),
     ("BCW supplies", "bcw", "out", "categorize", ("category", "Supplies & packaging"), True),
     ("Ultra Pro supplies", "ultra pro", "out", "categorize", ("category", "Supplies & packaging"), True),
 
@@ -105,6 +112,15 @@ STARTER_RULES = [
     ("State tax / Dept of Revenue", "dept of revenue", "out", "categorize", ("category", "Taxes & licenses"), False),
     ("Sunbiz / state filing", "sunbiz", "out", "categorize", ("category", "Taxes & licenses"), True),
     ("Business insurance", "insurance", "out", "categorize", ("category", "Insurance"), False),
+
+    # --- vehicle -------------------------------------------------------------
+    ("Tesla Supercharging", "tesla supercharger", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("Tesla Supercharging (alt)", "tesla, inc", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("Tesla Supercharging (alt 2)", "tesla inc", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("Tesla (app / charging)", "tesla motors", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("EV charging (ChargePoint)", "chargepoint", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("EV charging (Electrify America)", "electrify america", "out", "categorize", ("category", "Vehicle & charging"), True),
+    ("EV charging (EVgo)", "evgo", "out", "categorize", ("category", "Vehicle & charging"), True),
 
     # --- travel, shows, meals ------------------------------------------------
     ("Gas stations", "shell oil", "out", "categorize", ("category", "Travel & mileage"), False),
@@ -140,11 +156,27 @@ TRANSFER_HINTS = (
 )
 
 
+# Starter rules from earlier versions that were replaced. They are retired
+# (soft-deleted) on install so the new definition takes over — unless the
+# owner edited them, in which case they are left alone.
+SUPERSEDED = {
+    "Walmart (check what it was)": "Walmart purchases",
+    "Target (check what it was)": "Target purchases",
+}
+
+
 def install(user=None, readd_removed=False):
-    """Create the starter rules. Returns (created, skipped)."""
+    """Create the starter rules. Returns (created, skipped). Re-running adds
+    any starter rules introduced since, and retires superseded ones."""
     from accounting.models import Account
     from banking.models import CategoryRule
     from expenses.models import ExpenseCategory
+    from django.utils import timezone
+
+    for old_name in SUPERSEDED:
+        for rule in CategoryRule.objects.filter(name=old_name, priority=200, times_applied=0):
+            rule.is_deleted, rule.deleted_at = True, timezone.now()
+            rule.save(update_fields=["is_deleted", "deleted_at"])
 
     existing = set(CategoryRule.all_objects.values_list("name", flat=True)) if not readd_removed \
         else set(CategoryRule.objects.values_list("name", flat=True))

@@ -318,10 +318,11 @@ def auto_categorize_pending(install_starters=True, limit=20000):
     from banking.models import BankTransaction, CategoryRule
     from banking.rules import apply_rules
     parts = []
-    if install_starters and not CategoryRule.all_objects.filter(name="Shippo labels").exists():
+    if install_starters:
         from banking.starter_rules import install
         created, _ = install()
-        parts.append(f"{created} starter rules installed")
+        if created:
+            parts.append(f"{created} starter rules installed")
     qs = (BankTransaction.objects.filter(is_deleted=False, status=BankTransaction.UNREVIEWED)
           .select_related("account").order_by("date", "id"))
     c = apply_rules(list(qs[:limit]))
