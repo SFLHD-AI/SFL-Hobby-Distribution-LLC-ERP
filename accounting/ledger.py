@@ -639,17 +639,31 @@ class Journal:
                 e = Entry(cp, "Inventory valuation true-up to stock ledger", "trueup:inventory", str(cp))
                 e.pair(inv_acct, adj_acct, diff)
                 self._add(e)
-            # (b) supplier AP with a debit balance = prepayments (an asset).
-            #     Judged per supplier: a deposit paid to Panini must not hide
-            #     behind a bill still owed to Topps.
+            # (b) supplier AP with a debit balance, judged per supplier:
+            #     * tagged with a supplier (a payment matched to their bills that
+            #       ran ahead of delivery) = a prepayment, an asset. A deposit paid
+            #       to Panini must not hide behind a bill still owed to Topps.
+            #     * untagged (a bank row simply categorized "Inventory purchases",
+            #       no supplier order behind it — 2025 history, a Walmart run) is
+            #       product you bought and paid for: cost of goods, not an asset.
+            #       The inventory true-up above keeps the asset side honest.
             by_supplier = self._ap_by_tag(ap_acct.pk, cp)
-            want_dep = sum((raw for raw in by_supplier.values() if raw > 0), ZERO)
+            want_dep = sum((raw for tag, raw in by_supplier.items() if raw > 0 and tag), ZERO)
             dep_cur = self._reclass_balance("trueup:ap", dep_acct.pk, cp)
             delta = q(want_dep - dep_cur)
             if delta != 0:
                 e = Entry(cp, "Supplier prepayments reclassified from accounts payable",
                           "trueup:ap", str(cp))
                 e.pair(dep_acct, ap_acct, delta)
+                self._add(e)
+            cogs_acct = self.sys("inventory_purchases")
+            want_cogs = max(ZERO, by_supplier.get("", ZERO))
+            cogs_cur = self._reclass_balance("trueup:ap0", cogs_acct.pk, cp)
+            delta = q(want_cogs - cogs_cur)
+            if delta != 0:
+                e = Entry(cp, "Supplier payments without a logged supplier order → inventory purchases",
+                          "trueup:ap0", str(cp))
+                e.pair(cogs_acct, ap_acct, delta)
                 self._add(e)
             # (c) carrier AP with a debit balance = label costs never recorded on shipments
             apc_nat = -bal.get(apc_acct.pk, ZERO)
@@ -666,7 +680,7 @@ class Journal:
         """debits − credits of one account grouped by line tag (supplier)."""
         out = defaultdict(lambda: ZERO)
         for e in self.entries:
-            if e.date > day or e.source_type in ("trueup:ap", "trueup:apc"):
+            if e.date > day or e.source_type in ("trueup:ap", "trueup:ap0", "trueup:apc"):
                 continue
             for l in e.lines:
                 if l.account_id == account_id:
@@ -677,7 +691,7 @@ class Journal:
         """Balances excluding reclass true-ups (so they can be recomputed)."""
         bal = defaultdict(lambda: ZERO)
         for e in self.entries:
-            if e.date > day or e.source_type in ("trueup:ap", "trueup:apc"):
+            if e.date > day or e.source_type in ("trueup:ap", "trueup:ap0", "trueup:apc"):
                 continue
             for l in e.lines:
                 bal[l.account_id] += l.debit - l.credit

@@ -1071,12 +1071,11 @@ class SplitTransactionTests(TestCase):
             pl = j.income_statement(YEAR_START, TODAY)
             self.assertEqual(pl["total_expenses"], D("120.00"), basis)
             cogs = {r["account"].system_key: r["amount"] for r in pl["cogs"]}
-            if basis == CASH:
-                self.assertEqual(cogs.get("inventory_purchases"), D("130.00"))
-            else:
-                # accrual: the inventory part is a payment on account (AP debit -> supplier deposit)
-                assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
-                self.assertEqual(assets.get("supplier_deposits"), D("130.00"))
+            # both bases: product paid for with no supplier order behind it is
+            # cost of goods, never a phantom "prepayment" asset
+            self.assertEqual(cogs.get("inventory_purchases"), D("130.00"), basis)
+            assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+            self.assertNotIn("supplier_deposits", assets)
             equity = {(r["account"].system_key if r["account"] else "ni"): r["amount"] for r in bs["equity"]}
             self.assertEqual(equity.get("owner_draw"), D("-50.00"))
             card = [r for r in bs["liabilities"] if r["account"].pk == self.card.ledger_account_id][0]
@@ -1525,3 +1524,39 @@ class TaxSummaryTests(TestCase):
         self.assertIn("/accounting/tax-summary/", html)
         self.assertNotIn("?basis=accrual\" class=\"px-3 py-2", html)
         self.assertIn("Am I building equity?", html)
+
+
+class UnmatchedInventoryPurchaseEquityTests(TestCase):
+    """A year of Topps / Walmart / Panini charges categorized as Inventory
+    purchases with no RCVs must not inflate equity as 'prepayments'."""
+
+    def test_categorized_purchases_without_receipts_are_cogs_on_accrual(self):
+        from banking.models import BankAccount, BankTransaction
+        Account.ensure_system_accounts()
+        checking = BankAccount.objects.create(name="Chase", account_type="checking",
+                                              opening_balance=D("50000.00"), opening_date=date(2025, 1, 1))
+        inv = Account.system("inventory_purchases")
+        for i, amt in enumerate(("-4687.50", "-4500.00", "-1200.00")):
+            t = BankTransaction.objects.create(account=checking, date=date(2025, 10, 14 + i),
+                                               amount=D(amt), description="PANINI AMERICA IRVING TX")
+            t.categorize(inv)
+        j, bs = _assert_balanced(self, ACCRUAL)
+        assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+        liab = {r["account"].system_key: r["amount"] for r in bs["liabilities"]}
+        self.assertNotIn("supplier_deposits", assets)
+        self.assertNotIn("ap", liab)
+        pl = j.income_statement(date(2025, 1, 1), TODAY)
+        cogs = {r["account"].system_key: r["amount"] for r in pl["cogs"]}
+        self.assertEqual(cogs.get("inventory_purchases"), D("10387.50"))
+        # equity = what's left of the cash: 50,000 − 10,387.50
+        self.assertEqual(bs["total_equity"], D("39612.50"))
+        # a payment matched to a real supplier order still behaves as AP / prepayment
+        from inventory.models import Product, Receipt, ReceiptLine, Supplier
+        p = Product.objects.create(sku="PRE-1", name="Case", default_price=D("1"))
+        pre = Receipt.objects.create(supplier=Supplier.objects.create(name="GTS"), date=TODAY)
+        ReceiptLine.objects.create(receipt=pre, product=p, qty=1, unit_cost=D("500.00"))
+        t = BankTransaction.objects.create(account=checking, date=TODAY, amount=D("-500.00"), description="GTS PREORDER")
+        t.link_receipts([pre])
+        j, bs = _assert_balanced(self, ACCRUAL)
+        assets = {r["account"].system_key: r["amount"] for r in bs["assets"]}
+        self.assertEqual(assets.get("supplier_deposits"), D("500.00"))

@@ -49,7 +49,7 @@
         <p class="text-xs text-slate-500 mt-1">since {{ money.fy_start|date:"M j" }} · {{ money.other_label }}: {% include "core/_money.html" with v=money.snap_other.net_income_ytd %}</p>
       </div>
       <div class="stat">
-        <p class="lbl">Equity <span class="normal-case font-normal">(accrual)</span></p>
+        <p class="lbl">Equity <span class="normal-case font-normal">(accrual)</span> <a href="{% url 'accounting_balance_sheet' %}?basis=accrual" class="normal-case font-normal text-indigo-600 hover:underline" title="Assets minus liabilities: cash + inventory + money owed to you − cards − unpaid bills. Click to see every line.">what's in it →</a></p>
         <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.equity %}</p>
         <p class="text-xs mt-1 {% if money.equity_change is not None and money.equity_change < 0 %}text-red-600{% elif money.equity_change %}text-emerald-600{% else %}text-slate-500{% endif %}">
           {% if money.equity_change is None %}no prior month yet

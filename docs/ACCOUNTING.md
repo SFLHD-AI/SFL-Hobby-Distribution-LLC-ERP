@@ -180,7 +180,13 @@ the balance sheet tells the truth even when documents are imperfect:
    is judged **per supplier**: a $5,000 deposit paid to Panini is a
    prepayment even while a $3,000 Topps bill is still open; the two never
    net against each other. The cash-vs-accrual bridge shows it as *Paid to
-   suppliers ahead of delivery*.
+   suppliers ahead of delivery*. Only payments **tied to a supplier** count
+   (matched to that supplier's orders). A bank row merely categorized
+   *Inventory purchases* with no supplier order behind it — 2025 history, a
+   Walmart or Target run — is product you bought and paid for: it is booked
+   to **Inventory purchases** (cost of goods) on the accrual books too,
+   never as a prepayment asset. The inventory true-up above keeps the
+   Inventory asset equal to what is actually on the shelf.
 3. If **Accounts payable — carriers** has a debit balance (you paid Pirate
    Ship/USPS but never recorded the label cost on a shipment), the excess is
    simply shipping expense.
