@@ -2133,3 +2133,44 @@ class AutoCategorizeCommandTests(BankingBase):
         call_command("auto_categorize", stdout=StringIO())
         self.assertFalse(CategoryRule.objects.filter(name="Walmart (check what it was)").exists())
         self.assertTrue(CategoryRule.objects.filter(name="Walmart purchases").exists())
+
+
+class ImportBatchFixTests(BankingBase):
+    def _batch(self):
+        from banking.models import ImportBatch
+        b = ImportBatch.objects.create(account=self.card, filename="activity.csv", preset="generic", rows_imported=6)
+        rows = [self.txn(desc=f"TOPPS COMPANY {i}", amount="100.00", import_batch=b) for i in range(5)]
+        rows.append(self.txn(desc="PAYMENT RECEIVED - THANK YOU", amount="-500.00", import_batch=b))
+        return b, rows
+
+    def test_result_page_warns_when_card_signs_look_inverted(self):
+        b, _ = self._batch()
+        html = self.client.get(f"/banking/import/{b.pk}/done/").content.decode()
+        self.assertIn("These signs look backwards", html)
+        self.assertIn("Flip signs on this import", html)
+
+    def test_flip_reverses_every_row_and_recategorizes(self):
+        b, rows = self._batch()
+        rows[0].categorize(self.software_acct, user=self.user)       # a wrong manual pick gets reset too
+        other = self.txn(desc="UNRELATED", amount="7.00")
+        r = self.client.post(f"/banking/import/{b.pk}/flip/")
+        self.assertEqual(r.status_code, 302)
+        for t in rows[:5]:
+            t.refresh_from_db()
+            self.assertEqual(t.amount, D("-100.00"))
+            self.assertEqual(t.fingerprint, BankTransaction.make_fingerprint(t.account_id, t.date, t.amount, t.description))
+        rows[5].refresh_from_db()
+        self.assertEqual(rows[5].amount, D("500.00"))
+        other.refresh_from_db()
+        self.assertEqual(other.amount, D("7.00"))                  # other imports untouched
+        rows[0].refresh_from_db()
+        self.assertNotEqual(rows[0].category_account, self.software_acct)
+
+    def test_remove_import_soft_deletes_only_its_rows(self):
+        b, rows = self._batch()
+        other = self.txn(desc="UNRELATED", amount="7.00")
+        r = self.client.post(f"/banking/import/{b.pk}/remove/")
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(BankTransaction.objects.filter(import_batch=b).count(), 0)
+        self.assertEqual(BankTransaction.all_objects.filter(import_batch=b).count(), 6)
+        self.assertTrue(BankTransaction.objects.filter(pk=other.pk).exists())

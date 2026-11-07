@@ -16,6 +16,21 @@
     <a href="{% url 'bank_inbox' %}?status=all&batch={{ batch.pk }}" class="btn-secondary">See everything imported</a>
     <a href="{% url 'bank_import' %}?account={{ batch.account.pk }}" class="btn-secondary">Import another file</a>
   </div>
+  {% if looks_inverted %}
+  <div class="rounded-lg px-4 py-3 mt-4 text-sm bg-amber-50 border border-amber-200 text-amber-900">
+    <strong>These signs look backwards.</strong> {{ n_in }} of {{ n_live }} rows are money <em>into</em> {{ batch.account.name }}, but on a card most rows should be charges (money out). The file probably listed charges as positive numbers. Use <em>Flip signs</em> below to fix the whole import in place.
+  </div>
+  {% endif %}
+  <div class="card-pad mt-4">
+    <h2 class="font-semibold mb-1">Fix this import</h2>
+    <p class="text-xs text-slate-500 mb-3">Preset used: {{ batch.preset|default:"detected automatically" }}. Both actions touch only the {{ n_live }} transaction{{ n_live|pluralize }} from this file.</p>
+    <div class="flex flex-wrap gap-2">
+      <form method="post" action="{% url 'bank_import_flip' batch.pk %}" onsubmit="return confirm('Flip money in/out on every transaction from this import? They go back to review and are re-categorized automatically.')">{% csrf_token %}
+        <button class="btn-secondary">⇅ Flip signs on this import</button></form>
+      <form method="post" action="{% url 'bank_import_delete' batch.pk %}" onsubmit="return confirm('Remove all transactions from this import? Other imports are not affected. You can import the file again afterwards.')">{% csrf_token %}
+        <button class="btn-secondary text-red-600">🗑 Remove this import</button></form>
+    </div>
+  </div>
 </div>
 {% if sample %}
 <div class="card overflow-x-auto">

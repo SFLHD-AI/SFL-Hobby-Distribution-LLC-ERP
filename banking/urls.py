@@ -21,6 +21,8 @@ urlpatterns = [
     # CSV import
     path("import/", views.bank_import, name="bank_import"),
     path("import/<int:pk>/done/", views.import_result, name="bank_import_result"),
+    path("import/<int:pk>/flip/", views.import_flip, name="bank_import_flip"),
+    path("import/<int:pk>/remove/", views.import_delete, name="bank_import_delete"),
     # rules
     path("rules/", views.rules, name="bank_rules"),
     path("rules/new/", views.rule_create, name="bank_rule_create"),

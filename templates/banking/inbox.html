@@ -56,7 +56,7 @@
 </form>
 
 {% if batch %}
-<div class="rounded-lg px-4 py-2 mb-3 text-sm bg-sky-50 border border-sky-200 text-sky-900">Showing the import of <strong>{{ batch.filename|default:batch.get_source_display }}</strong> into {{ batch.account.name }} on {{ batch.created_at|date:"M j, Y" }}: {{ batch.rows_imported }} imported, {{ batch.rows_duplicate }} duplicates skipped, {{ batch.rows_auto_categorized }} categorized by rules.</div>
+<div class="rounded-lg px-4 py-2 mb-3 text-sm bg-sky-50 border border-sky-200 text-sky-900">Showing the import of <strong>{{ batch.filename|default:batch.get_source_display }}</strong> into {{ batch.account.name }} on {{ batch.created_at|date:"M j, Y" }}: {{ batch.rows_imported }} imported, {{ batch.rows_duplicate }} duplicates skipped, {{ batch.rows_auto_categorized }} categorized by rules. <a href="{% url 'bank_import_result' batch.pk %}" class="underline">Fix or remove this import →</a></div>
 {% endif %}
 
 <datalist id="vendorList">{% for v in vendor_names %}<option value="{{ v }}">{% endfor %}</datalist>

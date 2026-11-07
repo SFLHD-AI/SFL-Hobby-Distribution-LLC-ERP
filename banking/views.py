@@ -11,6 +11,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import urlencode
 
 from django.contrib import messages
+from django.db import transaction as db_transaction
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.core.paginator import Paginator
@@ -905,8 +906,52 @@ def bank_import(request):
 @module_required("banking")
 def import_result(request, pk):
     batch = get_object_or_404(ImportBatch.objects.select_related("account"), pk=pk)
-    sample = batch.transactions.filter(is_deleted=False).select_related("category_account")[:10]
-    return render(request, "banking/import_result.html", {"batch": batch, "sample": sample})
+    live = batch.transactions.filter(is_deleted=False)
+    sample = live.select_related("category_account")[:10]
+    n_live = live.count()
+    n_in = live.filter(amount__gt=0).count()
+    # a card import where most rows are money IN almost always came in with the signs inverted
+    looks_inverted = bool(n_live >= 5 and batch.account.is_liability and n_in / n_live > 0.6)
+    return render(request, "banking/import_result.html", {
+        "batch": batch, "sample": sample, "n_live": n_live, "n_in": n_in, "looks_inverted": looks_inverted})
+
+
+@module_required("banking")
+@require_POST
+def import_flip(request, pk):
+    """Flip money in ↔ money out on every row of one import. For a file that
+    came in with the wrong sign convention. Rows go back to review, documents
+    are unlinked, then auto-categorize runs again."""
+    batch = get_object_or_404(ImportBatch.objects.select_related("account"), pk=pk)
+    txns = list(batch.transactions.filter(is_deleted=False).select_related("account"))
+    with db_transaction.atomic():
+        for t in txns:
+            t.reset_review(user=request.user)
+            t.amount = -t.amount
+            t.fingerprint = BankTransaction.make_fingerprint(t.account_id, t.date, t.amount, t.description)
+            t.save(update_fields=["amount", "fingerprint"])
+    c = apply_rules(txns, user=request.user)
+    log_activity(request.user, "import_flipped", batch, note=f"{len(txns)} rows")
+    messages.success(request, f"Flipped money in/out on {len(txns)} transaction{'s' if len(txns) != 1 else ''} "
+                              f"from {batch.filename or 'this import'}. " + _rules_message(c))
+    return redirect("bank_import_result", batch.pk)
+
+
+@module_required("banking")
+@require_POST
+def import_delete(request, pk):
+    """Remove every row of one import (soft delete). Other imports are untouched."""
+    batch = get_object_or_404(ImportBatch.objects.select_related("account"), pk=pk)
+    txns = list(batch.transactions.filter(is_deleted=False))
+    with db_transaction.atomic():
+        for t in txns:
+            t.reset_review(user=request.user)       # unlink bills, payments, expenses, transfer twins
+            t.delete(user=request.user)
+    log_activity(request.user, "import_removed", batch, note=f"{len(txns)} rows")
+    messages.success(request, f"Removed {len(txns)} transaction{'s' if len(txns) != 1 else ''} from "
+                              f"{batch.filename or 'that import'} ({batch.account.name}). "
+                              "Import the file again with the right account or sign setting.")
+    return redirect(f"{reverse('bank_import')}?account={batch.account_id}")
 
 
 # ---------------------------------------------------------------------------
