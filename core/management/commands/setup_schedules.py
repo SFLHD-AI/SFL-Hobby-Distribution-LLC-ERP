@@ -22,6 +22,8 @@ class Command(BaseCommand):
          "HOURLY", None, None),
         ("bank-sync", "banking.tasks.sync_all_connections",
          "HOURLY", None, None),
+        ("auto-categorize", "banking.tasks.auto_categorize_pending",
+         "HOURLY", None, None),
         ("recurring-expenses", "expenses.tasks.generate_recurring_expenses",
          "CRON", "0 6 * * *", "DAILY"),
         ("review-digest", "core.tasks.send_review_digest",

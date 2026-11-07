@@ -2096,3 +2096,25 @@ class SmartAutoCategorizeTests(BankingBase):
         self.assertEqual(fee.category_account.name, "Bank fees & interest")
         resp = self.client.post("/banking/rules/starters/", follow=True)
         self.assertContains(resp, "already in place")
+
+
+class AutoCategorizeCommandTests(BankingBase):
+    def test_command_installs_starters_once_and_sweeps_backlog(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from banking.models import CategoryRule
+        old = self.txn(desc="SHIPPO 866-555-1234", amount="-14.30", day=TODAY - timedelta(days=400))
+        out = StringIO()
+        call_command("auto_categorize", stdout=out)
+        self.assertIn("starter rules installed", out.getvalue())
+        old.refresh_from_db()
+        self.assertEqual(old.status, BankTransaction.CATEGORIZED)
+        n = CategoryRule.objects.count()
+        out = StringIO()
+        call_command("auto_categorize", stdout=out)
+        self.assertNotIn("installed", out.getvalue())
+        self.assertEqual(CategoryRule.objects.count(), n)
+        # the owner removed a starter rule: a later run must not bring it back
+        CategoryRule.objects.get(name="Shippo labels").delete()
+        call_command("auto_categorize", stdout=StringIO())
+        self.assertFalse(CategoryRule.objects.filter(name="Shippo labels").exists())

@@ -287,3 +287,8 @@ undone from the inbox:
 4. **Saved vendors** pre-fill their default category.
 5. **What you did before**: a merchant you categorized the same way 3+
    times (≥ 90 % agreement) is categorized for real; fewer, it's suggested.
+
+The whole backlog is swept automatically: `manage.py auto_categorize`
+runs on every deploy and hourly, installing the starter rules the first
+time and running the passes above over every transaction still waiting for
+review — so imports uploaded before a rule existed get their suggestions too.

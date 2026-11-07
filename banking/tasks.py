@@ -310,3 +310,22 @@ def sync_all_connections(provider=None, user=None):
     if errors:
         parts.append("Errors: " + "; ".join(errors) + ".")
     return " ".join(parts)
+
+
+def auto_categorize_pending(install_starters=True, limit=20000):
+    """Starter rules (once) + apply_rules over everything unreviewed. Used by
+    the auto_categorize command on deploy and by the hourly schedule."""
+    from banking.models import BankTransaction, CategoryRule
+    from banking.rules import apply_rules
+    parts = []
+    if install_starters and not CategoryRule.all_objects.filter(name="Shippo labels").exists():
+        from banking.starter_rules import install
+        created, _ = install()
+        parts.append(f"{created} starter rules installed")
+    qs = (BankTransaction.objects.filter(is_deleted=False, status=BankTransaction.UNREVIEWED)
+          .select_related("account").order_by("date", "id"))
+    c = apply_rules(list(qs[:limit]))
+    parts.append(f"checked {c['scanned']}: {c['auto']} categorized, {c['matched']} matched, "
+                 f"{c['transfers']} transfers, {c['ignored']} ignored, "
+                 f"{c['suggested'] + c['vendor'] + c['learned']} suggestions, {c['unmatched']} open")
+    return "; ".join(parts) + "."
