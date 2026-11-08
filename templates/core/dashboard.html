@@ -22,12 +22,12 @@
     {% if money %}
     <div class="grid grid-cols-2 md:grid-cols-3 2xl:grid-cols-5 gap-3">
       <a href="{% url 'report_inventory_valuation' %}" class="stat hover:border-indigo-300 transition-colors">
-        <p class="lbl whitespace-nowrap">Inventory on hand</p>
+        <p class="lbl">Inventory on hand</p>
         <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.inventory_value %}</p>
         <p class="text-xs text-slate-500 mt-1">{{ money.inventory_units|intcomma }} units at your cost</p>
       </a>
       <a href="{% url 'receipt_list' %}?status=open" class="stat hover:border-indigo-300 transition-colors" title="Open supplier orders not received yet, at landed cost">
-        <p class="lbl whitespace-nowrap">Incoming inventory</p>
+        <p class="lbl">Incoming inventory</p>
         <p class="val !text-xl leading-tight break-words">{% include "core/_money.html" with v=money.incoming_value %}</p>
         <p class="text-xs text-slate-500 mt-1">{{ money.incoming_units|intcomma }} units on {{ money.incoming_orders }} open order{{ money.incoming_orders|pluralize }}</p>
       </a>

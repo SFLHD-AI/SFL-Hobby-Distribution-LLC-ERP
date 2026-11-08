@@ -33,7 +33,7 @@
     <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p></a>
   {% if show_costs and product.market_eligible and product.tcgplayer_unit_id %}
   <div class="stat {% if product.unit_market_badge %}border-indigo-200{% endif %}" title="The single unit's TCGplayer market price × case pack quantity — apples to apples against this case">
-    <p class="lbl whitespace-nowrap">Case at singles' market</p>
+    <p class="lbl">Case at singles</p>
     {% if product.case_market_from_units %}<p class="val !text-xl">${{ product.case_market_from_units|floatformat:2|intcomma }}</p>
       <p class="text-xs mt-1">{% if product.unit_market_badge %}<span class="badge {{ product.unit_market_badge.1 }}">cost = {{ product.cost_pct_of_unit_market }}% of singles</span>{% endif %}</p>
       <p class="text-xs text-slate-400 mt-1">${{ product.unit_market_price|floatformat:2|intcomma }} × {{ product.case_pack_qty }} · margin ${{ product.unit_market_margin|floatformat:2|intcomma }}/case · {{ product.unit_market_updated_at|date:"M j, g:i A" }}</p>
