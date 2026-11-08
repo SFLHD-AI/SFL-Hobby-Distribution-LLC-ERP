@@ -766,4 +766,4 @@ class TrackingScanSearchTests(TestCase):
         html = self.client.get("/search/?q=22303300").content.decode()      # two orders match → list them
         self.assertIn("Supplier orders (tracking match)", html)
         data = self.client.get("/search/suggest/?q=22303300").json()
-        self.assertEqual(data["receipts"][0]["label"], f"RCV-{self.r.pk}")
+        self.assertEqual({d["label"] for d in data["receipts"]}, {f"RCV-{self.r.pk}", f"RCV-{r2.pk}"})
