@@ -9,6 +9,16 @@
   <div class="flex flex-wrap gap-2">{% for pg in pages %}<a href="{{ pg.url }}" class="btn-secondary">{{ pg.label }} →</a>{% endfor %}</div></div>
 {% endif %}
 
+{% if receipts %}
+<div class="card-pad mb-4"><h2 class="font-semibold mb-2">Supplier orders (tracking match)</h2>
+  <table class="tbl"><tbody>
+  {% for r in receipts %}<tr>
+    <td><a class="text-indigo-600 hover:underline font-medium" href="{% url 'receipt_detail' r.pk %}">RCV-{{ r.pk }}</a></td>
+    <td>{{ r.supplier|default:"—" }}</td><td>{{ r.reference }}</td>
+    <td>{% if r.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received</span>{% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>
+{% endif %}
+
 {% if products %}
 <div class="card-pad mb-4"><h2 class="font-semibold mb-2">Products</h2>
   <table class="tbl"><tbody>

@@ -303,10 +303,36 @@ def search_suggest(request):
             models.Q(reference__icontains=q) | models.Q(supplier_invoice_number__icontains=q))
         if num.isdigit():
             rq = rq | Receipt.objects.filter(is_deleted=False, pk=int(num))
-        for r in rq.select_related("supplier").order_by("-id")[:4]:
+        seen = set()
+        for r in list(_tracking_receipts(q)) + list(rq.select_related("supplier").order_by("-id")[:4]):
+            if r.pk in seen:
+                continue
+            seen.add(r.pk)
             out["receipts"].append({"label": f"RCV-{r.pk}", "sub": f"{r.supplier or ''} {r.reference or r.supplier_invoice_number or ''}".strip(),
                                     "right": "received" if r.posted else "open", "url": reverse("receipt_detail", args=[r.pk])})
+            if len(out["receipts"]) >= 5:
+                break
     return JsonResponse(out)
+
+
+def _tracking_receipts(q):
+    """Supplier orders whose package tracking matches a typed or SCANNED code.
+    Carrier label barcodes often wrap the number (USPS: '420' + ZIP + number),
+    so also match a tracking number that the scanned string ends with."""
+    from inventory.models import ReceiptPackage
+    code = "".join(ch for ch in q if ch.isalnum()).upper()
+    if len(code) < 8:
+        return []
+    pkgs = (ReceiptPackage.objects.filter(receipt__is_deleted=False)
+            .filter(models.Q(tracking_number__iexact=code) | models.Q(tracking_number__icontains=code))
+            .select_related("receipt", "receipt__supplier"))
+    found = {p.receipt for p in pkgs}
+    if not found and len(code) >= 12:
+        for p in ReceiptPackage.objects.filter(receipt__is_deleted=False).select_related("receipt", "receipt__supplier"):
+            t = p.tracking_number.replace(" ", "").upper()
+            if len(t) >= 8 and code.endswith(t):
+                found.add(p.receipt)
+    return sorted(found, key=lambda r: -r.pk)
 
 
 @module_required("dashboard")
@@ -314,6 +340,12 @@ def global_search(request):
     q = (request.GET.get("q") or "").strip()
     results = {"q": q}
     if q:
+        # a scanned shipping label: jump straight to that supplier order
+        tracked = _tracking_receipts(q)
+        if len(tracked) == 1 and len(q) >= 8:
+            messages.info(request, f"Tracking {q} is on RCV-{tracked[0].pk}.")
+            return redirect("receipt_detail", tracked[0].pk)
+        results["receipts"] = tracked
         from core.search_registry import match_pages
         results["pages"] = match_pages(request.user, q, limit=12)
         from invoicing.models import Invoice as Inv

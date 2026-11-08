@@ -739,3 +739,31 @@ class SearchSuggestTests(TestCase):
         html = self.client.get("/search/?q=equity").content.decode()
         self.assertIn("Pages & reports", html)
         self.assertIn("Equity trend", html)
+
+
+class TrackingScanSearchTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptPackage, Supplier
+        self.client.force_login(User.objects.create_superuser("scan", password="x"))
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="Tradepost"), reference="TP-1")
+        ReceiptPackage.objects.create(receipt=self.r, tracking_number="9400111899223033005555", carrier="usps")
+
+    def test_exact_tracking_jumps_to_the_order(self):
+        r = self.client.get("/search/?q=9400111899223033005555")
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r["Location"].endswith(f"/inventory/receiving/{self.r.pk}/"))
+
+    def test_usps_label_barcode_with_zip_prefix_still_matches(self):
+        r = self.client.get("/search/?q=420331259400111899223033005555")
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r["Location"].endswith(f"/inventory/receiving/{self.r.pk}/"))
+
+    def test_partial_number_lists_in_results_and_suggestions(self):
+        from inventory.models import Receipt, ReceiptPackage
+        r2 = Receipt.objects.create(reference="TP-2")
+        ReceiptPackage.objects.create(receipt=r2, tracking_number="9400111899223033009999", carrier="usps")
+        html = self.client.get("/search/?q=22303300").content.decode()      # two orders match → list them
+        self.assertIn("Supplier orders (tracking match)", html)
+        data = self.client.get("/search/suggest/?q=22303300").json()
+        self.assertEqual(data["receipts"][0]["label"], f"RCV-{self.r.pk}")

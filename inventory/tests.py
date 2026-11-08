@@ -1292,3 +1292,20 @@ class CaseVsSinglesMarketTests(TestCase):
         self.case.refresh_from_db()
         self.assertEqual(self.case.tcgplayer_unit_id, 10002)
         self.assertEqual(self.case.unit_market_price, Decimal("320.00"))
+
+
+class IncomingTileTests(TestCase):
+    def test_tile_shows_incoming_average_and_blended_cost(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine
+        self.client.force_login(User.objects.create_superuser("inc", password="x"))
+        p = make_product("INC-1")
+        StockAdjustment.create_and_apply(product=p, qty_delta=10, reason="opening", unit_cost=Decimal("100"))
+        r = Receipt.objects.create(reference="open")
+        ReceiptLine.objects.create(receipt=r, product=p, qty=10, unit_cost=Decimal("120"))
+        summ = p.incoming_summary
+        self.assertEqual(summ["avg_cost"], Decimal("120.0000"))
+        self.assertEqual(summ["blended_avg"], Decimal("110.0000"))
+        html = self.client.get(f"/inventory/{p.pk}/").content.decode()
+        self.assertIn("avg $120.00", html)
+        self.assertIn("$110.00 avg after arrival", html)

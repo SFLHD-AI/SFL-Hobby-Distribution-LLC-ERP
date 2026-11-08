@@ -30,7 +30,9 @@
   <div class="stat"><p class="lbl">Available</p><p class="val {% if product.is_low_stock %}text-red-600{% endif %}">{{ product.qty_available }}</p></div>
   <a href="#incoming" class="stat hover:border-indigo-300 {% if incoming_summary.qty %}border-sky-200 bg-sky-50/40{% endif %}">
     <p class="lbl">Incoming</p><p class="val">{{ incoming_summary.qty }}</p>
-    <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p></a>
+    <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p>
+    {% if show_costs and incoming_summary.qty %}<p class="text-xs mt-1"><span class="font-semibold text-slate-700">avg ${{ incoming_summary.avg_cost|floatformat:2|intcomma }}</span><span class="text-slate-500">/unit incoming</span>
+      {% if incoming_summary.blended_avg %}<span class="block text-slate-500">≈ ${{ incoming_summary.blended_avg|floatformat:2|intcomma }} avg after arrival</span>{% endif %}</p>{% endif %}</a>
   {% if show_costs and product.market_eligible and product.tcgplayer_unit_id %}
   <div class="stat {% if product.unit_market_badge %}border-indigo-200{% endif %}" title="The single unit's TCGplayer market price × case pack quantity — apples to apples against this case">
     <p class="lbl">Case at singles</p>

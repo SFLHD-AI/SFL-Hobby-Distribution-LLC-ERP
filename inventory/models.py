@@ -177,8 +177,13 @@ class Product(SoftDeleteModel):
             if eta and (next_eta is None or eta < next_eta):
                 next_eta = eta
         cost = cost.quantize(CENTS, ROUND_HALF_UP)
-        return {"qty": qty, "cost": cost,
-                "avg_cost": (cost / qty).quantize(FOURPLACES, ROUND_HALF_UP) if qty else None,
+        avg = (cost / qty).quantize(FOURPLACES, ROUND_HALF_UP) if qty else None
+        # what the weighted average will roughly be once these land (before freight)
+        on_hand = max(self.qty_on_hand, 0)
+        blended = None
+        if qty:
+            blended = ((Decimal(on_hand) * self.avg_cost + cost) / Decimal(on_hand + qty)).quantize(FOURPLACES, ROUND_HALF_UP)
+        return {"qty": qty, "cost": cost, "avg_cost": avg, "blended_avg": blended,
                 "orders": len(orders), "next_eta": next_eta}
 
     @property
