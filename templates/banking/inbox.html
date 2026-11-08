@@ -171,6 +171,24 @@
   function toggle() { wrap.style.display = act.value === 'categorize' ? '' : 'none'; }
   if (act) { act.addEventListener('change', toggle); toggle(); }
   // phones: "More…" unfolds vendor / note / other actions for one row
+  // Stay where you were: every row action posts and comes back to this page,
+  // so remember the scroll position on submit and restore it after the reload.
+  var SCROLL_KEY = 'inboxScroll:' + location.pathname + location.search;
+  document.querySelectorAll('form').forEach(function (f) {
+    f.addEventListener('submit', function () {
+      try { sessionStorage.setItem(SCROLL_KEY, String(window.scrollY)); } catch (e) {}
+    });
+  });
+  try {
+    var saved = sessionStorage.getItem(SCROLL_KEY);
+    if (saved !== null) {
+      sessionStorage.removeItem(SCROLL_KEY);
+      var y = parseInt(saved, 10) || 0;
+      if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+      var restore = function () { window.scrollTo(0, Math.min(y, document.documentElement.scrollHeight - window.innerHeight)); };
+      restore(); requestAnimationFrame(restore); setTimeout(restore, 60);
+    }
+  } catch (e) {}
   document.querySelectorAll('.rowMoreBtn').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var more = btn.closest('form').querySelector('.rowMore');
