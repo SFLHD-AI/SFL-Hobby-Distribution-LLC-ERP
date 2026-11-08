@@ -31,6 +31,16 @@
   <a href="#incoming" class="stat hover:border-indigo-300 {% if incoming_summary.qty %}border-sky-200 bg-sky-50/40{% endif %}">
     <p class="lbl">Incoming</p><p class="val">{{ incoming_summary.qty }}</p>
     <p class="text-xs text-slate-500">{% if incoming_summary.qty %}{{ incoming_summary.orders }} open order{{ incoming_summary.orders|pluralize }}{% if incoming_summary.next_eta %} · next {{ incoming_summary.next_eta|date:"M j" }}{% endif %}{% else %}nothing on order{% endif %}</p></a>
+  {% if show_costs and product.market_eligible and product.tcgplayer_unit_id %}
+  <div class="stat {% if product.unit_market_badge %}border-indigo-200{% endif %}" title="The single unit's TCGplayer market price × case pack quantity — apples to apples against this case">
+    <p class="lbl whitespace-nowrap">Case at singles' market</p>
+    {% if product.case_market_from_units %}<p class="val !text-xl">${{ product.case_market_from_units|floatformat:2|intcomma }}</p>
+      <p class="text-xs mt-1">{% if product.unit_market_badge %}<span class="badge {{ product.unit_market_badge.1 }}">cost = {{ product.cost_pct_of_unit_market }}% of singles</span>{% endif %}</p>
+      <p class="text-xs text-slate-400 mt-1">${{ product.unit_market_price|floatformat:2|intcomma }} × {{ product.case_pack_qty }} · margin ${{ product.unit_market_margin|floatformat:2|intcomma }}/case · {{ product.unit_market_updated_at|date:"M j, g:i A" }}</p>
+    {% else %}<p class="text-sm text-amber-700 mt-1">{{ product.unit_market_error|default:"Not fetched yet" }}</p>{% endif %}
+    <a href="https://www.tcgplayer.com/product/{{ product.tcgplayer_unit_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline">single unit on TCGplayer ↗</a>
+  </div>
+  {% endif %}
   {% if show_costs and product.market_eligible %}
   <div class="stat {% if product.market_badge %}border-indigo-200{% endif %}">
     <p class="lbl">TCGplayer market</p>
@@ -39,9 +49,9 @@
       <p class="text-xs text-slate-400 mt-1">margin at market ${{ product.market_margin_per_unit|floatformat:2 }}/unit · {{ product.market_updated_at|date:"M j, g:i A" }}</p>
     {% elif product.tcgplayer_id %}<p class="text-sm text-amber-700 mt-1">{{ product.market_error|default:"Not fetched yet" }}</p>
     {% else %}<p class="text-sm text-slate-500 mt-1">Add the TCGplayer link on <a href="{% url 'product_edit' product.pk %}" class="text-indigo-600 hover:underline">Edit</a></p>{% endif %}
-    {% if product.tcgplayer_id %}<form method="post" class="mt-1">{% csrf_token %}<input type="hidden" name="action" value="refresh_market">
+    {% if product.tcgplayer_id or product.tcgplayer_unit_id %}<form method="post" class="mt-1">{% csrf_token %}<input type="hidden" name="action" value="refresh_market">
       <button class="text-xs text-indigo-600 hover:underline">↻ Refresh</button>
-      <a href="https://www.tcgplayer.com/product/{{ product.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline ml-2">open ↗</a></form>{% endif %}
+      {% if product.tcgplayer_id %}<a href="https://www.tcgplayer.com/product/{{ product.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline ml-2">open ↗</a>{% endif %}</form>{% endif %}
   </div>
   {% endif %}
   {% if show_costs %}

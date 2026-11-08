@@ -1219,3 +1219,76 @@ class SupplierPagesTests(TestCase):
         self.assertIn(f"/inventory/suppliers/{self.a.pk}/?next=", html)
         r = self.client.post(f"/inventory/suppliers/{self.a.pk}/", {"name": "Tradepost LLC", "contact_name": "", "email": "", "phone": "", "notes": "", "next": f"/inventory/receiving/{self.r.pk}/"})
         self.assertEqual(r["Location"], f"/inventory/receiving/{self.r.pk}/")
+
+
+class CaseVsSinglesMarketTests(TestCase):
+    """A case SKU with a second TCGplayer link for the single box inside."""
+    FakeProvider = MarketPriceTests.FakeProvider
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Category, Product
+        self.client.force_login(User.objects.create_superuser("mkt2", password="x"))
+        sealed = Category.objects.create(name="Sealed TCG Product")
+        self.p = Product.objects.create(sku="PRISM-ETB", name="Prismatic ETB", category=sealed,
+                                        default_price=Decimal("120"), tcgplayer_id=593391)
+        # case of 6 bundles, paid $1,500 landed; case page 10001, single bundle page 10002
+        self.case = Product.objects.create(sku="PE-BUNDLE-CASE", name="Prismatic Bundle Case", category=sealed,
+                                           default_price=Decimal("1825"), case_pack_qty=6,
+                                           tcgplayer_id=10001, tcgplayer_unit_id=10002)
+        self.case.apply_movement(movement_type="receipt", qty_delta=2, unit_cost=Decimal("1500.00"),
+                                 new_avg_cost=Decimal("1500.00"))
+
+    def test_unit_price_math(self):
+        from inventory.pricing import refresh_all
+        fake = self.FakeProvider({593391: Decimal("100.00"), 10001: Decimal("1700.00"), 10002: Decimal("320.00")})
+        refresh_all(fake)
+        self.assertEqual(sorted(fake.calls), [10001, 10002, 593391])
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.market_price, Decimal("1700.00"))
+        self.assertEqual(self.case.unit_market_price, Decimal("320.00"))
+        self.assertEqual(self.case.case_market_from_units, Decimal("1920.00"))      # 320 × 6
+        self.assertEqual(self.case.cost_pct_of_market, Decimal("88.2"))             # 1500 / 1700
+        self.assertEqual(self.case.cost_pct_of_unit_market, Decimal("78.1"))        # 1500 / 1920
+        self.assertEqual(self.case.unit_market_margin, Decimal("420.00"))
+        self.assertEqual(self.case.unit_market_badge[0], "78.1% of singles")
+
+    def test_unit_only_product_still_refreshes(self):
+        from inventory.pricing import refresh_all
+        self.case.tcgplayer_id = None; self.case.save()
+        fake = self.FakeProvider({593391: Decimal("100.00"), 10002: Decimal("300.00")})
+        self.assertIn("2 updated", refresh_all(fake))
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.case_market_from_units, Decimal("1800.00"))
+        self.assertIsNone(self.case.market_price)
+
+    def test_pages_and_form(self):
+        from unittest.mock import patch
+        fake = self.FakeProvider({10001: Decimal("1700.00"), 10002: Decimal("320.00")})
+        with patch("inventory.pricing.get_provider", return_value=fake):
+            self.client.post(f"/inventory/{self.case.pk}/", {"action": "refresh_market"})
+        detail = self.client.get(f"/inventory/{self.case.pk}/").content.decode()
+        self.assertIn("Case at singles", detail)
+        self.assertIn("$1,920.00", detail)
+        self.assertIn("78.1% of singles", detail)
+        rep = self.client.get("/reports/market-check/").content.decode()
+        self.assertIn("Cost % of singles", rep)
+        self.assertIn("78.1%", rep)
+        csv = self.client.get("/reports/market-check/?export=csv").content.decode()
+        self.assertIn("1920.00", csv)
+        # the edit form accepts the single-unit link and clears prices when removed
+        data = {"sku": "PE-BUNDLE-CASE", "name": "Prismatic Bundle Case", "category": self.case.category_id, "upc": "",
+                "tcgplayer": "10001", "tcgplayer_unit": "", "extra_barcodes": "", "case_pack_qty": 6,
+                "unit_of_measure": "each", "avg_cost": "1500", "default_price": "1825", "reorder_point": 0, "active": "on"}
+        with patch("inventory.pricing.get_provider", return_value=fake):
+            r = self.client.post(f"/inventory/{self.case.pk}/edit/", data)
+        self.assertEqual(r.status_code, 302)
+        self.case.refresh_from_db()
+        self.assertIsNone(self.case.tcgplayer_unit_id)
+        self.assertIsNone(self.case.unit_market_price)
+        data["tcgplayer_unit"] = "https://www.tcgplayer.com/product/10002/pokemon-bundle"
+        with patch("inventory.pricing.get_provider", return_value=fake):
+            self.client.post(f"/inventory/{self.case.pk}/edit/", data)
+        self.case.refresh_from_db()
+        self.assertEqual(self.case.tcgplayer_unit_id, 10002)
+        self.assertEqual(self.case.unit_market_price, Decimal("320.00"))

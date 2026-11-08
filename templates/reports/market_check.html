@@ -18,7 +18,7 @@
 </div>
 <div class="card overflow-x-auto">
   <table class="tbl">
-    <thead><tr><th>SKU</th><th>Product</th><th class="num">On hand</th><th class="num">Your cost</th><th class="num">Market</th><th class="num">Cost % of mkt</th><th class="num">Margin / unit</th><th class="num">On hand at mkt</th><th></th></tr></thead>
+    <thead><tr><th>SKU</th><th>Product</th><th class="num">On hand</th><th class="num">Your cost</th><th class="num">Market</th><th class="num">Cost % of mkt</th>{% if has_units %}<th class="num" title="single unit's market × case pack qty">Case at singles</th><th class="num">Cost % of singles</th>{% endif %}<th class="num">Margin / unit</th><th class="num">On hand at mkt</th><th></th></tr></thead>
     <tbody>
     {% for r in rows %}
       <tr>
@@ -28,11 +28,13 @@
         <td class="num">${{ r.p.avg_cost|floatformat:2 }}</td>
         <td class="num">{% if r.p.market_price %}${{ r.p.market_price|floatformat:2 }}{% else %}<span class="text-amber-700 text-xs">{{ r.p.market_error|default:"not fetched" }}</span>{% endif %}</td>
         <td class="num">{% if r.p.market_badge %}<span class="badge {{ r.p.market_badge.1 }}">{{ r.pct }}%</span>{% else %}—{% endif %}</td>
+        {% if has_units %}<td class="num">{% if r.case_from_units %}${{ r.case_from_units|floatformat:2|intcomma }}<div class="text-[10px] text-slate-400">${{ r.p.unit_market_price|floatformat:2 }} × {{ r.p.case_pack_qty }}</div>{% else %}—{% endif %}</td>
+        <td class="num">{% if r.p.unit_market_badge %}<span class="badge {{ r.p.unit_market_badge.1 }}">{{ r.unit_pct }}%</span>{% else %}—{% endif %}</td>{% endif %}
         <td class="num">{% if r.p.market_margin_per_unit is not None %}${{ r.p.market_margin_per_unit|floatformat:2 }}{% else %}—{% endif %}</td>
         <td class="num">{% if r.on_hand_market is not None %}${{ r.on_hand_market|floatformat:2|intcomma }}{% else %}—{% endif %}</td>
-        <td><a href="https://www.tcgplayer.com/product/{{ r.p.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline">tcgplayer ↗</a></td>
+        <td class="whitespace-nowrap">{% if r.p.tcgplayer_id %}<a href="https://www.tcgplayer.com/product/{{ r.p.tcgplayer_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline">tcgplayer ↗</a>{% endif %}{% if r.p.tcgplayer_unit_id %} <a href="https://www.tcgplayer.com/product/{{ r.p.tcgplayer_unit_id }}" target="_blank" class="text-xs text-indigo-600 hover:underline">single ↗</a>{% endif %}</td>
       </tr>
-    {% empty %}<tr><td colspan="9" class="text-center text-slate-400 py-8">No products in "{{ category }}" have a TCGplayer link yet. Add one on each product's Edit page.</td></tr>{% endfor %}
+    {% empty %}<tr><td colspan="11" class="text-center text-slate-400 py-8">No products in "{{ category }}" have a TCGplayer link yet. Add one on each product's Edit page.</td></tr>{% endfor %}
     </tbody>
   </table>
 </div>

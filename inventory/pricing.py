@@ -147,13 +147,40 @@ def refresh_product(product, provider=None):
     product.market_error = ""
     product.save(update_fields=["market_price", "market_low", "market_updated_at", "market_error"])
     pct = product.cost_pct_of_market
-    return True, f"Market ${info['market']}" + (f" · your cost is {pct}% of market" if pct is not None else "")
+    msg = f"Market ${info['market']}" + (f" · your cost is {pct}% of market" if pct is not None else "")
+    if product.tcgplayer_unit_id:
+        ok_u, msg_u = refresh_unit_price(product, provider)
+        msg += f" · {msg_u}" if ok_u else f" · single unit: {msg_u}"
+    return True, msg
+
+
+def refresh_unit_price(product, provider=None):
+    """Fetch the market price of the single unit inside a case SKU."""
+    if not product.tcgplayer_unit_id:
+        return False, "No single-unit TCGplayer id."
+    provider = provider or get_provider()
+    try:
+        info = provider.fetch(product.tcgplayer_unit_id)
+    except PricingError as e:
+        product.unit_market_error = str(e)[:200]
+        product.unit_market_updated_at = timezone.now()
+        product.save(update_fields=["unit_market_error", "unit_market_updated_at"])
+        return False, str(e)
+    product.unit_market_price, product.unit_market_low = info["market"], info["low"]
+    product.unit_market_updated_at = timezone.now()
+    product.unit_market_error = ""
+    product.save(update_fields=["unit_market_price", "unit_market_low", "unit_market_updated_at", "unit_market_error"])
+    pct = product.cost_pct_of_unit_market
+    case_val = product.case_market_from_units
+    return True, (f"single ${info['market']} × {product.case_pack_qty} = ${case_val}"
+                  + (f" · your cost is {pct}% of singles" if pct is not None else ""))
 
 
 def eligible_products():
     from inventory.models import Product
-    return (Product.objects.filter(active=True, tcgplayer_id__isnull=False,
-                                   category__name__iexact=eligible_category_name())
+    from django.db.models import Q
+    return (Product.objects.filter(active=True, category__name__iexact=eligible_category_name())
+            .filter(Q(tcgplayer_id__isnull=False) | Q(tcgplayer_unit_id__isnull=False))
             .select_related("category"))
 
 
@@ -161,7 +188,10 @@ def refresh_all(provider=None):
     provider = provider or get_provider()
     ok = fail = 0
     for p in eligible_products():
-        good, _ = refresh_product(p, provider)
+        if p.tcgplayer_id:
+            good, _ = refresh_product(p, provider)        # also refreshes the single unit
+        else:
+            good, _ = refresh_unit_price(p, provider)
         ok += good
         fail += (not good)
     return f"Market prices: {ok} updated, {fail} failed."

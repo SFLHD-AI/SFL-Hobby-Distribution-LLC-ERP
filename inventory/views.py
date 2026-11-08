@@ -139,15 +139,15 @@ def product_import(request):
 
 
 def _maybe_refresh_market(request, product):
-    """Pull the TCGplayer price as soon as an id is saved (sealed product only)."""
-    if not product.tcgplayer_id:
+    """Pull the TCGplayer price(s) as soon as an id is saved (sealed product only)."""
+    if not product.tcgplayer_id and not product.tcgplayer_unit_id:
         return
-    from inventory.pricing import refresh_product
+    from inventory.pricing import eligible_category_name, refresh_product, refresh_unit_price
     if not product.market_eligible:
         messages.info(request, f"TCGplayer id saved, but market prices only apply to the "
-                               f"\"{__import__('inventory.pricing', fromlist=['x']).eligible_category_name()}\" category.")
+                               f"\"{eligible_category_name()}\" category.")
         return
-    ok, msg = refresh_product(product)
+    ok, msg = refresh_product(product) if product.tcgplayer_id else refresh_unit_price(product)
     (messages.success if ok else messages.warning)(request, msg)
 
 
@@ -258,8 +258,8 @@ def product_detail(request, pk):
     product = get_object_or_404(Product, pk=pk)
     adj_form = AdjustmentForm()
     if request.method == "POST" and request.POST.get("action") == "refresh_market":
-        from inventory.pricing import refresh_product
-        ok, msg = refresh_product(product)
+        from inventory.pricing import refresh_product, refresh_unit_price
+        ok, msg = refresh_product(product) if product.tcgplayer_id else refresh_unit_price(product)
         (messages.success if ok else messages.warning)(request, msg)
         return redirect("product_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "revalue":

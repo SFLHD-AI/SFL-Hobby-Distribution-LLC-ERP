@@ -94,6 +94,15 @@ class Product(SoftDeleteModel):
     market_low = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     market_updated_at = models.DateTimeField(null=True, blank=True)
     market_error = models.CharField(max_length=200, blank=True)
+    # The single box / pack inside a case: a second TCGplayer link so a case
+    # SKU can be compared against (single market price × case pack qty).
+    tcgplayer_unit_id = models.PositiveIntegerField(
+        "TCGplayer product ID of the single unit", null=True, blank=True, db_index=True,
+        help_text="For case SKUs: the TCGplayer page of ONE box/pack inside the case")
+    unit_market_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    unit_market_low = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    unit_market_updated_at = models.DateTimeField(null=True, blank=True)
+    unit_market_error = models.CharField(max_length=200, blank=True)
     tradepost_config_id = models.CharField(
         "Tradepost product ID", max_length=40, blank=True, db_index=True,
         help_text="Tradepost asset-configuration UUID; set automatically when a Tradepost fill is imported")
@@ -198,6 +207,45 @@ class Product(SoftDeleteModel):
         if not self.market_price:
             return None
         return (self.market_price - self.avg_cost).quantize(CENTS, ROUND_HALF_UP)
+
+    # --- case vs. the singles inside it -------------------------------------
+    @property
+    def case_market_from_units(self):
+        """What the case is worth as singles: single-unit market × case pack qty."""
+        if not self.unit_market_price or self.unit_market_price <= 0 or not self.case_pack_qty:
+            return None
+        return (self.unit_market_price * self.case_pack_qty).quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def cost_pct_of_unit_market(self):
+        """avg landed cost as a percent of (single market × case qty)."""
+        case_val = self.case_market_from_units
+        if not case_val or not self.avg_cost:
+            return None
+        return (self.avg_cost / case_val * Decimal("100")).quantize(Decimal("0.1"), ROUND_HALF_UP)
+
+    @property
+    def unit_market_margin(self):
+        case_val = self.case_market_from_units
+        if case_val is None:
+            return None
+        return (case_val - self.avg_cost).quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def unit_market_badge(self):
+        return self._pct_badge(self.cost_pct_of_unit_market, "of singles")
+
+    @staticmethod
+    def _pct_badge(pct, suffix="of market"):
+        if pct is None:
+            return None
+        if pct < 70:
+            return (f"{pct}% {suffix}", "bg-emerald-100 text-emerald-700")
+        if pct < 90:
+            return (f"{pct}% {suffix}", "bg-sky-100 text-sky-700")
+        if pct < 100:
+            return (f"{pct}% {suffix}", "bg-amber-100 text-amber-800")
+        return (f"{pct}% {suffix}", "bg-red-100 text-red-700")
 
     @property
     def market_badge(self):

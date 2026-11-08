@@ -21,7 +21,11 @@
     <div class="grid md:grid-cols-4 gap-4">
       <div class="field"><label>UPC / barcode</label>{{ form.upc }}</div>
       <div class="field md:col-span-4"><label>{{ form.tcgplayer.label }}</label>{{ form.tcgplayer }}
-        <p class="text-xs text-slate-400 mt-1">{{ form.tcgplayer.help_text }}</p></div>
+        <p class="text-xs text-slate-400 mt-1">{{ form.tcgplayer.help_text }}</p>
+        {% for err in form.tcgplayer.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
+      <div class="field md:col-span-4"><label>{{ form.tcgplayer_unit.label }}</label>{{ form.tcgplayer_unit }}
+        <p class="text-xs text-slate-400 mt-1">{{ form.tcgplayer_unit.help_text }}</p>
+        {% for err in form.tcgplayer_unit.errors %}<p class="text-xs text-red-600 mt-1">{{ err }}</p>{% endfor %}</div>
       <div class="field md:col-span-3"><label>{{ form.extra_barcodes.label }}</label>{{ form.extra_barcodes }}
         <p class="text-xs text-slate-400 mt-1">{{ form.extra_barcodes.help_text }}</p></div>
       <div class="field"><label>Case pack qty</label>{{ form.case_pack_qty }}</div>

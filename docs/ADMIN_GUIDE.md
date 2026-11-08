@@ -387,6 +387,15 @@ market. Green under 70%, blue under 90%, amber under 100%, red at or above
 market. Prices come from TCGplayer's public price points, so no keys are
 needed; official API keys can be entered in Settings if you have them.
 
+**Case SKUs — apples to apples with the singles.** A case product can carry
+a second link: *TCGplayer link of the SINGLE unit inside* (one booster box,
+ETB or bundle). Its market price × the product's case pack qty is shown as
+**Case at singles' market** next to the case's own market price, with your
+cost as a % of that too — so a case that looks expensive against the thin
+case market can still show as 78% of what the singles inside sell for. Both
+prices refresh hourly; Market check gets *Case at singles* and *Cost % of
+singles* columns when any product has a single-unit link.
+
 ## What's coming in for a product
 
 Search the product (Inventory search, the top search bar, or 📷 scan) and open

@@ -492,21 +492,28 @@ def market_check(request):
         total_cost += on_hand_cost
         total_market += on_hand_market or ZERO
         rows.append({"p": p, "pct": pct, "on_hand_market": on_hand_market,
+                     "unit_pct": p.cost_pct_of_unit_market, "case_from_units": p.case_market_from_units,
                      "upside": (on_hand_market - on_hand_cost) if on_hand_market is not None else None})
-    rows.sort(key=lambda r: (r["pct"] is None, r["pct"] or 0))
+    rows.sort(key=lambda r: (r["pct"] is None and r["unit_pct"] is None,
+                             r["pct"] if r["pct"] is not None else (r["unit_pct"] or 0)))
+    has_units = any(r["case_from_units"] for r in rows)
     if request.GET.get("export") == "csv":
         return csv_response("market_check.csv",
                             ["SKU", "Product", "On hand", "Avg cost", "TCGplayer market", "Cost % of market",
+                             "Case at singles' market", "Cost % of singles",
                              "Margin/unit at market", "On-hand at cost", "On-hand at market", "Updated"],
                             [[r["p"].sku, r["p"].name, r["p"].qty_on_hand, f"{r['p'].avg_cost:.4f}",
                               f"{r['p'].market_price:.2f}" if r["p"].market_price else "",
                               f"{r['pct']}" if r["pct"] is not None else "",
+                              f"{r['case_from_units']:.2f}" if r["case_from_units"] else "",
+                              f"{r['unit_pct']}" if r["unit_pct"] is not None else "",
                               f"{r['p'].market_margin_per_unit:.2f}" if r["p"].market_margin_per_unit is not None else "",
                               f"{r['p'].inventory_value:.2f}",
                               f"{r['on_hand_market']:.2f}" if r["on_hand_market"] is not None else "",
                               r["p"].market_updated_at.isoformat() if r["p"].market_updated_at else ""] for r in rows])
     last = max((p.market_updated_at for p in products if p.market_updated_at), default=None)
     return render(request, "reports/market_check.html", {
+        "has_units": has_units,
         "rows": rows, "category": eligible_category_name(), "total_cost": total_cost,
         "total_market": total_market, "upside": total_market - total_cost, "last": last,
         "missing": [p for p in __import__("inventory.models", fromlist=["Product"]).Product.objects

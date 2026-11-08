@@ -21,6 +21,22 @@ class ProductForm(forms.ModelForm):
         widget=forms.TextInput(attrs={"placeholder": "paste the tcgplayer.com product link, e.g. https://www.tcgplayer.com/product/593391/…"}),
         help_text="Sealed TCG Product only: pulls the TCGplayer market price every hour and shows your cost as a % of it.")
 
+    tcgplayer_unit = forms.CharField(
+        required=False, label="TCGplayer link of the SINGLE unit inside (case SKUs)",
+        widget=forms.TextInput(attrs={"placeholder": "for a case: paste the tcgplayer.com link of one box / ETB / pack"}),
+        help_text="Case products: the single box's market price × case pack qty is shown next to the case "
+                  "price, so you can see your cost as a % of the singles too.")
+
+    def clean_tcgplayer_unit(self):
+        from inventory.pricing import parse_tcgplayer_id
+        raw = (self.cleaned_data.get("tcgplayer_unit") or "").strip()
+        if not raw:
+            return None
+        pid = parse_tcgplayer_id(raw)
+        if pid is None:
+            raise forms.ValidationError("Paste the single unit's tcgplayer.com link or its numeric product ID.")
+        return pid
+
     def clean_tcgplayer(self):
         from inventory.pricing import parse_tcgplayer_id
         raw = (self.cleaned_data.get("tcgplayer") or "").strip()
@@ -60,6 +76,7 @@ class ProductForm(forms.ModelForm):
         if self.instance.pk and not self.is_bound:
             self.fields["extra_barcodes"].initial = self.instance.extra_codes_text
             self.fields["tcgplayer"].initial = self.instance.tcgplayer_id or ""
+            self.fields["tcgplayer_unit"].initial = self.instance.tcgplayer_unit_id or ""
 
     def save_barcodes(self, product):
         """Sync ProductBarcode rows to the textarea (call after save())."""
@@ -97,6 +114,11 @@ class ProductForm(forms.ModelForm):
             if not obj.tcgplayer_id:
                 obj.market_price = obj.market_low = None
                 obj.market_error = ""
+        if "tcgplayer_unit" in self.cleaned_data:
+            obj.tcgplayer_unit_id = self.cleaned_data["tcgplayer_unit"]
+            if not obj.tcgplayer_unit_id:
+                obj.unit_market_price = obj.unit_market_low = None
+                obj.unit_market_error = ""
         if commit:
             obj.save()
         return obj
