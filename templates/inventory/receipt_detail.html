@@ -224,7 +224,11 @@
             <td class="num {% if a.loss > 0 and not a.reversed %}text-red-700{% endif %}">${{ a.loss|floatformat:2|intcomma }}</td>
             <td>{% if not a.reversed %}<form method="post" onsubmit="return confirm('Put these {{ a.qty }} units back in stock?')">{% csrf_token %}
                 <input type="hidden" name="action" value="undo_adjust"><input type="hidden" name="adjustment_id" value="{{ a.pk }}">
-                <button class="text-xs text-slate-500 hover:text-red-600">undo</button></form>{% else %}<span class="text-xs">undone</span>{% endif %}</td>
+                <button class="text-xs text-slate-500 hover:text-red-600">undo</button></form>
+              {% else %}<span class="text-xs">undone</span>
+              <form method="post" class="inline ml-1" onsubmit="return confirm('Erase this entry and its undo from the movement ledger? Nothing changes in stock or the books (they already cancel out); the two history lines simply disappear.')">{% csrf_token %}
+                <input type="hidden" name="action" value="erase_adjust"><input type="hidden" name="adjustment_id" value="{{ a.pk }}">
+                <button class="text-xs text-slate-400 hover:text-red-600 no-underline" style="text-decoration:none" title="Remove both lines from the ledger history">· erase</button></form>{% endif %}</td>
           </tr>
         {% endfor %}
         </tbody>

@@ -1376,3 +1376,38 @@ class ReceiptUndoTests(TestCase):
     def test_menu_shows_on_page(self):
         html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
         self.assertIn("Undo “Mark received”", html)
+
+
+class EraseAdjustmentTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptAdjustment, ReceiptLine, Supplier
+        self.client.force_login(User.objects.create_superuser("er", password="x"))
+        self.p = make_product("E-1")
+        r = Receipt.objects.create(supplier=Supplier.objects.create(name="GTS"))
+        self.line = ReceiptLine.objects.create(receipt=r, product=self.p, qty=5, unit_cost=Decimal("35.3456"))
+        r.post()
+        self.r = r
+        self.adj = ReceiptAdjustment.create_and_apply(receipt=r, line=self.line, kind="damaged", qty=1, note="shrink wrap")
+
+    def test_erase_removes_both_ledger_lines(self):
+        from inventory.models import ReceiptAdjustment
+        self.assertEqual(self.p.movements.count(), 2)          # receipt + write-off
+        with self.assertRaises(ValidationError):
+            self.adj.erase()                                     # must be undone first
+        self.adj.undo()
+        self.assertEqual(self.p.movements.count(), 3)
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "erase_adjust", "adjustment_id": self.adj.pk})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(self.p.movements.count(), 1)           # only the receipt remains
+        self.assertFalse(ReceiptAdjustment.objects.filter(pk=self.adj.pk).exists())
+        self.p.refresh_from_db(); self.assertEqual(self.p.qty_on_hand, 5)
+        last = self.p.movements.order_by("-id").first()
+        self.assertEqual((last.qty_before, last.qty_after), (0, 5))
+
+    def test_erase_refused_when_something_moved_in_between(self):
+        self.p.apply_movement(movement_type="sale", qty_delta=-1)
+        self.adj.undo()
+        with self.assertRaises(ValidationError):
+            self.adj.erase()
+        self.assertEqual(self.p.movements.count(), 4)

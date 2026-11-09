@@ -909,6 +909,26 @@ class ReceiptAdjustment(models.Model):
                                   "credit": str(credit_amount)}, note=note)
         return adj
 
+    def erase(self, user=None):
+        """Remove an undone entry AND its reversal from the movement ledger,
+        as if it never happened. Only allowed when the two movements sit
+        next to each other for the product (nothing moved in between), so
+        the before → after chain stays unbroken."""
+        if not self.reversed or not self.movement_id or not self.reversal_id:
+            raise ValidationError("Undo the entry first — only an undone entry can be erased.")
+        between = StockMovement.objects.filter(product=self.line.product_id,
+                                               pk__gt=self.movement_id, pk__lt=self.reversal_id).exists()
+        if between:
+            raise ValidationError("Other stock movements happened between this entry and its undo, "
+                                  "so the pair can't be erased without breaking the history.")
+        with transaction.atomic():
+            mv, rv = self.movement, self.reversal
+            log_activity(user, "receipt_adjustment_erased", self.receipt,
+                         changes={"kind": self.kind, "qty": self.qty, "sku": self.line.product.sku})
+            self.delete()
+            rv.delete()
+            mv.delete()
+
     def undo(self, user=None):
         """Put the units back exactly as they were taken out."""
         if self.reversed:

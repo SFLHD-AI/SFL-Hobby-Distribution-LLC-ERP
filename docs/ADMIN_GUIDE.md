@@ -313,6 +313,10 @@ happened after the fact. The order stays received either way.
   becomes *Supplier owes you* on the bill. Click **Refund received** when
   the money comes back (cash basis books the refund on that date).
 * **Undo** on any row puts the units back exactly as they were taken out.
+  The movement ledger then shows the entry and its reversal (netting to
+  zero). If you'd rather the pair not appear at all, **erase** next to an
+  undone row removes both lines — allowed only when nothing else moved
+  for that product in between, so the before → after chain stays intact.
 
 The Receiving list shows *Refund due* on orders with money coming back.
 

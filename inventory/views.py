@@ -899,6 +899,15 @@ def receipt_detail(request, pk):
         except ValidationError as e:
             messages.error(request, "; ".join(e.messages))
         return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "erase_adjust":
+        from inventory.models import ReceiptAdjustment
+        adj = get_object_or_404(ReceiptAdjustment, pk=request.POST.get("adjustment_id"), receipt=receipt)
+        try:
+            adj.erase(user=request.user)
+            messages.success(request, "Erased — the entry and its undo are gone from the movement ledger.")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+        return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "refund_received":
         receipt.credit_refunded_date = timezone.localdate()
         receipt.save(update_fields=["credit_refunded_date"])
