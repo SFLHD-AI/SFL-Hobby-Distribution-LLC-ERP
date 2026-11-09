@@ -43,7 +43,7 @@
       <tr class="{% if not p.active %}opacity-50{% endif %}">
         <td><input type="checkbox" name="id" value="{{ p.pk }}" class="rowck rounded"></td>
         <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'product_detail' p.pk %}">{{ p.sku }}</a></td>
-        <td class="max-w-xs truncate">{{ p.name }}</td>
+        <td class="min-w-[16rem] whitespace-normal">{{ p.name }}</td>
         <td>{{ p.brand|default:"—" }}</td>
         <td>{{ p.category|default:"—" }}</td>
         <td class="font-mono text-xs">{{ p.bin_location|default:"—" }}</td>

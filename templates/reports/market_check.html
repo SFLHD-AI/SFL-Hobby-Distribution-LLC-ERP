@@ -23,7 +23,7 @@
     {% for r in rows %}
       <tr>
         <td><a class="text-indigo-600 font-medium hover:underline" href="{% url 'product_detail' r.p.pk %}">{{ r.p.sku }}</a></td>
-        <td class="max-w-xs truncate">{{ r.p.name }}</td>
+        <td class="min-w-[14rem] whitespace-normal">{{ r.p.name }}</td>
         <td class="num">{{ r.p.qty_on_hand }}</td>
         <td class="num">${{ r.p.avg_cost|floatformat:2 }}</td>
         <td class="num">{% if r.p.market_price %}${{ r.p.market_price|floatformat:2 }}{% else %}<span class="text-amber-700 text-xs">{{ r.p.market_error|default:"not fetched" }}</span>{% endif %}</td>

@@ -31,7 +31,7 @@
       {% for it in items %}
         <tr>
           <td class="font-medium">{{ it.product.sku }}</td>
-          <td class="max-w-xs truncate">{{ it.product.name }}</td>
+          <td class="min-w-[14rem] whitespace-normal">{{ it.product.name }}</td>
           <td class="num text-slate-400">${{ it.product.default_price|floatformat:2 }}</td>
           <td class="num font-bold">${{ it.price|floatformat:2 }}</td>
           <td><form method="post">{% csrf_token %}
