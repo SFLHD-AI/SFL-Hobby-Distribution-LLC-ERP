@@ -278,6 +278,22 @@ Technical notes: GraphQL `platform-api.tradepost.co/graphql`, header
 keyset pagination. Cache model `TradepostFill`; code in
 `inventory/tradepost.py`; hourly job `inventory.tasks.sync_tradepost`.
 
+### Undoing things on a supplier order
+
+The **⋯ More** menu at the top of a supplier order holds the undo actions:
+
+* **Undo "Mark received"** — reopens the order, takes the units back out of
+  stock at the landed cost they came in at and rolls the weighted average
+  cost back. Refused if some of those units have already been sold, or
+  while a damaged / returned entry is still active (undo those first).
+* **Undo "Mark paid"** — clears a paid date entered by hand. A payment
+  matched from Banking is unlinked in Banking instead (send the bank
+  transaction back to review).
+* **Delete this order** — for orders that were never received (or were
+  un-received). Linked Tradepost fills go back to *To log*. Lines and
+  packages are removed with the × buttons while the order is open;
+  damaged / returned entries have their own *undo*.
+
 ### Damaged boxes and returns (after receiving)
 
 On a received supplier order, **Damaged or returned boxes** records what

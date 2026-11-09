@@ -1309,3 +1309,70 @@ class IncomingTileTests(TestCase):
         html = self.client.get(f"/inventory/{p.pk}/").content.decode()
         self.assertIn("avg $120.00", html)
         self.assertIn("$110.00 avg after arrival", html)
+
+
+class ReceiptUndoTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine, Supplier
+        self.user = User.objects.create_superuser("undo", password="x")
+        self.client.force_login(self.user)
+        self.p = make_product("U-1")
+        StockAdjustment.create_and_apply(product=self.p, qty_delta=10, reason="opening", unit_cost=Decimal("100"))
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="Topps"), freight_cost=Decimal("20"))
+        self.line = ReceiptLine.objects.create(receipt=self.r, product=self.p, qty=10, unit_cost=Decimal("120"))
+        self.r.post(user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual((self.p.qty_on_hand, self.p.avg_cost), (20, Decimal("111.0000")))
+
+    def test_unpost_rolls_back_stock_and_average(self):
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "unpost"})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db(); self.p.refresh_from_db(); self.line.refresh_from_db()
+        self.assertFalse(self.r.posted)
+        self.assertEqual((self.p.qty_on_hand, self.p.avg_cost), (10, Decimal("100.0000")))
+        self.assertIsNone(self.line.landed_unit_cost)
+        # can be received again
+        self.r.post(user=self.user); self.p.refresh_from_db()
+        self.assertEqual((self.p.qty_on_hand, self.p.avg_cost), (20, Decimal("111.0000")))
+
+    def test_unpost_refused_when_units_were_sold(self):
+        self.p.apply_movement(movement_type="sale", qty_delta=-15)
+        with self.assertRaises(ValidationError):
+            self.r.unpost()
+        self.r.refresh_from_db(); self.assertTrue(self.r.posted)
+
+    def test_unpost_refused_with_open_adjustment(self):
+        from inventory.models import ReceiptAdjustment
+        adj = ReceiptAdjustment.create_and_apply(receipt=self.r, line=self.line, kind="damaged", qty=1)
+        with self.assertRaises(ValidationError):
+            self.r.unpost()
+        adj.undo()
+        self.r.unpost()
+        self.assertFalse(self.r.posted)
+
+    def test_unpay_and_delete(self):
+        from inventory.models import Receipt
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "mark_paid"})
+        self.r.refresh_from_db(); self.assertIsNotNone(self.r.paid_date)
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "unpay"})
+        self.r.refresh_from_db(); self.assertIsNone(self.r.paid_date)
+        # delete needs the order un-received first
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "delete"})
+        self.assertTrue(Receipt.objects.filter(pk=self.r.pk).exists())
+        self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "unpost"})
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "delete"})
+        self.assertEqual(r["Location"], "/inventory/receiving/")
+        self.assertFalse(Receipt.objects.filter(pk=self.r.pk).exists())
+        self.assertTrue(Receipt.all_objects.filter(pk=self.r.pk).exists())
+
+    def test_delete_releases_tradepost_fill(self):
+        from inventory.models import TradepostFill
+        fill = TradepostFill.objects.create(execution_id="x1", order_number="TPST-X", receipt=self.r, closed=True, quantity=1)
+        self.r.unpost(); self.r.soft_delete()
+        fill.refresh_from_db()
+        self.assertIsNone(fill.receipt); self.assertFalse(fill.closed)
+
+    def test_menu_shows_on_page(self):
+        html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
+        self.assertIn("Undo “Mark received”", html)

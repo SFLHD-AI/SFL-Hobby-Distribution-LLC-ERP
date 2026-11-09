@@ -905,6 +905,29 @@ def receipt_detail(request, pk):
         log_activity(request.user, "supplier_refund", receipt, note=f"Refund received {receipt.credit_refunded_date}")
         messages.success(request, "Refund recorded — the supplier no longer owes you on this order.")
         return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "unpost":
+        try:
+            receipt.unpost(user=request.user)
+            messages.success(request, f"RCV-{pk} is open again — stock and average costs rolled back. "
+                                      "Fix what you need, then Mark received when ready.")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "unpay":
+        try:
+            receipt.unpay(user=request.user)
+            messages.success(request, "Paid mark cleared — the bill shows as unpaid again.")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "delete":
+        try:
+            receipt.soft_delete(user=request.user)
+            messages.success(request, f"Supplier order RCV-{pk} deleted.")
+            return redirect("receipt_list")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+            return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "save_bill":
         # Bill / payment details stay editable after receiving
         bill_form = ReceiptBillForm(request.POST, instance=receipt)

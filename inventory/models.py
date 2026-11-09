@@ -628,6 +628,69 @@ class Receipt(SoftDeleteModel):
         return (self.posted and not self.is_paid and self.due_date is not None
                 and self.due_date < timezone.localdate())
 
+    def unpost(self, user=None):
+        """Undo 'Mark received': take the units back out of stock at the landed
+        cost they came in at, roll the weighted average cost back, and reopen
+        the order. Refused when units have since been sold or written off."""
+        if not self.posted:
+            raise ValidationError("This order hasn't been marked received.")
+        if any(not a.reversed for a in self.adjustments.all()):
+            raise ValidationError("Undo the damaged / returned entries on this order first.")
+        lines = list(self.lines.filter(is_deleted=False).select_related("product"))
+        with transaction.atomic():
+            for line in lines:
+                product = line.product
+                on_hand = Product.all_objects.get(pk=product.pk).qty_on_hand
+                if on_hand < line.qty:
+                    raise ValidationError(
+                        f"Only {on_hand} of {product.sku} are on hand but this order received {line.qty} — "
+                        "some have been sold, so the order can't be un-received.")
+                unit = line.landed_unit_cost or line.unit_cost
+                remaining = on_hand - line.qty
+                if remaining > 0:
+                    new_avg = ((Decimal(on_hand) * product.avg_cost - Decimal(line.qty) * unit)
+                               / Decimal(remaining)).quantize(FOURPLACES, ROUND_HALF_UP)
+                    new_avg = max(new_avg, Decimal("0"))
+                else:
+                    new_avg = product.avg_cost
+                product.apply_movement(movement_type="receipt", qty_delta=-line.qty, user=user,
+                                       unit_cost=unit, new_avg_cost=new_avg,
+                                       reference=f"RCV-{self.pk}", source=self,
+                                       note="Un-received (receipt undone)")
+                line.landed_unit_cost = None
+                line.save(update_fields=["landed_unit_cost"])
+            self.posted = False
+            self.posted_at = None
+            self.save(update_fields=["posted", "posted_at"])
+            self.tradepost_fills.update(closed=False)
+            log_activity(user, "receipt_unposted", self)
+
+    def unpay(self, user=None):
+        """Clear a by-hand 'paid' mark. A payment matched from Banking must be
+        unmatched there instead."""
+        if self.supplier_payments.filter(is_deleted=False).exclude(status="ignored").exists():
+            raise ValidationError("This bill is paid by a matched bank transaction — open it in Banking and "
+                                  "send it back to review to unlink it.")
+        self.paid_date = None
+        self.paid_from = None
+        self.payment_reference = ""
+        self.credit_refunded_date = None
+        self.save(update_fields=["paid_date", "paid_from", "payment_reference", "credit_refunded_date"])
+        log_activity(user, "supplier_bill_unpaid", self)
+
+    def soft_delete(self, user=None):
+        """Remove an order that was never received (or was un-received)."""
+        if self.posted:
+            raise ValidationError("Un-receive the order first — received stock can't just disappear.")
+        if self.supplier_payments.filter(is_deleted=False).exclude(status="ignored").exists():
+            raise ValidationError("A bank payment is matched to this order. Unlink it in Banking first.")
+        with transaction.atomic():
+            self.tradepost_fills.update(receipt=None, closed=False)
+            self.is_deleted = True
+            self.deleted_at = timezone.now()
+            self.save(update_fields=["is_deleted", "deleted_at"])
+            log_activity(user, "delete", self)
+
     def post(self, user=None):
         """
         Allocate freight+duties across lines proportionally to merchandise

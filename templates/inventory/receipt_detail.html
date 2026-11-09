@@ -5,12 +5,34 @@
   <h1 class="page-title">Supplier order RCV-{{ receipt.pk }}
     {% if receipt.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received</span>
     {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</h1>
+  <div class="flex flex-wrap gap-2">
   {% if not receipt.posted and lines %}
-  <form method="post" onsubmit="return confirm('Mark received? Stock and weighted average costs will update — this cannot be undone.')">
+  <form method="post" onsubmit="return confirm('Mark received? Stock and weighted average costs will update. (You can undo it from this page if the units have not been sold yet.)')">
     {% csrf_token %}<input type="hidden" name="action" value="post">
     <button class="btn-success">✓ Mark received</button>
   </form>
   {% endif %}
+  <details class="relative">
+    <summary class="btn-secondary cursor-pointer list-none">⋯ More</summary>
+    <div class="absolute right-0 mt-1 w-72 card p-2 z-20 space-y-1 text-sm">
+      {% if receipt.posted %}
+      <form method="post" onsubmit="return confirm('Undo Mark received? The {{ receipt.total_qty }} units go back out of stock at the cost they came in at and the average costs roll back. Only possible while none of them have been sold.')">
+        {% csrf_token %}<input type="hidden" name="action" value="unpost">
+        <button class="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100">↩ Undo “Mark received”<span class="block text-xs text-slate-500">reopen the order, roll stock & avg cost back</span></button></form>
+      {% endif %}
+      {% if receipt.paid_date and not linked_payments %}
+      <form method="post" onsubmit="return confirm('Clear the paid mark on this bill?')">
+        {% csrf_token %}<input type="hidden" name="action" value="unpay">
+        <button class="w-full text-left px-3 py-2 rounded-lg hover:bg-slate-100">↩ Undo “Mark paid”<span class="block text-xs text-slate-500">bill shows as unpaid again</span></button></form>
+      {% endif %}
+      {% if not receipt.posted %}
+      <form method="post" onsubmit="return confirm('Delete supplier order RCV-{{ receipt.pk }}? Its lines, packages and bill go with it. Linked Tradepost fills go back to “to log”.')">
+        {% csrf_token %}<input type="hidden" name="action" value="delete">
+        <button class="w-full text-left px-3 py-2 rounded-lg hover:bg-red-50 text-red-700">🗑 Delete this order</button></form>
+      {% else %}<p class="px-3 py-2 text-xs text-slate-500">To delete a received order, undo “Mark received” first.</p>{% endif %}
+    </div>
+  </details>
+  </div>
 </div>
 
 <div class="grid lg:grid-cols-3 gap-4">
