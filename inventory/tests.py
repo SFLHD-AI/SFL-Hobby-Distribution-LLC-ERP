@@ -1411,3 +1411,115 @@ class EraseAdjustmentTests(TestCase):
         with self.assertRaises(ValidationError):
             self.adj.erase()
         self.assertEqual(self.p.movements.count(), 4)
+
+
+class PartialReceivingTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine, Supplier, TradepostFill
+        self.user = User.objects.create_superuser("part", password="x")
+        self.client.force_login(self.user)
+        self.a = make_product("PR-A")
+        self.b = make_product("PR-B")
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="Tradepost"), reference="TPST-1",
+                                        supplier_invoice_number="TPST-AAAA0001", freight_cost=Decimal("30"))
+        self.la = ReceiptLine.objects.create(receipt=self.r, product=self.a, qty=6, unit_cost=Decimal("100"))
+        self.lb = ReceiptLine.objects.create(receipt=self.r, product=self.b, qty=2, unit_cost=Decimal("50"))
+        self.fill = TradepostFill.objects.create(execution_id="f1", order_number="TPST-AAAA0001", receipt=self.r, quantity=6)
+
+    def test_partial_receive_splits_and_posts_what_arrived(self):
+        from inventory.models import Receipt
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {
+            "action": "partial", f"got_{self.la.pk}": "5", f"got_{self.lb.pk}": "0", "note": "one bundle missing"})
+        self.assertEqual(r.status_code, 302)
+        self.r.refresh_from_db(); self.a.refresh_from_db(); self.b.refresh_from_db()
+        self.assertTrue(self.r.posted)
+        self.assertEqual(self.a.qty_on_hand, 5)
+        self.assertEqual(self.b.qty_on_hand, 0)
+        # freight stays with the shipment that arrived: 5 × 100 + 30 → landed 106
+        self.assertEqual(self.a.avg_cost, Decimal("106.0000"))
+        self.assertEqual([(l.product.sku, l.qty) for l in self.r.lines.filter(is_deleted=False)], [("PR-A", 5)])
+        short = Receipt.objects.get(parent=self.r)
+        self.assertTrue(short.is_short); self.assertFalse(short.posted)
+        self.assertEqual(sorted((l.product.sku, l.qty, l.unit_cost) for l in short.lines.all()),
+                         [("PR-A", 1, Decimal("100")), ("PR-B", 2, Decimal("50"))])
+        self.assertEqual(short.supplier_invoice_number, "TPST-AAAA0001")
+        self.assertEqual(short.short_note, "one bundle missing")
+        self.assertEqual(short.bill_total, Decimal("200.00"))
+        self.fill.refresh_from_db(); self.assertFalse(self.fill.closed)        # dispute still open
+        # the missing units show as incoming on the product
+        self.assertEqual(self.a.incoming_summary["qty"], 1)
+        html = self.client.get(f"/inventory/receiving/{self.r.pk}/").content.decode()
+        self.assertIn("Received partially", html)
+        self.assertIn(f"RCV-{short.pk}", html)
+        html = self.client.get(f"/inventory/receiving/{short.pk}/").content.decode()
+        self.assertIn("Short-shipped", html)
+        self.assertIn("Cancel missing units", html)
+        return short
+
+    def test_short_order_can_be_received_later(self):
+        short = self.test_partial_receive_splits_and_posts_what_arrived()
+        short.post(user=self.user)
+        self.a.refresh_from_db(); self.b.refresh_from_db()
+        self.assertEqual((self.a.qty_on_hand, self.b.qty_on_hand), (6, 2))
+
+    def test_cancel_short_closes_it_and_credits(self):
+        short = self.test_partial_receive_splits_and_posts_what_arrived()
+        r = self.client.post(f"/inventory/receiving/{short.pk}/", {"action": "cancel_short", "note": "refunded"})
+        self.assertEqual(r.status_code, 302)
+        short.refresh_from_db(); self.a.refresh_from_db()
+        self.assertTrue(short.is_cancelled)
+        self.assertEqual(short.bill_total, Decimal("0.00"))
+        self.assertEqual(short.refund_due, Decimal("0.00"))                  # nothing was paid
+        self.assertEqual(self.a.incoming_summary["qty"], 0)                  # no longer incoming
+        self.fill.refresh_from_db(); self.assertTrue(self.fill.closed)
+        html = self.client.get("/inventory/receiving/?status=open").content.decode()
+        self.assertNotIn(f'href="/inventory/receiving/{short.pk}/"', html)
+        html = self.client.get("/inventory/receiving/?status=cancelled").content.decode()
+        self.assertIn(f'href="/inventory/receiving/{short.pk}/"', html)
+
+    def test_prepaid_order_short_then_cancelled_shows_refund_due(self):
+        from datetime import timedelta
+        from inventory.models import Receipt
+        self.r.paid_date = timezone.localdate() - timedelta(days=5)
+        self.r.save()
+        self.r.receive_partially({self.la.pk: 6, self.lb.pk: 0}, user=self.user)
+        short = Receipt.objects.get(parent=self.r)
+        self.assertEqual(short.paid_date, self.r.paid_date)             # the one payment covered both parts
+        self.assertEqual(self.r.bill_total, Decimal("630.00"))
+        self.assertEqual(self.r.refund_due, Decimal("0.00"))
+        self.assertEqual(short.amount_paid, Decimal("100.00"))
+        short.cancel_short(user=self.user)
+        self.assertEqual(short.refund_due, Decimal("100.00"))            # supplier owes the missing units
+        short.credit_refunded_date = timezone.localdate(); short.save()
+        self.assertEqual(short.refund_due, Decimal("0.00"))
+        self.assertEqual(short.amount_paid, Decimal("0.00"))
+
+    def test_bank_paid_order_shares_payment_across_split(self):
+        from datetime import date
+        from banking.models import BankAccount, BankTransaction
+        from inventory.models import Receipt
+        acct = BankAccount.objects.create(name="Chase", account_type="checking", opening_balance=0, opening_date=date(2025, 1, 1))
+        t = BankTransaction.objects.create(account=acct, date=timezone.localdate(), amount=Decimal("-730.00"), description="TRADEPOST")
+        t.link_receipts([self.r])
+        self.r.receive_partially({self.la.pk: 6, self.lb.pk: 0}, user=self.user)
+        short = Receipt.objects.get(parent=self.r)
+        self.assertIn(short, t.receipts.all())
+        self.r.refresh_from_db()
+        self.assertEqual(self.r.amount_paid, Decimal("630.00"))          # 730 shared by landed value 630 : 100
+        self.assertEqual(short.amount_paid, Decimal("100.00"))
+        self.assertTrue(self.r.is_paid)
+        self.assertEqual(self.r.refund_due, Decimal("0.00"))
+
+    def test_full_quantities_just_receive_normally(self):
+        from inventory.models import Receipt
+        short = self.r.receive_partially({self.la.pk: 6, self.lb.pk: 2}, user=self.user)
+        self.assertIsNone(short)
+        self.assertEqual(Receipt.objects.filter(parent=self.r).count(), 0)
+        self.r.refresh_from_db(); self.assertTrue(self.r.posted)
+
+    def test_validation(self):
+        with self.assertRaises(ValidationError):
+            self.r.receive_partially({self.la.pk: 7, self.lb.pk: 2})
+        with self.assertRaises(ValidationError):
+            self.r.receive_partially({self.la.pk: 0, self.lb.pk: 0})

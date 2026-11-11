@@ -157,7 +157,7 @@ class Product(SoftDeleteModel):
     def incoming_lines(self):
         """Receipt lines on supplier orders not yet received, newest ETA first."""
         return (self.receipt_lines.filter(is_deleted=False, receipt__is_deleted=False,
-                                          receipt__posted=False)
+                                          receipt__posted=False, receipt__cancelled_at__isnull=True)
                 .select_related("receipt", "receipt__supplier")
                 .order_by("receipt__expected_date", "receipt__date"))
 
@@ -484,6 +484,12 @@ class Receipt(SoftDeleteModel):
     paid_from = models.ForeignKey("banking.BankAccount", null=True, blank=True,
                                   on_delete=models.SET_NULL, related_name="supplier_bills",
                                   help_text="Account the supplier was paid from")
+    parent = models.ForeignKey("self", null=True, blank=True, on_delete=models.SET_NULL,
+                               related_name="short_orders",
+                               help_text="The order this one was split from (units that did not arrive)")
+    cancelled_at = models.DateField(null=True, blank=True,
+                                    help_text="Missing units cancelled — supplier credited / refunded")
+    short_note = models.CharField(max_length=300, blank=True)
     credit_refunded_date = models.DateField(
         null=True, blank=True,
         help_text="When the supplier refunded credits granted after you had already paid")
@@ -516,17 +522,32 @@ class Receipt(SoftDeleteModel):
         return [a for a in self.adjustments.all() if not a.reversed]
 
     @property
+    def is_cancelled(self):
+        return self.cancelled_at is not None
+
+    @property
+    def is_short(self):
+        return self.parent_id is not None
+
+    @property
     def credits_total(self):
-        """Supplier credits granted on this order (damage allowances, returns)."""
-        return sum((a.credit_amount for a in self._active_adjustments()), Decimal("0.00"))
+        """Supplier credits granted on this order (damage allowances, returns,
+        or the whole order when its missing units were cancelled)."""
+        total = sum((a.credit_amount for a in self._active_adjustments()), Decimal("0.00"))
+        if self.is_cancelled:
+            total += self.landed_total
+        return total
 
     @property
     def credits_after_payment(self):
         """Credits recorded after the bill was paid by hand → supplier owes a refund."""
         if self.paid_date is None:
             return Decimal("0.00")
-        return sum((a.credit_amount for a in self._active_adjustments() if a.date > self.paid_date),
-                   Decimal("0.00"))
+        total = sum((a.credit_amount for a in self._active_adjustments() if a.date > self.paid_date),
+                    Decimal("0.00"))
+        if self.is_cancelled and self.cancelled_at >= self.paid_date:
+            total += self.landed_total
+        return total
 
     @property
     def bill_total(self):
@@ -602,10 +623,20 @@ class Receipt(SoftDeleteModel):
         """Paid via matched bank transactions, else the whole bill if a paid
         date was entered by hand."""
         from banking.models import BankTransaction
-        linked = self.supplier_payments.filter(is_deleted=False).exclude(
-            status=BankTransaction.IGNORED)
-        if linked.exists():
-            return sum((abs(t.amount) for t in linked), Decimal("0.00"))
+        linked = list(self.supplier_payments.filter(is_deleted=False).exclude(
+            status=BankTransaction.IGNORED).prefetch_related("receipts"))
+        if linked:
+            # one bank payment can cover several orders (e.g. an order and the
+            # short order split from it): share it by landed value. Outflows
+            # count as paid, a refund linked to the order counts against it.
+            paid = Decimal("0.00")
+            for t in linked:
+                others = [r for r in t.receipts.all() if not r.is_deleted]
+                total = sum((r.landed_total for r in others), Decimal("0.00"))
+                mine = self.landed_total
+                share = (mine / total) if (total > 0 and len(others) > 1) else Decimal("1")
+                paid += (-t.amount) * share
+            return paid.quantize(CENTS, ROUND_HALF_UP)
         if self.paid_date is not None:
             # paid by hand: you paid what the bill was on that day
             paid = self.landed_total - (self.credits_total - self.credits_after_payment)
@@ -627,6 +658,89 @@ class Receipt(SoftDeleteModel):
     def is_overdue(self):
         return (self.posted and not self.is_paid and self.due_date is not None
                 and self.due_date < timezone.localdate())
+
+    def receive_partially(self, received, user=None, note=""):
+        """Receive only part of the order. ``received`` = {line_id: qty that
+        arrived}. Those units post into stock now (freight/duties stay with
+        this shipment); the missing units move to a new linked 'short' order
+        that stays open for the dispute. Returns the short order."""
+        if self.posted:
+            raise ValidationError("Already received.")
+        lines = list(self.lines.filter(is_deleted=False).select_related("product"))
+        if not lines:
+            raise ValidationError("Nothing on this order yet.")
+        got = {}
+        for line in lines:
+            try:
+                q = int(received.get(line.pk, received.get(str(line.pk), line.qty)))
+            except (TypeError, ValueError):
+                raise ValidationError(f"Bad quantity for {line.product.sku}.")
+            if q < 0 or q > line.qty:
+                raise ValidationError(f"{line.product.sku}: received must be between 0 and {line.qty}.")
+            got[line.pk] = q
+        if sum(got.values()) == 0:
+            raise ValidationError("Nothing arrived? Then don't mark it received yet.")
+        if all(got[l.pk] == l.qty for l in lines):
+            self.post(user=user)
+            return None
+        with transaction.atomic():
+            short = Receipt.objects.create(
+                supplier=self.supplier, date=self.date, expected_date=None,
+                reference=(f"{self.reference} (short)" if self.reference else f"short of RCV-{self.pk}")[:100],
+                supplier_invoice_number=self.supplier_invoice_number, parent=self,
+                short_note=note[:300], created_by=user if getattr(user, "is_authenticated", False) else None,
+                notes=f"Units missing from RCV-{self.pk}. " + (note or ""),
+                due_date=self.due_date)
+            moved = 0
+            for line in lines:
+                missing = line.qty - got[line.pk]
+                if missing <= 0:
+                    continue
+                ReceiptLine.objects.create(receipt=short, product=line.product, qty=missing,
+                                           unit_cost=line.unit_cost,
+                                           tradepost_execution_id=line.tradepost_execution_id,
+                                           tradepost_order_number=line.tradepost_order_number)
+                moved += missing
+                if got[line.pk] == 0:
+                    line.delete(user=user)
+                else:
+                    line.qty = got[line.pk]
+                    line.save(update_fields=["qty"])
+            # the bill: whatever was paid for the whole order now covers both parts
+            if self.paid_date is not None:
+                short.paid_date, short.paid_from = self.paid_date, self.paid_from
+                short.payment_reference = (self.payment_reference or f"paid with RCV-{self.pk}")[:100]
+                short.save(update_fields=["paid_date", "paid_from", "payment_reference"])
+            for t in self.supplier_payments.filter(is_deleted=False):
+                t.receipts.add(short)
+            self.notes = (self.notes + "\n" if self.notes else "") + \
+                f"Short-shipped: {moved} unit{'s' if moved != 1 else ''} moved to RCV-{short.pk}."
+            self.save(update_fields=["notes"])
+            self.post(user=user)
+            self.tradepost_fills.update(closed=False)      # dispute still open on Tradepost
+            log_activity(user, "receipt_partial", self, changes={"missing": moved, "short": short.pk}, note=note)
+        return short
+
+    @property
+    def total_qty_short(self):
+        return sum(r.total_qty for r in self.short_orders.filter(is_deleted=False))
+
+    def cancel_short(self, user=None, when=None, note=""):
+        """The missing units will never come: the supplier credited / refunded
+        them. The order closes; its value becomes a credit (refund due if it
+        was already paid)."""
+        if self.posted:
+            raise ValidationError("This order was received — use a return instead.")
+        if self.is_cancelled:
+            raise ValidationError("Already cancelled.")
+        self.cancelled_at = when or timezone.localdate()
+        if note:
+            self.short_note = note[:300]
+        self.save(update_fields=["cancelled_at", "short_note"])
+        self.tradepost_fills.update(closed=True)
+        if self.parent_id:
+            self.parent.tradepost_fills.update(closed=True)
+        log_activity(user, "receipt_cancelled", self, note=note)
 
     def unpost(self, user=None):
         """Undo 'Mark received': take the units back out of stock at the landed

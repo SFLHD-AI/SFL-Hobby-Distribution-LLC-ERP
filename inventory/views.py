@@ -414,7 +414,7 @@ def receipt_list(request):
             messages.warning(request, "Add a Shippo token in Settings to refresh tracking automatically; "
                                       "the tracking links still open the carrier's page.")
             return redirect(request.get_full_path())
-        open_tracked = (Receipt.objects.filter(is_deleted=False, posted=False, packages__isnull=False)
+        open_tracked = (Receipt.objects.filter(is_deleted=False, posted=False, cancelled_at__isnull=True, packages__isnull=False)
                         .exclude(packages__status="DELIVERED").distinct())
         ok = failed = 0
         for r in open_tracked:
@@ -428,7 +428,7 @@ def receipt_list(request):
             messages.info(request, "No open supplier orders have a tracking number yet.")
         return redirect(request.get_full_path())
     qs = (Receipt.objects.select_related("supplier")
-          .prefetch_related("packages", "lines__product", "supplier_payments", "adjustments"))
+          .prefetch_related("packages", "lines__product", "supplier_payments", "adjustments", "short_orders"))
     q = (request.GET.get("q") or "").strip()
     if q:
         from django.db import models as dj
@@ -444,7 +444,9 @@ def receipt_list(request):
         qs = qs.filter(cond).distinct()
     status = request.GET.get("status")
     if status == "open":
-        qs = qs.filter(posted=False)
+        qs = qs.filter(posted=False, cancelled_at__isnull=True)
+    elif status == "cancelled":
+        qs = qs.filter(cancelled_at__isnull=False)
     elif status == "posted":
         qs = qs.filter(posted=True)
     elif status == "unpaid":
@@ -481,7 +483,7 @@ def _receipt_sort(request, receipts):
         "merch": lambda r: r.merchandise_total,
         "freight": lambda r: r.freight_cost + r.duties_cost,
         # open first, then received (most recent received last)
-        "status": lambda r: (1 if r.posted else 0, r.posted_at or timezone.now(), r.pk),
+        "status": lambda r: (2 if r.is_cancelled else 1 if r.posted else 0, r.posted_at or timezone.now(), r.pk),
         # overdue, then unpaid, then not yet received, then paid
         "bill": lambda r: ((0 if r.is_overdue else 1 if (r.posted and not r.is_paid) else 2 if not r.posted else 3),
                            r.due_date or far, r.pk),
@@ -913,6 +915,31 @@ def receipt_detail(request, pk):
         receipt.save(update_fields=["credit_refunded_date"])
         log_activity(request.user, "supplier_refund", receipt, note=f"Refund received {receipt.credit_refunded_date}")
         messages.success(request, "Refund recorded — the supplier no longer owes you on this order.")
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "partial":
+        received = {}
+        for key, val in request.POST.items():
+            if key.startswith("got_") and key[4:].isdigit():
+                received[int(key[4:])] = val or 0
+        try:
+            short = receipt.receive_partially(received, user=request.user, note=request.POST.get("note") or "")
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+            return redirect("receipt_detail", pk)
+        if short is None:
+            messages.success(request, "Everything arrived — received in full. Stock and average costs updated.")
+        else:
+            messages.success(request, f"Received what arrived; stock and average costs updated. "
+                                      f"{short.total_qty} missing unit{'s' if short.total_qty != 1 else ''} moved to "
+                                      f"RCV-{short.pk}, which stays open for the dispute.")
+        return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "cancel_short":
+        try:
+            receipt.cancel_short(user=request.user, note=request.POST.get("note") or "")
+            messages.success(request, f"RCV-{pk} cancelled — the missing units are credited"
+                                      + (" and the supplier owes you the refund." if receipt.refund_due else "."))
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
         return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "unpost":
         try:

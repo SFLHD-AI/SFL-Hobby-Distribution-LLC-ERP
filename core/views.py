@@ -88,7 +88,7 @@ def _money_widgets(user, today):
         from inventory.models import Receipt
         inc_units = inc_value = Decimal("0")
         inc_orders = 0
-        for r in (Receipt.objects.filter(is_deleted=False, posted=False)
+        for r in (Receipt.objects.filter(is_deleted=False, posted=False, cancelled_at__isnull=True)
                   .prefetch_related("lines")):
             lines = [l for l in r.lines.all() if not l.is_deleted]
             if not lines:
@@ -158,7 +158,7 @@ def dashboard(request):
                               customer__is_deleted=False, customer__active=True)
                       .select_related("customer").order_by("expiration_date")[:10])
 
-    inbound = Receipt.objects.filter(is_deleted=False, posted=False)[:8]
+    inbound = Receipt.objects.filter(is_deleted=False, posted=False, cancelled_at__isnull=True)[:8]
     recent_pos = PurchaseOrder.objects.filter(is_deleted=False).select_related("customer")[:8]
 
     ctx = {

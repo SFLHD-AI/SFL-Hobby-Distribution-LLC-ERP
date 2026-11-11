@@ -3,13 +3,22 @@
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
   <h1 class="page-title">Supplier order RCV-{{ receipt.pk }}
-    {% if receipt.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received</span>
-    {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</h1>
+    {% if receipt.is_cancelled %}<span class="badge bg-slate-200 text-slate-700">Cancelled</span>
+    {% elif receipt.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received</span>
+    {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}
+    {% if receipt.is_short %}<span class="badge bg-red-100 text-red-700" title="Units that did not arrive with the original shipment">Short-shipped</span>{% endif %}</h1>
   <div class="flex flex-wrap gap-2">
-  {% if not receipt.posted and lines %}
+  {% if not receipt.posted and not receipt.is_cancelled and lines %}
   <form method="post" onsubmit="return confirm('Mark received? Stock and weighted average costs will update. (You can undo it from this page if the units have not been sold yet.)')">
     {% csrf_token %}<input type="hidden" name="action" value="post">
     <button class="btn-success">✓ Mark received</button>
+  </form>
+  <button type="button" class="btn-secondary" onclick="document.getElementById('partialBox').classList.toggle('hidden'); document.getElementById('partialBox').scrollIntoView({block:'center'})" title="Some boxes didn't come? Receive what arrived now; the rest stays open for the dispute">⚠ Not everything arrived…</button>
+  {% endif %}
+  {% if receipt.is_short and not receipt.posted and not receipt.is_cancelled %}
+  <form method="post" onsubmit="return confirm('Cancel the missing units? The order closes and their value becomes a supplier credit (a refund due if you already paid).')">
+    {% csrf_token %}<input type="hidden" name="action" value="cancel_short">
+    <button class="btn-secondary text-red-700">✕ Cancel missing units (credited)</button>
   </form>
   {% endif %}
   <details class="relative">
@@ -34,6 +43,44 @@
   </details>
   </div>
 </div>
+
+{% if receipt.is_short %}
+<div class="rounded-lg px-4 py-3 mb-4 text-sm border bg-red-50 text-red-900 border-red-200">
+  <strong>{{ receipt.total_qty }} unit{{ receipt.total_qty|pluralize }} short</strong> from
+  <a href="{% url 'receipt_detail' receipt.parent.pk %}" class="underline">RCV-{{ receipt.parent.pk }}</a>{% if receipt.short_note %} — {{ receipt.short_note }}{% endif %}.
+  {% if receipt.is_cancelled %}Cancelled {{ receipt.cancelled_at|date:"M j, Y" }}: the supplier credited these units{% if receipt.refund_due %} — <strong>${{ receipt.refund_due|floatformat:2|intcomma }} refund due</strong>, click “Refund received” on the bill when it lands{% endif %}.
+  {% elif not receipt.posted %}Open the dispute with the supplier. When the rest ships, <strong>Mark received</strong>; if they credit or refund you instead, <strong>Cancel missing units</strong>.{% endif %}
+</div>
+{% endif %}
+{% for so in receipt.short_orders.all %}{% if not so.is_deleted %}
+<div class="rounded-lg px-4 py-3 mb-4 text-sm border bg-amber-50 text-amber-900 border-amber-200">
+  Received partially: <strong>{{ so.total_qty }} unit{{ so.total_qty|pluralize }}</strong> did not arrive and sit on
+  <a href="{% url 'receipt_detail' so.pk %}" class="underline">RCV-{{ so.pk }}</a>
+  ({% if so.is_cancelled %}cancelled · credited{% elif so.posted %}since received{% else %}open · in dispute{% endif %}).
+</div>
+{% endif %}{% endfor %}
+{% if not receipt.posted and not receipt.is_cancelled and lines %}
+<form method="post" id="partialBox" class="hidden card-pad mb-4 border-l-4 border-amber-400">
+  {% csrf_token %}<input type="hidden" name="action" value="partial">
+  <h2 class="font-semibold mb-1">Not everything arrived</h2>
+  <p class="text-xs text-slate-500 mb-3">Enter what actually came in. Those units go into stock right now (with this order's freight and duties) so you can sell them. The missing units move to a new linked order that stays open while you dispute it with the supplier — later you either mark that one received or cancel it when they credit you.</p>
+  <table class="tbl mb-3">
+    <thead><tr><th>SKU</th><th>Product</th><th class="num">Ordered</th><th class="num">Arrived</th></tr></thead>
+    <tbody>
+    {% for l in lines %}
+      <tr><td class="font-medium">{{ l.product.sku }}</td><td class="whitespace-normal">{{ l.product.name }}</td>
+        <td class="num">{{ l.qty }}</td>
+        <td class="num"><input type="number" name="got_{{ l.pk }}" value="{{ l.qty }}" min="0" max="{{ l.qty }}" class="w-24 text-right"></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="flex flex-wrap items-end gap-3">
+    <div class="flex-1 min-w-[16rem]"><label class="text-xs text-slate-500 block mb-1">Note for the dispute (optional)</label>
+      <input type="text" name="note" placeholder="e.g. box count on label said 6, received 5 — opened Tradepost dispute" class="w-full"></div>
+    <button class="btn-success" onclick="return confirm('Receive the quantities entered and move the rest to a short order?')">✓ Receive what arrived</button>
+  </div>
+</form>
+{% endif %}
 
 <div class="grid lg:grid-cols-3 gap-4">
   <div class="card-pad">

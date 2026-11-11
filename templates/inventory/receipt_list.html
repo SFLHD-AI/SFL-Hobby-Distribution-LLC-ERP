@@ -24,6 +24,7 @@
   <a href="?status=open" class="btn-secondary {% if request.GET.status == 'open' %}!bg-slate-200{% endif %}">Open</a>
   <a href="?status=posted" class="btn-secondary {% if request.GET.status == 'posted' %}!bg-slate-200{% endif %}">Received</a>
   <a href="?status=unpaid" class="btn-secondary {% if request.GET.status == 'unpaid' %}!bg-slate-200{% endif %}">Unpaid bills</a>
+  <a href="?status=cancelled" class="btn-secondary {% if request.GET.status == 'cancelled' %}!bg-slate-200{% endif %}">Cancelled</a>
 </div>
 <div class="card overflow-x-auto">
   <table class="tbl" id="rcvTable">
@@ -48,8 +49,10 @@
         <td class="text-xs">{{ r.reference }}</td>
         <td class="num">${{ r.merchandise_total|floatformat:2|intcomma }}</td>
         <td class="num">${{ r.freight_cost|add:r.duties_cost|floatformat:2 }}</td>
-        <td>{% if r.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received {{ r.posted_at|date:"M j" }}</span>
-            {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}</td>
+        <td>{% if r.is_cancelled %}<span class="badge bg-slate-200 text-slate-700">Cancelled</span>
+            {% elif r.posted %}<span class="badge bg-emerald-100 text-emerald-700">Received {{ r.posted_at|date:"M j" }}</span>
+            {% else %}<span class="badge bg-amber-100 text-amber-700">Open</span>{% endif %}
+            {% if r.is_short %}<span class="badge bg-red-100 text-red-700 ml-1" title="Units missing from RCV-{{ r.parent_id }}">Short</span>{% endif %}</td>
         <td>{% if r.refund_due %}<span class="badge bg-sky-100 text-sky-700" title="Supplier credit after you paid">Refund due ${{ r.refund_due|floatformat:2 }}</span>
             {% elif r.is_paid %}<span class="badge bg-emerald-100 text-emerald-700">Paid</span>
             {% elif r.is_overdue %}<span class="badge bg-red-100 text-red-700">Overdue {{ r.due_date|date:"M j" }}</span>

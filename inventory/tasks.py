@@ -15,10 +15,8 @@ def refresh_inbound_tracking():
     provider = get_provider("shippo")
     if not provider.is_configured():
         return "Shippo not configured; inbound tracking skipped."
-    qs = (Receipt.objects.filter(is_deleted=False, posted=False, packages__isnull=False)
-          .exclude(packages__status="DELIVERED").distinct()
-          | Receipt.objects.filter(is_deleted=False, posted=False, packages__isnull=False)
-          .filter(packages__status="").distinct())
+    base = Receipt.objects.filter(is_deleted=False, posted=False, cancelled_at__isnull=True, packages__isnull=False)
+    qs = (base.exclude(packages__status="DELIVERED").distinct() | base.filter(packages__status="").distinct())
     ok = fail = 0
     for r in qs.distinct():
         good, _ = refresh_receipt(r, provider)

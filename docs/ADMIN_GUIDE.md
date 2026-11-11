@@ -278,6 +278,27 @@ Technical notes: GraphQL `platform-api.tradepost.co/graphql`, header
 keyset pagination. Cache model `TradepostFill`; code in
 `inventory/tradepost.py`; hourly job `inventory.tasks.sync_tradepost`.
 
+### Not everything arrived (partial receiving)
+
+On an open supplier order click **⚠ Not everything arrived…**, enter the
+quantity that actually came in on each line, add a note for the dispute
+and **Receive what arrived**. Those units go into stock immediately (this
+shipment's freight and duties are spread over them) so you can sell them.
+The missing units move to a new linked order marked **Short-shipped**,
+with the same supplier, order numbers and unit costs, which stays open:
+
+* when the supplier ships the rest, open it and **Mark received**;
+* when they credit or refund you instead, **Cancel missing units**. The
+  order closes, its value becomes a supplier credit, and if you had
+  already paid for the whole order the short order shows the **refund
+  due** — click *Refund received* on its bill when the money lands.
+
+A payment made for the whole order (by hand or matched from Banking) is
+shared across the original and the short order by value, so neither one
+shows as over- or under-paid. The Tradepost fill stays open until the
+short order is received or cancelled. Cancelled orders sit under the
+**Cancelled** filter on Receiving and never count as incoming.
+
 ### Undoing things on a supplier order
 
 The **⋯ More** menu at the top of a supplier order holds the undo actions:
