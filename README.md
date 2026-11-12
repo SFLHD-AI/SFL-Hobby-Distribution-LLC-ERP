@@ -143,3 +143,10 @@ docs/        guides
 | daily 6am | `expenses.tasks.generate_recurring_expenses` | post due recurring expenses (rent, software…) |
 | daily 7am | `shipping.tasks.send_low_stock_digest` | low-stock email |
 | Monday 7am | `core.tasks.send_review_digest` | weekly email: transactions to review, bills due, missing receipts, connections that need a re-login |
+
+## TPX ↔ Dealernet edge finder (`tpx_edge/`)
+
+A separate, read-only command-line tool that compares live Tradepost Partner
+Exchange (TPX) market data for sealed wax / sealed TCG against Dealernet
+bid/ask and reports fee- and shipping-adjusted edge. It has its own
+`pyproject.toml`, `.env` and tests — see [`tpx_edge/README.md`](tpx_edge/README.md).
