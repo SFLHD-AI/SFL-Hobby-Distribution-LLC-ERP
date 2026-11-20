@@ -262,6 +262,17 @@ def product_detail(request, pk):
         ok, msg = refresh_product(product) if product.tcgplayer_id else refresh_unit_price(product)
         (messages.success if ok else messages.warning)(request, msg)
         return redirect("product_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "recalc_cost":
+        if not can_see_costs(request.user):
+            messages.error(request, "You don't have permission to change costs.")
+            return redirect("product_detail", pk)
+        avg, qty, _ = product.replay_cost_history()
+        if avg == product.avg_cost:
+            messages.info(request, "The average cost already matches the movement history.")
+        else:
+            product.revalue_cost(avg, user=request.user, note="Recalculated from the movement ledger")
+            messages.success(request, f"Average cost recalculated from history: ${avg}.")
+        return redirect("product_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "revalue":
         if not can_see_costs(request.user):
             messages.error(request, "You don't have permission to change costs.")
@@ -296,7 +307,11 @@ def product_detail(request, pk):
                 messages.error(request, "; ".join(e.messages))
     movements = product.movements.select_related("user")[:200]
     incoming = list(product.incoming_lines())
+    replay_avg, replay_qty, replay_steps = product.replay_cost_history()
     return render(request, "inventory/product_detail.html", {
+        "replay_avg": replay_avg, "replay_qty": replay_qty,
+        "replay_mismatch": replay_avg != product.avg_cost,
+        "replay_first_bad": next((st for st in replay_steps if st["mismatch"]), None),
         "product": product, "movements": movements, "adj_form": adj_form,
         "show_costs": can_see_costs(request.user),
         "incoming": incoming, "incoming_summary": product.incoming_summary,

@@ -1523,3 +1523,54 @@ class PartialReceivingTests(TestCase):
             self.r.receive_partially({self.la.pk: 7, self.lb.pk: 2})
         with self.assertRaises(ValidationError):
             self.r.receive_partially({self.la.pk: 0, self.lb.pk: 0})
+
+
+class AverageCostIntegrityTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.user = User.objects.create_superuser("avg", password="x")
+        self.client.force_login(self.user)
+        self.p = make_product("NT-FIFA", name="National Treasures Road to FIFA 1st off the Line")
+
+    def _receive(self, qty, cost, freight="0"):
+        from inventory.models import Receipt, ReceiptLine
+        r = Receipt.objects.create(reference="r", freight_cost=Decimal(freight))
+        ReceiptLine.objects.create(receipt=r, product=self.p, qty=qty, unit_cost=Decimal(cost))
+        r.post(user=self.user)
+        return r
+
+    def test_wrong_receive_undo_fix_rereceive_lands_exactly(self):
+        r = self._receive(2, "2000")                   # wrong price, first stock
+        r.unpost(user=self.user)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, 0)
+        line = r.lines.get(); line.unit_cost = Decimal("2600"); line.save()
+        r.post(user=self.user); self.p.refresh_from_db()
+        self.assertEqual(self.p.avg_cost, Decimal("2600.0000"))
+        # second order at the same price keeps it there even with odd freight
+        self._receive(3, "2587.6667", freight="37.00"); self.p.refresh_from_db()
+        self.assertEqual(self.p.avg_cost, Decimal("2600.0000"))
+
+    def test_unpost_to_zero_restores_previous_average_not_the_wrong_one(self):
+        StockAdjustment.create_and_apply(product=self.p, qty_delta=1, reason="opening", unit_cost=Decimal("2600"))
+        self.p.apply_movement(movement_type="sale", qty_delta=-1)       # sold out, avg stays 2600
+        r = self._receive(2, "1900"); self.p.refresh_from_db()
+        self.assertEqual(self.p.avg_cost, Decimal("1900.0000"))        # fresh start at the (wrong) cost
+        r.unpost(user=self.user); self.p.refresh_from_db()
+        self.assertEqual(self.p.avg_cost, Decimal("2600.0000"))        # back to what it was before the mistake
+
+    def test_replay_matches_stored_and_fixes_a_bad_value(self):
+        from inventory.models import StockMovement
+        self._receive(2, "2600"); self._receive(2, "2600")
+        avg, qty, steps = self.p.replay_cost_history()
+        self.assertEqual((avg, qty), (Decimal("2600.0000"), 4))
+        self.assertFalse(any(st["mismatch"] for st in steps))
+        # simulate a corrupted stored average (e.g. a bad manual entry)
+        self.p.avg_cost = Decimal("2237.5000"); self.p.save(update_fields=["avg_cost"])
+        html = self.client.get(f"/inventory/{self.p.pk}/").content.decode()
+        self.assertIn("Replaying every movement for this SKU gives <b>$2600.0000</b>", html)
+        r = self.client.post(f"/inventory/{self.p.pk}/", {"action": "recalc_cost"})
+        self.assertEqual(r.status_code, 302)
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.avg_cost, Decimal("2600.0000"))
+        self.assertEqual(StockMovement.objects.filter(product=self.p, movement_type="revalue").count(), 1)

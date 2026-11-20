@@ -301,6 +301,48 @@ class Product(SoftDeleteModel):
         return (models.Q(sku__icontains=q) | models.Q(name__icontains=q)
                 | models.Q(upc__icontains=q) | models.Q(barcodes__code__icontains=q))
 
+    def replay_cost_history(self):
+        """Recompute the weighted average cost from the movement ledger alone.
+        Returns (avg, qty, steps) where steps explain each change. Inflows
+        with a cost roll the average; outflows leave it; un-received and
+        returned-to-supplier units come out at the cost they went in at;
+        a revaluation sets it outright; once stock hits zero the next inflow
+        starts the average fresh."""
+        avg, qty, steps = Decimal("0"), 0, []
+        for m in self.movements.order_by("id"):
+            before = avg
+            d = m.qty_delta
+            if m.movement_type == "revalue":
+                avg = m.avg_cost_after
+                why = "set by hand"
+            elif d > 0:
+                priced = m.movement_type in ("receipt", "credit_restock", "supplier_return", "write_off") \
+                    or (m.movement_type == "adjustment" and m.unit_cost and m.unit_cost != before)
+                if qty <= 0:
+                    avg = m.unit_cost if priced else (m.unit_cost or avg)
+                    why = "first units in — average starts at their cost"
+                elif priced:
+                    avg = ((Decimal(qty) * avg + Decimal(d) * m.unit_cost) / Decimal(qty + d)).quantize(FOURPLACES, ROUND_HALF_UP)
+                    why = f"{d} in at ${m.unit_cost} blended with {qty} at ${before}"
+                else:
+                    why = f"{d} in at the current average"
+                qty += d
+            elif d < 0:
+                out = -d
+                if m.movement_type in ("receipt", "supplier_return") and qty + d > 0:
+                    # units leaving at the cost they came in at: roll the average back
+                    avg = ((Decimal(qty) * avg - Decimal(out) * m.unit_cost) / Decimal(qty + d)).quantize(FOURPLACES, ROUND_HALF_UP)
+                    avg = max(avg, Decimal("0"))
+                    why = f"{out} out at ${m.unit_cost} (un-received / returned) — average rolled back"
+                else:
+                    why = f"{out} out at the average"
+                qty += d
+            else:
+                why = "no quantity change"
+            steps.append({"movement": m, "qty_after": qty, "avg_after": avg, "why": why,
+                          "mismatch": (m.avg_cost_after or Decimal("0")).quantize(FOURPLACES) != avg.quantize(FOURPLACES)})
+        return avg.quantize(FOURPLACES, ROUND_HALF_UP), qty, steps
+
     def revalue_cost(self, new_cost, user=None, note=""):
         """
         Set the weighted average cost directly WITHOUT changing quantity.
@@ -766,7 +808,13 @@ class Receipt(SoftDeleteModel):
                                / Decimal(remaining)).quantize(FOURPLACES, ROUND_HALF_UP)
                     new_avg = max(new_avg, Decimal("0"))
                 else:
-                    new_avg = product.avg_cost
+                    # nothing left: go back to the average from just before this receipt
+                    # arrived, not the one it created
+                    mine = StockMovement.objects.filter(product=product, source_type="Receipt",
+                                                        source_id=str(self.pk), qty_delta__gt=0).order_by("-id").first()
+                    prev = (StockMovement.objects.filter(product=product, pk__lt=mine.pk).order_by("-id").first()
+                            if mine else None)
+                    new_avg = prev.avg_cost_after if prev else unit
                 product.apply_movement(movement_type="receipt", qty_delta=-line.qty, user=user,
                                        unit_cost=unit, new_avg_cost=new_avg,
                                        reference=f"RCV-{self.pk}", source=self,

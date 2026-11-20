@@ -416,6 +416,18 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## Checking a product's average cost
+
+A product's page (costs visible) has **Check average cost**: it replays
+every movement in that SKU's ledger — receipts at their landed cost,
+un-receives and supplier returns rolling the average back, sales at the
+average, revaluations set outright — and compares the result with the
+stored average. If they differ it says where the history and the stored
+value first part ways and offers **Use $X from history**, which records a
+revaluation to that figure. If the ledger itself is wrong (a receipt was
+logged at the wrong price and already sold through), use **Set average
+cost directly** with a note instead.
+
 ## Returns, credit memos and refunds
 
 On an invoice click **↩ Credit / return**. For each item enter how many are

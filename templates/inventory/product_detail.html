@@ -129,6 +129,17 @@
         <button class="btn-primary w-full justify-center">Apply adjustment</button>
       </form>
       {% if show_costs %}
+      <form method="post" class="mt-5 pt-4 border-t border-slate-100 space-y-2">
+        {% csrf_token %}<input type="hidden" name="action" value="recalc_cost">
+        <h3 class="font-semibold text-sm">Check average cost</h3>
+        {% if replay_mismatch %}
+        <p class="text-sm text-red-700">Replaying every movement for this SKU gives <b>${{ replay_avg|floatformat:4 }}</b>, but the stored average is <b>${{ product.avg_cost|floatformat:4 }}</b>.
+          {% if replay_first_bad %}The history and the stored value first part ways at the {{ replay_first_bad.movement.timestamp|date:"M j, g:i A" }} {{ replay_first_bad.movement.get_movement_type_display|lower }} ({{ replay_first_bad.why }}).{% endif %}</p>
+        <button class="btn-primary w-full justify-center" onclick="return confirm('Set the average cost to ${{ replay_avg|floatformat:4 }} as the ledger says?')">Use ${{ replay_avg|floatformat:2 }} from history</button>
+        {% else %}
+        <p class="text-xs text-slate-500">Replaying every movement in the ledger gives the same <b>${{ replay_avg|floatformat:4 }}</b> as the stored average. If that still isn't the real cost, set it below.</p>
+        {% endif %}
+      </form>
       <form method="post" class="mt-5 pt-4 border-t border-slate-100 space-y-3">
         {% csrf_token %}<input type="hidden" name="action" value="revalue">
         <h3 class="font-semibold text-sm">Set average cost directly</h3>
