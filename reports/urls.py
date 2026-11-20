@@ -15,4 +15,5 @@ urlpatterns = [
     path("ar-aging/", views.ar_aging, name="report_ar_aging"),
     path("quickbooks/", views.quickbooks_export, name="report_quickbooks"),
     path("market-check/", views.market_check, name="report_market_check"),
+    path("cost-check/", views.cost_check, name="report_cost_check"),
 ]

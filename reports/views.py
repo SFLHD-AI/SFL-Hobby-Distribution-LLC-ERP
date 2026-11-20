@@ -519,3 +519,44 @@ def market_check(request):
         "missing": [p for p in __import__("inventory.models", fromlist=["Product"]).Product.objects
                     .filter(active=True, tcgplayer_id__isnull=True, category__name__iexact=eligible_category_name())],
     })
+
+
+
+# ---------------------------------------------------------------------------
+# Average cost check: stored average vs a replay of the movement ledger
+# ---------------------------------------------------------------------------
+@costs_required
+def cost_check(request):
+    from django.contrib import messages
+    from django.shortcuts import redirect
+    from inventory.models import Product
+    if request.method == "POST" and request.POST.get("action") == "fix":
+        ids = [i for i in request.POST.getlist("product") if i.isdigit()]
+        qs = Product.objects.filter(pk__in=ids) if ids and not request.POST.get("all") else Product.objects.all()
+        n = 0
+        for p in qs:
+            avg, _, _ = p.replay_cost_history()
+            if avg != p.avg_cost:
+                p.revalue_cost(avg, user=request.user, note="Recalculated from the movement ledger (cost check report)")
+                n += 1
+        messages.success(request, f"Average cost recalculated on {n} product{'s' if n != 1 else ''}.")
+        return redirect("report_cost_check")
+    rows = []
+    checked = 0
+    for p in Product.objects.filter(movements__isnull=False).distinct().order_by("sku"):
+        checked += 1
+        avg, qty, steps = p.replay_cost_history()
+        if avg == p.avg_cost and qty == p.qty_on_hand:
+            continue
+        first_bad = next((st for st in steps if st["mismatch"]), None)
+        diff_value = (Decimal(p.qty_on_hand) * (p.avg_cost - avg)).quantize(Decimal("0.01"))
+        rows.append({"p": p, "replay": avg, "replay_qty": qty, "first_bad": first_bad, "diff_value": diff_value})
+    rows.sort(key=lambda r: -abs(r["diff_value"]))
+    total_diff = sum((r["diff_value"] for r in rows), ZERO)
+    if request.GET.get("export") == "csv":
+        return csv_response("cost_check.csv",
+                            ["SKU", "Product", "On hand", "Stored avg", "Ledger avg", "Inventory value difference", "First mismatch"],
+                            [[r["p"].sku, r["p"].name, r["p"].qty_on_hand, f"{r['p'].avg_cost:.4f}", f"{r['replay']:.4f}",
+                              f"{r['diff_value']:.2f}",
+                              r["first_bad"]["movement"].timestamp.isoformat() if r["first_bad"] else ""] for r in rows])
+    return render(request, "reports/cost_check.html", {"rows": rows, "checked": checked, "total_diff": total_diff})

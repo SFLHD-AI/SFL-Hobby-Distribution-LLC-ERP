@@ -1574,3 +1574,21 @@ class AverageCostIntegrityTests(TestCase):
         self.p.refresh_from_db()
         self.assertEqual(self.p.avg_cost, Decimal("2600.0000"))
         self.assertEqual(StockMovement.objects.filter(product=self.p, movement_type="revalue").count(), 1)
+
+
+class CostCheckReportTests(TestCase):
+    def test_report_lists_and_fixes_mismatches(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine
+        self.client.force_login(User.objects.create_superuser("cc", password="x"))
+        good = make_product("CC-GOOD"); bad = make_product("CC-BAD")
+        for p in (good, bad):
+            r = Receipt.objects.create(reference="x"); ReceiptLine.objects.create(receipt=r, product=p, qty=2, unit_cost=Decimal("2600")); r.post()
+        bad.avg_cost = Decimal("2237.5"); bad.save(update_fields=["avg_cost"])
+        html = self.client.get("/reports/cost-check/").content.decode()
+        self.assertIn("CC-BAD", html); self.assertNotIn("CC-GOOD", html)
+        self.assertIn("$2600.0000", html)
+        r = self.client.post("/reports/cost-check/", {"action": "fix", "all": "1"})
+        self.assertEqual(r.status_code, 302)
+        bad.refresh_from_db(); self.assertEqual(bad.avg_cost, Decimal("2600.0000"))
+        self.assertIn("matches its movement ledger", self.client.get("/reports/cost-check/").content.decode())

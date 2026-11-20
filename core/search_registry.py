@@ -74,6 +74,7 @@ PAGES = [
     ("AR aging", "report_ar_aging", "reports", "overdue customers owe"),
     ("QuickBooks export", "report_quickbooks", "reports", "iif csv accountant"),
     ("Market price check (TCGplayer)", "report_market_check", "reports", "market value cost percent"),
+    ("Average cost check", "report_cost_check", "reports", "avg cost wrong ledger recalculate fix"),
     # --- admin ---
     ("Settings", "settings_edit", "admin", "company logo theme api keys tradepost shippo plaid"),
     ("Users & roles", "user_list", "admin", "permissions staff login"),
