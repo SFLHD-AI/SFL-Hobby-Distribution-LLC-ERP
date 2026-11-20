@@ -9,12 +9,14 @@
     <tbody>
     {% for m in memos %}
       <tr>
-        <td class="font-medium">{{ m.number }}</td>
+        <td class="font-medium"><a class="text-indigo-600 hover:underline" href="{% url 'creditmemo_detail' m.pk %}">{{ m.number }}</a></td>
         <td><a class="text-indigo-600 hover:underline" href="{% url 'invoice_detail' m.invoice.pk %}">{{ m.invoice.number }}</a></td>
         <td>{{ m.customer.business_name }}</td>
         <td>{{ m.date|date:"M j, Y" }}</td>
         <td class="text-xs">{{ m.reason }}</td>
-        <td><span class="badge {% if m.status == 'applied' %}bg-emerald-100 text-emerald-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ m.get_status_display }}</span></td>
+        <td><span class="badge {% if m.status == 'applied' %}bg-emerald-100 text-emerald-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ m.get_status_display }}</span>
+            {% if m.awaiting_return %}<span class="badge bg-amber-100 text-amber-700">{{ m.qty_awaiting_return }} awaiting return</span>{% endif %}
+            {% if m.credit_available %}<span class="badge bg-red-100 text-red-700">${{ m.credit_available|floatformat:2 }} owed</span>{% endif %}</td>
         <td class="num font-semibold">${{ m.total|floatformat:2|intcomma }}</td>
       </tr>
     {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">No credit memos.</td></tr>{% endfor %}

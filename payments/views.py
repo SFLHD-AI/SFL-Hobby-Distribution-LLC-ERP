@@ -79,8 +79,12 @@ def payment_list(request):
             ["date", "customer", "amount", "method", "reference", "applied", "unapplied"],
             [[p.date, p.customer.business_name, p.amount, p.method, p.reference,
               p.amount_applied, p.amount_unapplied] for p in payments])
+    from payments.models import Refund
+    refunds = Refund.objects.filter(is_deleted=False).select_related("customer", "credit_memo")
+    if customer_id:
+        refunds = refunds.filter(customer_id=customer_id)
     return render(request, "payments/payment_list.html", {
-        "payments": payments,
+        "payments": payments, "refunds": refunds[:100],
         "customers": Customer.objects.filter(active=True),
     })
 

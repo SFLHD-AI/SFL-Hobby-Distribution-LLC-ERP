@@ -1,35 +1,66 @@
-{% extends "base.html" %}
-{% block title %}Credit memo{% endblock %}
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Return / credit{% endblock %}
 {% block content %}
-<h1 class="page-title mb-2">Credit / return against {{ invoice.number }}</h1>
-<p class="text-slate-500 text-sm mb-5">{{ invoice.customer.business_name }} — enter return quantities. Checked “restock” lines go back into inventory through the ledger.</p>
-<form method="post" class="space-y-4">
+<h1 class="page-title mb-2">Return / credit against {{ invoice.number }}</h1>
+<p class="text-slate-500 text-sm mb-5">{{ invoice.customer.business_name }} · invoice total ${{ invoice.total|floatformat:2|intcomma }} · balance ${{ invoice.balance_due|floatformat:2|intcomma }}.
+  Enter how many of each item are coming back. The credit is the price they paid, less any restocking fee, and comes off the balance right away. Units go back into stock when you mark them received.</p>
+<form method="post" class="space-y-4" id="cmForm">
   {% csrf_token %}
   <div class="card overflow-x-auto">
     <table class="tbl">
-      <thead><tr><th>Item</th><th class="num">Invoiced qty</th><th class="num">Unit $</th>
-        <th class="num">Return qty</th><th>Restock?</th></tr></thead>
+      <thead><tr><th>Item</th><th class="num">Sold</th><th class="num">Can return</th><th class="num">Paid / unit</th>
+        <th class="num">Return qty</th><th class="num">Credit / unit</th><th class="num">Credit</th><th>Coming back to stock?</th></tr></thead>
       <tbody>
       {% for l in lines %}
-        <tr>
-          <td>{{ l.description }}{% if l.product %} <span class="text-xs text-slate-400">({{ l.product.sku }})</span>{% endif %}</td>
+        <tr data-line="{{ l.pk }}" data-price="{{ l.effective_unit_price }}">
+          <td class="whitespace-normal">{{ l.description }}{% if l.product %} <span class="text-xs text-slate-400">({{ l.product.sku }})</span>{% endif %}</td>
           <td class="num">{{ l.qty }}</td>
-          <td class="num">${{ l.unit_price|floatformat:2 }}</td>
-          <td class="num"><input type="number" name="qty_{{ l.pk }}" min="0" max="{{ l.qty }}"
-                 class="w-full sm:w-24 rounded-lg border-slate-300 text-sm text-right"></td>
-          <td><input type="checkbox" name="restock_{{ l.pk }}" checked class="rounded"></td>
+          <td class="num {% if not l.qty_returnable %}text-slate-400{% endif %}">{{ l.qty_returnable }}{% if l.qty_credited %}<div class="text-[10px] text-slate-400">{{ l.qty_credited }} already credited</div>{% endif %}</td>
+          <td class="num">${{ l.effective_unit_price|floatformat:2 }}</td>
+          <td class="num"><input type="number" name="qty_{{ l.pk }}" min="0" max="{{ l.qty_returnable }}" {% if not l.qty_returnable %}disabled{% endif %}
+                 class="w-full sm:w-24 rounded-lg border-slate-300 text-sm text-right cm-qty" placeholder="0"></td>
+          <td class="num text-slate-600 cm-unit">${{ l.effective_unit_price|floatformat:2 }}</td>
+          <td class="num font-semibold cm-line">$0.00</td>
+          <td><label class="inline-flex items-center gap-1 text-sm"><input type="checkbox" name="restock_{{ l.pk }}" checked class="rounded"> yes</label></td>
         </tr>
       {% endfor %}
       </tbody>
+      <tfoot><tr class="font-bold"><td colspan="6" class="text-right">Total credit</td><td class="num" id="cmTotal">$0.00</td><td></td></tr></tfoot>
     </table>
   </div>
-  <div class="card-pad field-inline">
-    <label class="text-xs text-slate-500 block mb-1">Reason</label>
-    <input type="text" name="reason" class="w-full max-w-lg" placeholder="Damaged in transit, wrong item, etc.">
+  <div class="card-pad grid md:grid-cols-3 gap-4 field-inline">
+    <div><label class="text-xs text-slate-500 block mb-1">Restocking fee % <span class="text-slate-400">(kept back from the credit)</span></label>
+      <input type="number" step="0.01" min="0" max="100" name="restocking_pct" id="cmPct" value="0" class="w-full"></div>
+    <div class="md:col-span-2"><label class="text-xs text-slate-500 block mb-1">Reason</label>
+      <input type="text" name="reason" class="w-full" placeholder="Damaged in transit, wrong item, customer changed mind…"></div>
   </div>
+  {% if invoice.balance_due <= 0 %}
+  <div class="rounded-lg px-4 py-3 text-sm bg-sky-50 border border-sky-200 text-sky-900">This invoice is already paid, so the credit will be <strong>owed back</strong> to {{ invoice.customer.business_name }}. After you issue it you can record the refund or apply the credit to another of their invoices from the credit memo page.</div>
+  {% endif %}
   <div class="flex gap-2">
-    <button class="btn-primary" onclick="return confirm('Apply credit memo? Balance reduces and checked lines restock immediately.')">Apply credit memo</button>
+    <button class="btn-primary" onclick="return confirm('Issue this credit? The balance reduces now; units are restocked when you mark them received.')">Issue credit memo</button>
     <a href="{% url 'invoice_detail' invoice.pk %}" class="btn-secondary">Cancel</a>
   </div>
 </form>
+<script>
+(function () {
+  const pct = document.getElementById("cmPct"), rows = document.querySelectorAll("tr[data-line]"), total = document.getElementById("cmTotal");
+  function money(n) { return "$" + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+  function recalc() {
+    const keep = Math.max(0, Math.min(100, parseFloat(pct.value || "0"))) ;
+    let sum = 0;
+    rows.forEach(r => {
+      const price = parseFloat(r.dataset.price || "0"), unit = Math.round(price * (100 - keep)) / 100;
+      const q = parseInt(r.querySelector(".cm-qty").value || "0", 10) || 0;
+      r.querySelector(".cm-unit").textContent = money(unit);
+      r.querySelector(".cm-line").textContent = money(unit * q);
+      sum += unit * q;
+    });
+    total.textContent = money(sum);
+  }
+  pct.addEventListener("input", recalc);
+  rows.forEach(r => r.querySelector(".cm-qty").addEventListener("input", recalc));
+  recalc();
+})();
+</script>
 {% endblock %}

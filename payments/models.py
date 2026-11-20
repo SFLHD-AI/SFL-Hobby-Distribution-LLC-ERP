@@ -15,9 +15,13 @@ class Payment(SoftDeleteModel):
     METHODS = [
         ("check", "Check"), ("wire", "Wire"), ("ach", "ACH"),
         ("zelle", "Zelle"), ("card", "Card"), ("cash", "Cash"), ("other", "Other"),
+        ("credit", "Store credit (from a return)"),
     ]
     customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT,
                                  related_name="payments")
+    credit_memo = models.ForeignKey("invoicing.CreditMemo", null=True, blank=True, on_delete=models.PROTECT,
+                                    related_name="credit_payments",
+                                    help_text="Store credit moved from this credit memo (no cash involved)")
     date = models.DateField(default=timezone.localdate)
     amount = models.DecimalField(max_digits=12, decimal_places=2)
     method = models.CharField(max_length=10, choices=METHODS)
@@ -84,3 +88,25 @@ class PaymentApplication(models.Model):
 
     def __str__(self):
         return f"${self.amount} of {self.payment} -> {self.invoice.number}"
+
+
+class Refund(SoftDeleteModel):
+    """Money paid back to a customer for a credit memo on an invoice they had
+    already paid. The opposite of a Payment."""
+    customer = models.ForeignKey("customers.Customer", on_delete=models.PROTECT, related_name="refunds")
+    credit_memo = models.ForeignKey("invoicing.CreditMemo", on_delete=models.PROTECT, related_name="refunds")
+    date = models.DateField(default=timezone.localdate)
+    amount = models.DecimalField(max_digits=12, decimal_places=2)
+    method = models.CharField(max_length=10, choices=Payment.METHODS[:-1], default="zelle")
+    paid_from = models.ForeignKey("banking.BankAccount", null=True, blank=True, on_delete=models.SET_NULL,
+                                  related_name="customer_refunds")
+    reference = models.CharField(max_length=100, blank=True)
+    notes = models.TextField(blank=True)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-date", "-id"]
+
+    def __str__(self):
+        return f"Refund ${self.amount} to {self.customer.business_name} ({self.credit_memo.number})"

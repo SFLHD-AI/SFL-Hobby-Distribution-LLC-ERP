@@ -1,9 +1,9 @@
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
 from django.core.mail import EmailMessage
-from django.db import models
+from django.db import models, transaction
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.clickjacking import xframe_options_sameorigin
@@ -266,22 +266,38 @@ def creditmemo_create(request, invoice_pk):
     invoice = get_object_or_404(Invoice, pk=invoice_pk)
     inv_lines = invoice.lines.filter(is_deleted=False).select_related("product")
     if request.method == "POST":
+        try:
+            pct = Decimal(request.POST.get("restocking_pct") or "0")
+        except InvalidOperation:
+            pct = Decimal("0")
+        if pct < 0 or pct > 100:
+            messages.error(request, "Restocking fee must be between 0 and 100%.")
+            return redirect("creditmemo_create", invoice_pk)
         memo = CreditMemo.objects.create(
-            invoice=invoice, customer=invoice.customer,
+            invoice=invoice, customer=invoice.customer, restocking_pct=pct,
             reason=request.POST.get("reason", ""), created_by=request.user)
         any_line = False
         for line in inv_lines:
             raw = request.POST.get(f"qty_{line.pk}", "").strip()
             if not raw:
                 continue
-            qty = int(raw)
+            try:
+                qty = int(raw)
+            except ValueError:
+                qty = 0
             if qty <= 0:
                 continue
-            qty = min(qty, line.qty)
+            if qty > line.qty_returnable:
+                memo.hard_delete()
+                messages.error(request, f"{line.description}: only {line.qty_returnable} of {line.qty} "
+                                        "can still be returned on this invoice.")
+                return redirect("creditmemo_create", invoice_pk)
+            sold = line.effective_unit_price
+            credit = (sold * (Decimal("100") - pct) / Decimal("100")).quantize(Decimal("0.01"), ROUND_HALF_UP)
             CreditMemoLine.objects.create(
-                credit_memo=memo, product=line.product,
+                credit_memo=memo, invoice_line=line, product=line.product,
                 description=line.description, qty=qty,
-                unit_price=line.unit_price,
+                sold_unit_price=sold, unit_price=credit,
                 restock=bool(request.POST.get(f"restock_{line.pk}")),
                 cost_snapshot=line.cost_snapshot)
             any_line = True
@@ -291,13 +307,89 @@ def creditmemo_create(request, invoice_pk):
             return redirect("creditmemo_create", invoice_pk)
         try:
             memo.apply(user=request.user)
-            messages.success(request, f"Credit memo {memo.number} applied "
-                                      f"(${memo.total} credited).")
         except ValidationError as e:
             messages.error(request, "; ".join(e.messages))
-        return redirect("invoice_detail", invoice_pk)
+            return redirect("invoice_detail", invoice_pk)
+        msg = f"Credit memo {memo.number}: ${memo.total:,.2f} credited against {invoice.number}."
+        if memo.awaiting_return:
+            msg += f" {memo.qty_awaiting_return} unit{'s' if memo.qty_awaiting_return != 1 else ''} go back into stock when you mark them received."
+        if memo.credit_available:
+            msg += f" The invoice was already paid: ${memo.credit_available:,.2f} is owed back — refund it or move it to another invoice."
+        messages.success(request, msg)
+        return redirect("creditmemo_detail", memo.pk)
     return render(request, "invoicing/creditmemo_form.html",
                   {"invoice": invoice, "lines": inv_lines})
+
+
+@module_required("invoices")
+def creditmemo_detail(request, pk):
+    from banking.models import BankAccount
+    from payments.models import Payment, Refund
+    memo = get_object_or_404(CreditMemo.objects.select_related("invoice", "customer"), pk=pk)
+    lines = memo.lines.filter(is_deleted=False).select_related("product")
+    if request.method == "POST":
+        action = request.POST.get("action")
+        try:
+            if action == "receive":
+                received = {}
+                for key, val in request.POST.items():
+                    if key.startswith("got_") and key[4:].isdigit():
+                        received[int(key[4:])] = val or 0
+                memo.receive_returns(received, user=request.user)
+                messages.success(request, f"Returned goods received — {memo.qty_received_back} unit"
+                                          f"{'s' if memo.qty_received_back != 1 else ''} back in stock.")
+            elif action == "refund":
+                amount = Decimal(request.POST.get("amount") or "0")
+                if amount <= 0:
+                    raise ValidationError("Enter the refund amount.")
+                if amount > memo.credit_available:
+                    raise ValidationError(f"Only ${memo.credit_available:,.2f} is owed back on this memo.")
+                acct_id = request.POST.get("paid_from") or ""
+                d = request.POST.get("date")
+                Refund.objects.create(
+                    customer=memo.customer, credit_memo=memo, amount=amount,
+                    date=timezone.datetime.fromisoformat(d).date() if d else timezone.localdate(),
+                    method=request.POST.get("method") or "zelle",
+                    paid_from=BankAccount.objects.filter(pk=acct_id).first() if acct_id.isdigit() else None,
+                    reference=(request.POST.get("reference") or "")[:100],
+                    notes=request.POST.get("notes") or "", created_by=request.user)
+                memo.invoice.refresh_status()
+                log_activity(request.user, "customer_refund", memo, changes={"amount": str(amount)})
+                messages.success(request, f"Refund of ${amount:,.2f} recorded. Match the bank withdrawal to it in Banking when it shows up.")
+            elif action == "move_credit":
+                target = get_object_or_404(Invoice, pk=request.POST.get("invoice_id"), customer=memo.customer)
+                amount = Decimal(request.POST.get("amount") or "0")
+                if amount <= 0:
+                    raise ValidationError("Enter the amount of credit to move.")
+                amount = min(amount, memo.credit_available, target.balance_due)
+                if amount <= 0:
+                    raise ValidationError("Nothing to move — no credit left, or that invoice has no balance.")
+                with transaction.atomic():
+                    pay = Payment.objects.create(customer=memo.customer, amount=amount, method="credit",
+                                                 credit_memo=memo, reference=memo.number,
+                                                 notes=f"Store credit from {memo.number} ({memo.invoice.number})",
+                                                 created_by=request.user)
+                    pay.apply_to_invoice(target, amount, user=request.user)
+                    memo.invoice.refresh_status()
+                messages.success(request, f"${amount:,.2f} of credit applied to {target.number}.")
+            elif action == "delete_refund":
+                ref = get_object_or_404(Refund, pk=request.POST.get("refund_id"), credit_memo=memo)
+                ref.delete(user=request.user)
+                memo.invoice.refresh_status()
+                messages.success(request, "Refund removed.")
+        except (ValidationError, InvalidOperation, ValueError) as e:
+            messages.error(request, "; ".join(getattr(e, "messages", [str(e)])))
+        return redirect("creditmemo_detail", memo.pk)
+    open_invoices = [i for i in memo.customer.invoices.filter(is_deleted=False).exclude(status=Invoice.VOID)
+                     .exclude(pk=memo.invoice_id).order_by("due_date") if i.balance_due > 0]
+    return render(request, "invoicing/creditmemo_detail.html", {
+        "memo": memo, "lines": lines,
+        "refunds": memo.refunds.filter(is_deleted=False).select_related("paid_from"),
+        "credit_payments": memo.credit_payments.filter(is_deleted=False).prefetch_related("applications__invoice"),
+        "open_invoices": open_invoices,
+        "bank_accounts": BankAccount.objects.filter(active=True),
+        "today": timezone.localdate(),
+    })
 
 
 @module_required("invoices")

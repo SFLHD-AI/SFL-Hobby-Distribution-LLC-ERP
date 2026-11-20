@@ -416,6 +416,35 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## Returns, credit memos and refunds
+
+On an invoice click **↩ Credit / return**. For each item enter how many are
+coming back (capped at what hasn't been credited yet), tick whether the
+units are physically returning, and optionally set a **restocking fee %**
+that is kept back. The credit per unit is the price the customer actually
+paid (after any line discount) less the fee; the total is shown live.
+**Issue credit memo** takes the credit off the invoice balance immediately.
+
+The credit memo page then drives the rest:
+
+* **Mark returned goods received** — when the boxes arrive, enter what
+  came back; those units go into stock at the cost they left at. Anything
+  short stays credited but is not restocked. Until then the memo shows
+  *awaiting return* and the units are not in inventory.
+* **If the invoice was already paid**, the credit is *owed to the
+  customer*. Either **Record refund** (date, method, bank account,
+  reference — match the bank withdrawal to it later in Banking) or **apply
+  the credit to another open invoice** of theirs as store credit (no cash
+  moves). Partial amounts are fine; the memo tracks what is still owed.
+* An unpaid invoice simply ends up with a smaller balance — nothing to
+  pay back.
+
+Books: accrual posts the credit memo as a sales return against receivables
+on its date and the refund clears the customer's credit from the bank
+account; cash basis posts the refund itself as the sales return on the day
+the money goes out. Store-credit transfers move nothing in the ledger.
+Refunds are listed under Payments / AR and on the invoice.
+
 ## TCGplayer market prices (sealed product)
 
 For products in the **Sealed TCG Product** category (the name is a setting),

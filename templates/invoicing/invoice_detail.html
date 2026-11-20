@@ -97,8 +97,16 @@
       {% endfor %}
       {% for c in credits %}
         <tr><td>{{ c.date|date:"M j, Y" }}</td>
-          <td>Credit memo {{ c.number }} ({{ c.get_status_display }}) {{ c.reason }}</td>
+          <td><a href="{% url 'creditmemo_detail' c.pk %}" class="text-indigo-600 hover:underline">Credit memo {{ c.number }}</a> ({{ c.get_status_display }}) {{ c.reason }}
+            {% if c.awaiting_return %}<span class="badge bg-amber-100 text-amber-700 ml-1">{{ c.qty_awaiting_return }} awaiting return</span>{% endif %}
+            {% if c.credit_available %}<span class="badge bg-red-100 text-red-700 ml-1">${{ c.credit_available|floatformat:2 }} owed to customer</span>{% endif %}</td>
           <td class="num text-orange-600 font-semibold">{% if c.status == 'applied' %}−${{ c.total|floatformat:2|intcomma }}{% endif %}</td></tr>
+        {% for r in c.refunds.all %}{% if not r.is_deleted %}
+        <tr><td>{{ r.date|date:"M j, Y" }}</td><td>Refund to customer ({{ r.get_method_display }}{% if r.reference %} {{ r.reference }}{% endif %})</td>
+          <td class="num text-slate-600 font-semibold">+${{ r.amount|floatformat:2|intcomma }}</td></tr>{% endif %}{% endfor %}
+        {% for p in c.credit_payments.all %}{% if not p.is_deleted %}
+        <tr><td>{{ p.date|date:"M j, Y" }}</td><td>Credit moved to another invoice</td>
+          <td class="num text-slate-600 font-semibold">+${{ p.amount|floatformat:2|intcomma }}</td></tr>{% endif %}{% endfor %}
       {% endfor %}
       </tbody>
     </table>
@@ -115,8 +123,9 @@
           <span>${{ invoice.tax_amount|floatformat:2 }}</span></div>
         <div class="flex justify-between border-t border-slate-200 pt-2 font-bold text-base"><span>Total</span><span>${{ invoice.total|floatformat:2|intcomma }}</span></div>
         <div class="flex justify-between text-emerald-600"><span>Paid / credited</span><span>−${{ invoice.amount_paid|add:invoice.amount_credited|floatformat:2|intcomma }}</span></div>
+        {% if invoice.amount_refunded %}<div class="flex justify-between text-slate-600"><span>Refunded / credit moved</span><span>+${{ invoice.amount_refunded|floatformat:2|intcomma }}</span></div>{% endif %}
         <div class="flex justify-between font-bold text-lg {% if invoice.balance_due > 0 %}text-red-600{% else %}text-emerald-600{% endif %}">
-          <span>Balance due</span><span>${{ invoice.balance_due|floatformat:2|intcomma }}</span></div>
+          <span>{% if invoice.balance_due < 0 %}Customer credit{% else %}Balance due{% endif %}</span><span>${{ invoice.balance_due|floatformat:2|intcomma|cut:"-" }}</span></div>
         {% if show_costs %}
           {% if invoice.is_ar_adjustment %}
           <div class="flex justify-between border-t border-slate-200 pt-2 text-slate-400 text-xs"><span>AR adjustment / balance transfer</span><span>not counted as revenue or profit</span></div>

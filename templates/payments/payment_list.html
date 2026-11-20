@@ -34,4 +34,20 @@
     </tbody>
   </table>
 </div>
+{% if refunds %}
+<h2 class="font-semibold mt-6 mb-2">Refunds to customers</h2>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>Date</th><th>Customer</th><th>Credit memo</th><th>How</th><th class="num">Amount</th></tr></thead>
+    <tbody>
+    {% for r in refunds %}
+      <tr><td>{{ r.date|date:"M j, Y" }}</td><td>{{ r.customer.business_name }}</td>
+        <td><a href="{% url 'creditmemo_detail' r.credit_memo.pk %}" class="text-indigo-600 hover:underline">{{ r.credit_memo.number }}</a> · {{ r.credit_memo.invoice.number }}</td>
+        <td>{{ r.get_method_display }}{% if r.reference %} · {{ r.reference }}{% endif %}</td>
+        <td class="num text-red-600 font-semibold">−${{ r.amount|floatformat:2|intcomma }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
 {% endblock %}

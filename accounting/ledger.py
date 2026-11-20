@@ -228,6 +228,7 @@ class Journal:
         self._bank_openings()
         self._bank_transactions()
         self._customer_payments()
+        self._refunds()
         if self.basis == ACCRUAL:
             self._invoices()
             self._credit_memos()
@@ -387,6 +388,7 @@ class Journal:
     def _customer_payments(self):
         from payments.models import Payment
         qs = (Payment.objects.filter(is_deleted=False)
+              .exclude(method="credit")          # store credit moved between invoices: no cash, AR nets to zero
               .select_related("customer")
               .prefetch_related("applications__invoice"))
         for p in qs:
@@ -445,6 +447,19 @@ class Journal:
         e.add(self.sys("sales"), credit=merch)
         e.add(self.sys("shipping_income"), credit=ship)
         e.add(self.sys("sales_tax"), credit=tax)
+
+    # 3b. refunds to customers (both bases) ---------------------------------------
+    def _refunds(self):
+        from payments.models import Refund
+        qs = Refund.objects.filter(is_deleted=False).select_related("customer", "credit_memo", "paid_from")
+        for r in qs:
+            e = Entry(r.date, f"Refund to {r.customer.business_name} ({r.credit_memo.number})",
+                      "Refund", str(r.pk), source_url=f"/invoices/credits/{r.credit_memo_id}/")
+            # accrual: the credit memo already booked the return against AR; paying it
+            # out clears the customer's credit balance. cash: the refund IS the return.
+            debit = self.sys("ar") if self.basis == ACCRUAL else self.sys("sales_returns")
+            e.pair(debit, self._source_account(r.paid_from) if r.paid_from_id else self.sys("cash_on_hand"), r.amount)
+            self._add(e)
 
     # 4. invoices (accrual) -----------------------------------------------------
     def _invoices(self):

@@ -125,9 +125,14 @@ class CreditMemoTests(TestCase):
                                       cost_snapshot=Decimal("4.0000"))
         memo.apply()
         self.p.refresh_from_db()
-        self.assertEqual(self.p.qty_on_hand, on_hand_before + 3)
+        self.assertEqual(self.p.qty_on_hand, on_hand_before)          # credit first…
         self.assertEqual(memo.total, Decimal("30.00"))
         self.assertEqual(self.inv.balance_due, Decimal("70.00"))
+        self.assertTrue(memo.awaiting_return)
+        memo.receive_returns()                                          # …stock when the boxes are back
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, on_hand_before + 3)
+        self.assertFalse(memo.awaiting_return)
 
     def test_credit_without_restock_leaves_stock_alone(self):
         self.p.refresh_from_db()
@@ -456,3 +461,113 @@ class InvoicePdfViewerPhoneTests(TestCase):
         r = self.client.get(f"/invoices/{inv.pk}/pdf/")
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.headers.get("X-Frame-Options"), "SAMEORIGIN")
+
+
+class ReturnsAndRefundsTests(TestCase):
+    """Return at the sold price or less a restocking fee; stock comes back when
+    received; a paid invoice's credit is refunded or moved to another invoice."""
+
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from payments.models import Payment
+        self.user = User.objects.create_superuser("ret", password="x")
+        self.client.force_login(self.user)
+        self.c = Customer.objects.create(business_name="Ross Cards")
+        ResaleCertificate.objects.create(customer=self.c, certificate_number="X", issuing_state="FL",
+                                         expiration_date=timezone.localdate() + timedelta(days=30))
+        self.p = stocked_product("RR-1", qty=50)
+        po = finalized_po(self.c, self.p, qty=10)          # 10 × $10
+        self.inv = Invoice.build_from_pos([po])
+        self.line = self.inv.lines.get()
+        self.pay = Payment.objects.create(customer=self.c, amount=Decimal("100.00"), method="zelle")
+        self.pay.apply_to_invoice(self.inv, Decimal("100.00"))
+        self.assertEqual(self.inv.balance_due, Decimal("0.00"))
+
+    def _issue(self, qty, pct="0", restock=True):
+        data = {f"qty_{self.line.pk}": str(qty), "restocking_pct": pct, "reason": "test"}
+        if restock:
+            data[f"restock_{self.line.pk}"] = "on"
+        r = self.client.post(f"/invoices/{self.inv.pk}/credit/", data)
+        self.assertEqual(r.status_code, 302, r.content[:200])
+        return CreditMemo.objects.filter(invoice=self.inv).order_by("-id").first()
+
+    def test_restocking_fee_and_caps(self):
+        memo = self._issue(4, pct="15")
+        line = memo.lines.get()
+        self.assertEqual((line.sold_unit_price, line.unit_price), (Decimal("10.00"), Decimal("8.50")))
+        self.assertEqual(memo.total, Decimal("34.00"))
+        self.assertEqual(memo.restocking_pct, Decimal("15"))
+        self.line.refresh_from_db()
+        self.assertEqual(self.line.qty_returnable, 6)
+        # can't return more than what is left
+        r = self.client.post(f"/invoices/{self.inv.pk}/credit/", {f"qty_{self.line.pk}": "7", "restocking_pct": "0"}, follow=True)
+        self.assertIn("only 6 of 10", r.content.decode())
+        self.assertEqual(CreditMemo.objects.filter(invoice=self.inv).count(), 1)
+
+    def test_paid_invoice_credit_is_owed_then_refunded(self):
+        from payments.models import Refund
+        memo = self._issue(3)
+        self.assertEqual(memo.total, Decimal("30.00"))
+        self.assertEqual(self.inv.balance_due, Decimal("-30.00"))
+        self.assertEqual(memo.credit_available, Decimal("30.00"))
+        self.assertTrue(memo.awaiting_return)
+        self.p.refresh_from_db(); before = self.p.qty_on_hand
+        # goods come back: 2 of 3 actually arrive
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "receive", f"got_{memo.lines.get().pk}": "2"})
+        self.assertEqual(r.status_code, 302)
+        self.p.refresh_from_db(); memo.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, before + 2)
+        self.assertFalse(memo.awaiting_return)
+        # refund the customer
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "refund", "amount": "30.00", "method": "zelle", "reference": "Z123"})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(Refund.objects.get().amount, Decimal("30.00"))
+        self.assertEqual(self.inv.balance_due, Decimal("0.00"))
+        self.assertEqual(memo.credit_available, Decimal("0.00"))
+        self.assertEqual(self.c.balance, Decimal("0.00"))
+        # can't refund twice
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "refund", "amount": "1.00"}, follow=True)
+        self.assertIn("Only $0.00", r.content.decode())
+        html = self.client.get("/payments/").content.decode()
+        self.assertIn("Refunds to customers", html)
+
+    def test_credit_moved_to_another_invoice(self):
+        from payments.models import Payment
+        po2 = finalized_po(self.c, self.p, qty=5)
+        inv2 = Invoice.build_from_pos([po2])                 # $50 open
+        memo = self._issue(3)                                 # $30 owed back
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "move_credit", "invoice_id": inv2.pk, "amount": "30.00"})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(inv2.balance_due, Decimal("20.00"))
+        self.assertEqual(self.inv.balance_due, Decimal("0.00"))
+        self.assertEqual(memo.credit_available, Decimal("0.00"))
+        credit_pay = Payment.objects.get(method="credit")
+        self.assertEqual(credit_pay.credit_memo, memo)
+        self.assertEqual(self.c.balance, Decimal("20.00"))
+
+    def test_unpaid_invoice_credit_just_reduces_balance(self):
+        self.pay.unapply(self.pay.applications.get())
+        memo = self._issue(2, restock=False)
+        self.assertEqual(self.inv.balance_due, Decimal("80.00"))
+        self.assertEqual(memo.credit_available, Decimal("0.00"))
+        self.assertIsNotNone(memo.received_at)                # nothing coming back → nothing to wait for
+        self.assertFalse(memo.awaiting_return)
+
+    def test_ledger_books_refund_both_bases(self):
+        from accounting.ledger import ACCRUAL, CASH, Journal
+        from accounting.models import Account
+        from banking.models import BankAccount
+        from payments.models import Refund
+        Account.ensure_system_accounts()
+        acct = BankAccount.objects.create(name="Chase", account_type="checking", opening_balance=Decimal("1000"),
+                                          opening_date=timezone.localdate() - timedelta(days=30))
+        memo = self._issue(3)
+        Refund.objects.create(customer=self.c, credit_memo=memo, amount=Decimal("30.00"), paid_from=acct, method="zelle")
+        today = timezone.localdate()
+        for basis in (ACCRUAL, CASH):
+            j = Journal(basis, [today])
+            tb = j.trial_balance(today)
+            self.assertTrue(tb["balanced"], basis)
+            pl = j.income_statement(today - timedelta(days=30), today)
+            inc = {r["account"].system_key: r["amount"] for r in pl["income"]}
+            self.assertEqual(inc.get("sales_returns"), Decimal("-30.00"), basis)

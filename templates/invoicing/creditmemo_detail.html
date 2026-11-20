@@ -1,0 +1,114 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}{{ memo.number }}{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-3 mb-5">
+  <h1 class="page-title">Credit memo {{ memo.number }}
+    <span class="badge {% if memo.status == 'applied' %}bg-emerald-100 text-emerald-700{% else %}bg-slate-100 text-slate-500{% endif %}">{{ memo.get_status_display }}</span>
+    {% if memo.awaiting_return %}<span class="badge bg-amber-100 text-amber-700">{{ memo.qty_awaiting_return }} unit{{ memo.qty_awaiting_return|pluralize }} awaiting return</span>
+    {% elif memo.received_at and memo.qty_expected_back %}<span class="badge bg-sky-100 text-sky-700">goods received {{ memo.received_at|date:"M j" }}</span>{% endif %}
+    {% if memo.credit_available %}<span class="badge bg-red-100 text-red-700">${{ memo.credit_available|floatformat:2|intcomma }} owed to customer</span>{% endif %}</h1>
+  <a href="{% url 'invoice_detail' memo.invoice.pk %}" class="btn-secondary">← {{ memo.invoice.number }}</a>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-4">
+  <div class="lg:col-span-2 space-y-4">
+    <div class="card-pad">
+      <p class="text-sm text-slate-600 mb-3"><b>{{ memo.customer.business_name }}</b> · {{ memo.date|date:"M j, Y" }} · against <a href="{% url 'invoice_detail' memo.invoice.pk %}" class="text-indigo-600 hover:underline">{{ memo.invoice.number }}</a>{% if memo.reason %} · {{ memo.reason }}{% endif %}{% if memo.restocking_pct %} · <span class="badge bg-slate-100 text-slate-600">{{ memo.restocking_pct|floatformat:"-2" }}% restocking fee kept</span>{% endif %}</p>
+      <table class="tbl">
+        <thead><tr><th>Item</th><th class="num">Qty</th><th class="num">Sold at</th><th class="num">Credit / unit</th><th class="num">Credit</th><th>Back in stock</th></tr></thead>
+        <tbody>
+        {% for l in lines %}
+          <tr>
+            <td class="whitespace-normal">{{ l.description }}{% if l.product %} <span class="text-xs text-slate-400">({{ l.product.sku }})</span>{% endif %}</td>
+            <td class="num">{{ l.qty }}</td>
+            <td class="num">{% if l.sold_unit_price %}${{ l.sold_unit_price|floatformat:2 }}{% else %}—{% endif %}</td>
+            <td class="num">${{ l.unit_price|floatformat:2 }}</td>
+            <td class="num font-semibold">${{ l.line_total|floatformat:2|intcomma }}</td>
+            <td class="text-sm">{% if not l.restock %}<span class="text-slate-400">no (not coming back)</span>
+                {% elif memo.received_at %}<span class="text-emerald-700">{{ l.received_qty }} of {{ l.qty }} received</span>
+                {% else %}<span class="text-amber-700">waiting</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr class="font-bold"><td colspan="4" class="text-right">Total credit</td><td class="num">${{ memo.total|floatformat:2|intcomma }}</td><td></td></tr></tfoot>
+      </table>
+    </div>
+
+    {% if memo.awaiting_return %}
+    <form method="post" class="card-pad border-l-4 border-amber-400">
+      {% csrf_token %}<input type="hidden" name="action" value="receive">
+      <h2 class="font-semibold mb-1">Returned goods arrived?</h2>
+      <p class="text-xs text-slate-500 mb-3">Enter what actually came back. Those units go into stock at the cost they left at. Anything short stays credited but is not restocked.</p>
+      <table class="tbl mb-3">
+        <thead><tr><th>Item</th><th class="num">Expected</th><th class="num">Received</th></tr></thead>
+        <tbody>
+        {% for l in lines %}{% if l.restock %}
+          <tr><td class="whitespace-normal">{{ l.description }}</td><td class="num">{{ l.qty }}</td>
+            <td class="num"><input type="number" name="got_{{ l.pk }}" value="{{ l.qty }}" min="0" max="{{ l.qty }}" class="w-24 text-right"></td></tr>
+        {% endif %}{% endfor %}
+        </tbody>
+      </table>
+      <button class="btn-success" onclick="return confirm('Put the received units back into stock?')">✓ Mark returned goods received</button>
+    </form>
+    {% endif %}
+  </div>
+
+  <div class="space-y-4">
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">Where the credit went</h2>
+      <dl class="space-y-1">
+        <div class="flex justify-between"><dt class="text-slate-500">Credit issued</dt><dd>${{ memo.total|floatformat:2|intcomma }}</dd></div>
+        {% if memo.refunded_amount %}<div class="flex justify-between"><dt class="text-slate-500">Refunded</dt><dd>${{ memo.refunded_amount|floatformat:2|intcomma }}</dd></div>{% endif %}
+        {% if memo.transferred_amount %}<div class="flex justify-between"><dt class="text-slate-500">Moved to other invoices</dt><dd>${{ memo.transferred_amount|floatformat:2|intcomma }}</dd></div>{% endif %}
+        <div class="flex justify-between font-semibold {% if memo.credit_available %}text-red-700{% endif %}"><dt>Still owed to customer</dt><dd>${{ memo.credit_available|floatformat:2|intcomma }}</dd></div>
+        <div class="flex justify-between"><dt class="text-slate-500">{{ memo.invoice.number }} balance now</dt><dd>${{ memo.invoice.balance_due|floatformat:2|intcomma }}</dd></div>
+      </dl>
+      {% if not memo.credit_available and not memo.refunded_amount and not memo.transferred_amount %}
+      <p class="text-xs text-slate-500 mt-2">The credit came off what the customer still owed on the invoice — nothing to pay back.</p>
+      {% endif %}
+    </div>
+
+    {% if memo.credit_available %}
+    <form method="post" class="card-pad space-y-2 text-sm">
+      {% csrf_token %}<input type="hidden" name="action" value="refund">
+      <h2 class="font-semibold">Refund the customer</h2>
+      <p class="text-xs text-slate-500">They already paid this invoice, so pay them back. Record it here; when the withdrawal shows up in Banking, match it to this refund.</p>
+      <div class="grid grid-cols-2 gap-2">
+        <div><label class="text-xs text-slate-500 block mb-1">Amount $</label><input type="number" step="0.01" min="0.01" max="{{ memo.credit_available }}" name="amount" value="{{ memo.credit_available }}" class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">Date</label><input type="date" name="date" value="{{ today|date:'Y-m-d' }}" class="w-full"></div>
+        <div><label class="text-xs text-slate-500 block mb-1">How</label>
+          <select name="method" class="w-full"><option value="zelle">Zelle</option><option value="ach">ACH</option><option value="check">Check</option><option value="card">Card refund</option><option value="cash">Cash</option><option value="wire">Wire</option><option value="other">Other</option></select></div>
+        <div><label class="text-xs text-slate-500 block mb-1">From account</label>
+          <select name="paid_from" class="w-full"><option value="">— cash / personal —</option>{% for a in bank_accounts %}<option value="{{ a.pk }}" {% if a.is_default %}selected{% endif %}>{{ a.name }}</option>{% endfor %}</select></div>
+        <div class="col-span-2"><label class="text-xs text-slate-500 block mb-1">Reference / note</label><input type="text" name="reference" class="w-full" placeholder="check #, Zelle confirmation…"></div>
+      </div>
+      <button class="btn-primary w-full justify-center">Record refund</button>
+    </form>
+    {% if open_invoices %}
+    <form method="post" class="card-pad space-y-2 text-sm">
+      {% csrf_token %}<input type="hidden" name="action" value="move_credit">
+      <h2 class="font-semibold">…or use it on another invoice</h2>
+      <p class="text-xs text-slate-500">Store credit: no money moves, the other invoice's balance goes down.</p>
+      <select name="invoice_id" class="w-full">{% for i in open_invoices %}<option value="{{ i.pk }}">{{ i.number }} · due {{ i.due_date|date:"M j" }} · ${{ i.balance_due|floatformat:2|intcomma }} open</option>{% endfor %}</select>
+      <div class="flex gap-2 items-end">
+        <div class="flex-1"><label class="text-xs text-slate-500 block mb-1">Amount $</label><input type="number" step="0.01" min="0.01" max="{{ memo.credit_available }}" name="amount" value="{{ memo.credit_available }}" class="w-full"></div>
+        <button class="btn-secondary">Apply credit</button>
+      </div>
+    </form>
+    {% endif %}
+    {% endif %}
+
+    {% if refunds or credit_payments %}
+    <div class="card-pad text-sm">
+      <h2 class="font-semibold mb-2">History</h2>
+      <ul class="space-y-1">
+        {% for r in refunds %}<li class="flex justify-between gap-2"><span>{{ r.date|date:"M j, Y" }} · Refund {{ r.get_method_display }}{% if r.paid_from %} from {{ r.paid_from.name }}{% endif %}{% if r.reference %} · {{ r.reference }}{% endif %}</span>
+          <span class="whitespace-nowrap">−${{ r.amount|floatformat:2|intcomma }}
+            <form method="post" class="inline" onsubmit="return confirm('Remove this refund record?')">{% csrf_token %}<input type="hidden" name="action" value="delete_refund"><input type="hidden" name="refund_id" value="{{ r.pk }}"><button class="text-xs text-slate-400 hover:text-red-600 ml-1">×</button></form></span></li>{% endfor %}
+        {% for p in credit_payments %}{% for a in p.applications.all %}<li class="flex justify-between gap-2"><span>{{ p.date|date:"M j, Y" }} · Credit applied to <a href="{% url 'invoice_detail' a.invoice.pk %}" class="text-indigo-600 hover:underline">{{ a.invoice.number }}</a></span><span>−${{ a.amount|floatformat:2|intcomma }}</span></li>{% endfor %}{% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

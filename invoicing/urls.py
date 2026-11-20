@@ -7,6 +7,7 @@ urlpatterns = [
     path("new/", views.invoice_create, name="invoice_create"),
     path("new/manual/", views.invoice_create_manual, name="invoice_create_manual"),
     path("credits/", views.creditmemo_list, name="creditmemo_list"),
+    path("credits/<int:pk>/", views.creditmemo_detail, name="creditmemo_detail"),
     path("<int:pk>/", views.invoice_detail, name="invoice_detail"),
     path("<int:pk>/pdf/", views.invoice_pdf, name="invoice_pdf"),
     path("<int:pk>/pdf/view/", views.invoice_pdf_view, name="invoice_pdf_view"),

@@ -78,10 +78,28 @@ class Invoice(SoftDeleteModel):
         return agg["t"] or Decimal("0.00")
 
     @property
+    def amount_refunded(self):
+        """Credit on this invoice that was paid back out (refund) or moved to
+        another invoice (store credit) — it no longer reduces this balance."""
+        from payments.models import Payment, Refund
+        memos = self.credit_memos.filter(is_deleted=False, status="applied")
+        refunds = Refund.objects.filter(is_deleted=False, credit_memo__in=memos).aggregate(
+            t=models.Sum("amount"))["t"] or Decimal("0.00")
+        moved = Payment.objects.filter(is_deleted=False, credit_memo__in=memos).aggregate(
+            t=models.Sum("amount"))["t"] or Decimal("0.00")
+        return refunds + moved
+
+    @property
     def balance_due(self):
         if self.status == self.VOID:
             return Decimal("0.00")
-        return self.total - self.amount_paid - self.amount_credited
+        return self.total - self.amount_paid - self.amount_credited + self.amount_refunded
+
+    @property
+    def customer_credit(self):
+        """Credit sitting on this invoice (paid, then goods returned) that could
+        be refunded or used on another invoice."""
+        return max(Decimal("0.00"), -self.balance_due)
 
     @property
     def is_overdue(self):
@@ -318,6 +336,23 @@ class InvoiceLine(SoftDeleteModel):
         return f"{self.invoice.number}: {self.description} x{self.qty}"
 
     @property
+    def effective_unit_price(self):
+        """Per-unit price the customer actually paid (after the line discount)."""
+        price = self.unit_price
+        if self.discount_pct:
+            price = price * (Decimal("100") - self.discount_pct) / Decimal("100")
+        return price.quantize(CENTS, ROUND_HALF_UP)
+
+    @property
+    def qty_credited(self):
+        return sum(cl.qty for cl in self.credit_lines.filter(is_deleted=False, credit_memo__is_deleted=False)
+                   .exclude(credit_memo__status="void"))
+
+    @property
+    def qty_returnable(self):
+        return max(0, self.qty - self.qty_credited)
+
+    @property
     def line_total(self):
         gross = Decimal(self.qty) * self.unit_price
         if self.discount_pct:
@@ -342,7 +377,12 @@ class CreditMemo(SoftDeleteModel):
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, default=DRAFT)
     date = models.DateField(default=timezone.localdate)
     reason = models.CharField(max_length=250, blank=True)
+    restocking_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=0,
+        help_text="Restocking fee kept back: credit = sold price × (100 − this)%")
     total = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    received_at = models.DateTimeField(
+        null=True, blank=True, help_text="When the returned goods came back and were restocked")
     created_by = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True,
                                    on_delete=models.SET_NULL)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -353,6 +393,73 @@ class CreditMemo(SoftDeleteModel):
     def __str__(self):
         return f"{self.number} against {self.invoice.number} (${self.total})"
 
+    # --- returned goods -------------------------------------------------------
+    @property
+    def qty_expected_back(self):
+        return sum(l.qty for l in self.lines.filter(is_deleted=False, restock=True))
+
+    @property
+    def qty_received_back(self):
+        return sum(l.received_qty for l in self.lines.filter(is_deleted=False, restock=True))
+
+    @property
+    def qty_awaiting_return(self):
+        return self.qty_expected_back - self.qty_received_back
+
+    @property
+    def awaiting_return(self):
+        return self.status == self.APPLIED and self.received_at is None and self.qty_expected_back > 0
+
+    # --- money --------------------------------------------------------------------
+    @property
+    def refunded_amount(self):
+        from payments.models import Refund
+        return Refund.objects.filter(is_deleted=False, credit_memo=self).aggregate(
+            t=models.Sum("amount"))["t"] or Decimal("0.00")
+
+    @property
+    def transferred_amount(self):
+        from payments.models import Payment
+        return Payment.objects.filter(is_deleted=False, credit_memo=self).aggregate(
+            t=models.Sum("amount"))["t"] or Decimal("0.00")
+
+    @property
+    def credit_available(self):
+        """What is still owed back to the customer from this memo: the part of
+        the credit the invoice could not absorb (because it was already paid),
+        less refunds and credit moved to other invoices."""
+        if self.status != self.APPLIED:
+            return Decimal("0.00")
+        return max(Decimal("0.00"), self.invoice.customer_credit)
+
+    def receive_returns(self, received=None, user=None):
+        """The customer's boxes came back: restock them at the cost they went
+        out at. ``received`` = {line_id: qty} (default: everything expected)."""
+        if self.status != self.APPLIED:
+            raise ValidationError("Apply the credit memo first.")
+        if self.received_at is not None:
+            raise ValidationError("Returned goods were already received on this memo.")
+        received = received or {}
+        with transaction.atomic():
+            for line in self.lines.filter(is_deleted=False, restock=True).select_related("product"):
+                try:
+                    q = int(received.get(line.pk, received.get(str(line.pk), line.qty)))
+                except (TypeError, ValueError):
+                    raise ValidationError(f"Bad quantity for {line.description}.")
+                if q < 0 or q > line.qty:
+                    raise ValidationError(f"{line.description}: received must be between 0 and {line.qty}.")
+                if q and line.product:
+                    line.product.apply_movement(
+                        movement_type="credit_restock", qty_delta=q, user=user,
+                        unit_cost=line.cost_snapshot or line.product.avg_cost,
+                        reference=self.number, source=self,
+                        note=f"Return on {self.invoice.number}")
+                line.received_qty = q
+                line.save(update_fields=["received_qty"])
+            self.received_at = timezone.now()
+            self.save(update_fields=["received_at"])
+            log_activity(user, "credit_returns_received", self)
+
     def save(self, *args, **kwargs):
         if not self.number:
             self.number = NumberSequence.next_for("credit")
@@ -360,35 +467,42 @@ class CreditMemo(SoftDeleteModel):
             self.customer = self.invoice.customer
         super().save(*args, **kwargs)
 
-    def apply(self, user=None):
-        """Apply the memo: optionally restock lines, reduce customer balance."""
+    def apply(self, user=None, restock_now=False):
+        """Apply the memo: the credit comes off the invoice balance at once.
+        Goods are restocked when they actually come back (receive_returns),
+        unless ``restock_now`` (nothing is physically returning)."""
         if self.status != self.DRAFT:
             raise ValidationError("Credit memo is not draft.")
         with transaction.atomic():
             total = Decimal("0.00")
             for line in self.lines.filter(is_deleted=False).select_related("product"):
                 total += line.line_total
-                if line.restock and line.product:
-                    line.product.apply_movement(
-                        movement_type="credit_restock", qty_delta=line.qty, user=user,
-                        unit_cost=line.cost_snapshot or line.product.avg_cost,
-                        reference=self.number, source=self,
-                        note=f"Return on {self.invoice.number}")
             self.total = total
             self.status = self.APPLIED
             self.save(update_fields=["total", "status"])
             self.invoice.refresh_status()
             log_activity(user, "credit_applied", self)
+            if restock_now:
+                self.receive_returns(user=user)
+            elif self.qty_expected_back == 0:
+                self.received_at = timezone.now()       # nothing to wait for
+                self.save(update_fields=["received_at"])
 
 
 class CreditMemoLine(SoftDeleteModel):
     credit_memo = models.ForeignKey(CreditMemo, on_delete=models.CASCADE, related_name="lines")
+    invoice_line = models.ForeignKey(InvoiceLine, null=True, blank=True, on_delete=models.SET_NULL,
+                                     related_name="credit_lines")
     product = models.ForeignKey("inventory.Product", null=True, blank=True,
                                 on_delete=models.PROTECT)
     description = models.CharField(max_length=250)
     qty = models.PositiveIntegerField(default=1)
-    unit_price = models.DecimalField(max_digits=12, decimal_places=2)
+    sold_unit_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True,
+                                          help_text="What the customer actually paid per unit")
+    unit_price = models.DecimalField(max_digits=12, decimal_places=2,
+                                     help_text="Credit per unit (after any restocking fee)")
     restock = models.BooleanField(default=True, help_text="Return units to inventory")
+    received_qty = models.PositiveIntegerField(default=0, help_text="Units that actually came back")
     cost_snapshot = models.DecimalField(max_digits=12, decimal_places=4, null=True, blank=True)
 
     def __str__(self):

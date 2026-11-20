@@ -45,7 +45,7 @@ def _unlinked_payments(txn):
                   .exclude(pk=txn.pk)
                   .values_list("payments__id", flat=True))
     qs = (Payment.objects.filter(is_deleted=False, date__gte=lo, date__lte=hi, amount__gt=0,
-                                 amount__lte=amt)
+                                 amount__lte=amt).exclude(method="credit")
           .exclude(pk__in=linked_ids)
           .select_related("customer").order_by("date", "id"))
     return list(qs[:MAX_CANDIDATES])
