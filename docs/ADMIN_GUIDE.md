@@ -451,6 +451,14 @@ The credit memo page then drives the rest:
 * An unpaid invoice simply ends up with a smaller balance — nothing to
   pay back.
 
+**Made a mistake on a memo?** The credit memo page has a *Made a mistake*
+panel: tick or untick which items are coming back (money unchanged; items
+switched to coming back wait to be marked received), or **Void credit
+memo** to reverse it completely — the invoice balance goes back up and
+any units it restocked leave stock at the cost they came in at — then
+issue a fresh one from the invoice. A memo with a refund or moved credit
+has to have those removed first (History on the memo page).
+
 Books: accrual posts the credit memo as a sales return against receivables
 on its date and the refund clears the customer's credit from the bank
 account; cash basis posts the refund itself as the sales return on the day

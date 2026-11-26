@@ -372,6 +372,20 @@ def creditmemo_detail(request, pk):
                     pay.apply_to_invoice(target, amount, user=request.user)
                     memo.invoice.refresh_status()
                 messages.success(request, f"${amount:,.2f} of credit applied to {target.number}.")
+            elif action == "set_restock":
+                flags = {}
+                for l in lines:
+                    flags[l.pk] = bool(request.POST.get(f"restock_{l.pk}"))
+                if memo.set_restock(flags, user=request.user):
+                    messages.success(request, "Updated which items are coming back."
+                                     + (" Mark them received when they arrive." if memo.awaiting_return else ""))
+                else:
+                    messages.info(request, "Nothing changed.")
+            elif action == "void":
+                memo.void(user=request.user, reason=request.POST.get("reason") or "")
+                messages.success(request, f"{memo.number} voided — the credit is reversed on {memo.invoice.number}"
+                                          " and any restocked units are back out. Issue a new credit memo if needed.")
+                return redirect("invoice_detail", memo.invoice_id)
             elif action == "delete_refund":
                 ref = get_object_or_404(Refund, pk=request.POST.get("refund_id"), credit_memo=memo)
                 ref.delete(user=request.user)

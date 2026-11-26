@@ -366,6 +366,11 @@ class InvoiceLine(SoftDeleteModel):
         return self.line_total - (Decimal(self.qty) * self.cost_snapshot).quantize(CENTS, ROUND_HALF_UP)
 
 
+def Product_all(product):
+    from inventory.models import Product
+    return Product.all_objects.get(pk=product.pk).qty_on_hand
+
+
 class CreditMemo(SoftDeleteModel):
     DRAFT, APPLIED, VOID = "draft", "applied", "void"
     STATUS_CHOICES = [(DRAFT, "Draft"), (APPLIED, "Applied"), (VOID, "Void")]
@@ -431,6 +436,69 @@ class CreditMemo(SoftDeleteModel):
         if self.status != self.APPLIED:
             return Decimal("0.00")
         return max(Decimal("0.00"), self.invoice.customer_credit)
+
+    def set_restock(self, flags, user=None):
+        """Change which lines are physically coming back ({line_id: bool}) on an
+        applied memo. Money does not change. A line whose units were already
+        restocked can't be switched off (void the memo instead)."""
+        if self.status != self.APPLIED:
+            raise ValidationError("Only an applied credit memo can be changed.")
+        changed = False
+        with transaction.atomic():
+            for line in self.lines.filter(is_deleted=False):
+                want = bool(flags.get(line.pk, flags.get(str(line.pk), line.restock)))
+                if want == line.restock:
+                    continue
+                if not want and line.received_qty:
+                    raise ValidationError(f"{line.description}: {line.received_qty} already went back into stock — "
+                                          "void the memo and issue a new one instead.")
+                line.restock = want
+                line.save(update_fields=["restock"])
+                changed = True
+            if changed:
+                # anything now expected back that hasn't arrived → wait for it again
+                pending = self.lines.filter(is_deleted=False, restock=True, received_qty=0).exists()
+                self.received_at = None if pending else (self.received_at or timezone.now())
+                self.save(update_fields=["received_at"])
+                log_activity(user, "credit_restock_changed", self)
+        return changed
+
+    def void(self, user=None, reason=""):
+        """Take the memo back entirely: the credit comes off, units it had
+        restocked leave stock again at the cost they came in at. Refunds or
+        credit moved to other invoices must be removed first."""
+        if self.status != self.APPLIED:
+            raise ValidationError("Only an applied credit memo can be voided.")
+        if self.refunded_amount or self.transferred_amount:
+            raise ValidationError("Remove the refund / moved credit on this memo first (see History), then void it.")
+        with transaction.atomic():
+            for line in self.lines.filter(is_deleted=False, restock=True, received_qty__gt=0).select_related("product"):
+                product = line.product
+                if not product:
+                    continue
+                on_hand = Product_all(product)
+                if on_hand < line.received_qty:
+                    raise ValidationError(f"Only {on_hand} of {product.sku} on hand — the returned units were sold, "
+                                          "so this memo can't be voided.")
+                unit = line.cost_snapshot or product.avg_cost
+                remaining = on_hand - line.received_qty
+                if remaining > 0:
+                    new_avg = ((Decimal(on_hand) * product.avg_cost - Decimal(line.received_qty) * unit)
+                               / Decimal(remaining)).quantize(Decimal("0.0001"), ROUND_HALF_UP)
+                    new_avg = max(new_avg, Decimal("0"))
+                else:
+                    new_avg = product.avg_cost
+                product.apply_movement(movement_type="credit_restock", qty_delta=-line.received_qty, user=user,
+                                       unit_cost=unit, new_avg_cost=new_avg, reference=self.number, source=self,
+                                       note=f"Credit memo {self.number} voided")
+                line.received_qty = 0
+                line.save(update_fields=["received_qty"])
+            self.status = self.VOID
+            if reason:
+                self.reason = (self.reason + " · " if self.reason else "") + f"VOID: {reason}"
+            self.save(update_fields=["status", "reason"])
+            self.invoice.refresh_status()
+            log_activity(user, "credit_voided", self, note=reason)
 
     def receive_returns(self, received=None, user=None):
         """The customer's boxes came back: restock them at the cost they went

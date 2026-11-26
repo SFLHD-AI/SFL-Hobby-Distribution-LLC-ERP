@@ -571,3 +571,69 @@ class ReturnsAndRefundsTests(TestCase):
             pl = j.income_statement(today - timedelta(days=30), today)
             inc = {r["account"].system_key: r["amount"] for r in pl["income"]}
             self.assertEqual(inc.get("sales_returns"), Decimal("-30.00"), basis)
+
+
+class CreditMemoFixTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.user = User.objects.create_superuser("fix", password="x")
+        self.client.force_login(self.user)
+        self.c = Customer.objects.create(business_name="Oops Cards")
+        ResaleCertificate.objects.create(customer=self.c, certificate_number="X", issuing_state="FL",
+                                         expiration_date=timezone.localdate() + timedelta(days=30))
+        self.p = stocked_product("FX-1", qty=50)
+        po = finalized_po(self.c, self.p, qty=10)
+        self.inv = Invoice.build_from_pos([po])
+        self.line = self.inv.lines.get()
+        self.p.refresh_from_db(); self.on_hand = self.p.qty_on_hand           # 40
+
+    def _memo(self, qty=3, restock=False):
+        data = {f"qty_{self.line.pk}": str(qty), "restocking_pct": "0"}
+        if restock:
+            data[f"restock_{self.line.pk}"] = "on"
+        self.client.post(f"/invoices/{self.inv.pk}/credit/", data)
+        return CreditMemo.objects.get(invoice=self.inv)
+
+    def test_switch_items_to_coming_back_then_receive(self):
+        memo = self._memo(restock=False)
+        self.assertIsNotNone(memo.received_at); self.assertFalse(memo.awaiting_return)
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "set_restock", f"restock_{memo.lines.get().pk}": "on"})
+        self.assertEqual(r.status_code, 302)
+        memo.refresh_from_db()
+        self.assertTrue(memo.awaiting_return)
+        self.assertEqual(memo.total, Decimal("30.00"))                      # money untouched
+        self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "receive", f"got_{memo.lines.get().pk}": "3"})
+        self.p.refresh_from_db()
+        self.assertEqual(self.p.qty_on_hand, self.on_hand + 3)
+        # can't switch off once restocked
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "set_restock"}, follow=True)
+        self.assertIn("already went back into stock", r.content.decode())
+
+    def test_void_reverses_credit_and_stock(self):
+        memo = self._memo(restock=True)
+        memo.receive_returns(user=self.user)
+        self.p.refresh_from_db(); self.assertEqual(self.p.qty_on_hand, self.on_hand + 3)
+        self.assertEqual(self.inv.balance_due, Decimal("70.00"))
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "void", "reason": "wrong qty"})
+        self.assertEqual(r.status_code, 302)
+        memo.refresh_from_db(); self.p.refresh_from_db()
+        self.assertEqual(memo.status, CreditMemo.VOID)
+        self.assertEqual(self.p.qty_on_hand, self.on_hand)
+        self.assertEqual(self.inv.balance_due, Decimal("100.00"))
+        self.line.refresh_from_db(); self.assertEqual(self.line.qty_returnable, 10)   # can be redone
+        memo2 = self._memo_again(4)
+        self.assertEqual(self.inv.balance_due, Decimal("60.00"))
+
+    def _memo_again(self, qty):
+        self.client.post(f"/invoices/{self.inv.pk}/credit/", {f"qty_{self.line.pk}": str(qty), "restocking_pct": "0", f"restock_{self.line.pk}": "on"})
+        return CreditMemo.objects.filter(invoice=self.inv, status="applied").get()
+
+    def test_void_blocked_by_refund(self):
+        from payments.models import Payment
+        pay = Payment.objects.create(customer=self.c, amount=Decimal("100.00"), method="zelle")
+        pay.apply_to_invoice(self.inv, Decimal("100.00"))
+        memo = self._memo(restock=False)
+        self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "refund", "amount": "30.00", "method": "zelle"})
+        r = self.client.post(f"/invoices/credits/{memo.pk}/", {"action": "void"}, follow=True)
+        self.assertIn("Remove the refund", r.content.decode())
+        memo.refresh_from_db(); self.assertEqual(memo.status, CreditMemo.APPLIED)

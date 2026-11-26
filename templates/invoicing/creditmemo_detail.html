@@ -34,6 +34,29 @@
       </table>
     </div>
 
+    {% if memo.status == 'applied' %}
+    <details class="card-pad">
+      <summary class="cursor-pointer font-semibold text-sm">Made a mistake on this memo?</summary>
+      <div class="mt-3 grid md:grid-cols-2 gap-4 text-sm">
+        <form method="post" class="space-y-2">{% csrf_token %}<input type="hidden" name="action" value="set_restock">
+          <p class="font-medium">Change which items are coming back</p>
+          <p class="text-xs text-slate-500">Money doesn't change. Items switched to “coming back” wait for you to mark them received.</p>
+          {% for l in lines %}
+          <label class="flex items-center gap-2"><input type="checkbox" name="restock_{{ l.pk }}" {% if l.restock %}checked{% endif %} {% if l.received_qty %}disabled title="already restocked — void the memo to change this"{% endif %} class="rounded">
+            <span class="whitespace-normal">{{ l.description }} × {{ l.qty }}{% if l.received_qty %} <span class="text-xs text-emerald-700">({{ l.received_qty }} already back in stock)</span>{% endif %}</span></label>
+          {% endfor %}
+          <button class="btn-secondary">Save</button>
+        </form>
+        <form method="post" class="space-y-2" onsubmit="return confirm('Void {{ memo.number }}? The credit is reversed on the invoice and any units it put back into stock come out again. You can then issue a fresh credit memo.')">{% csrf_token %}<input type="hidden" name="action" value="void">
+          <p class="font-medium">Void this credit memo</p>
+          <p class="text-xs text-slate-500">Reverses it completely — the invoice balance goes back up and restocked units leave stock at the cost they came in at. Then issue a new one from the invoice. Refunds or moved credit must be removed first.</p>
+          <input type="text" name="reason" placeholder="why (optional)" class="w-full">
+          <button class="btn-secondary text-red-700" {% if memo.refunded_amount or memo.transferred_amount %}disabled title="remove the refund / moved credit first"{% endif %}>Void credit memo</button>
+        </form>
+      </div>
+    </details>
+    {% endif %}
+
     {% if memo.awaiting_return %}
     <form method="post" class="card-pad border-l-4 border-amber-400">
       {% csrf_token %}<input type="hidden" name="action" value="receive">
