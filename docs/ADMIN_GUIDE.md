@@ -299,6 +299,16 @@ shows as over- or under-paid. The Tradepost fill stays open until the
 short order is received or cancelled. Cancelled orders sit under the
 **Cancelled** filter on Receiving and never count as incoming.
 
+### A line was logged against the wrong product
+
+On the supplier order, under the product name on the line, click **wrong
+product? change it**, pick the right product and **Move line**. On a
+received order the units and their landed cost move out of the wrong
+product and into the right one (both weighted averages recomputed); on an
+open order the line simply changes. The Tradepost fill behind the line
+learns the right product so it won't happen again. Refused if some of the
+units were already sold under the wrong product.
+
 ### Undoing things on a supplier order
 
 The **⋯ More** menu at the top of a supplier order holds the undo actions:

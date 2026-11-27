@@ -235,7 +235,15 @@
       {% for l in lines %}
         <tr>
           <td class="font-medium">{{ l.product.sku }}</td>
-          <td class="min-w-[14rem] whitespace-normal">{{ l.product.name }}</td>
+          <td class="min-w-[14rem] whitespace-normal">{{ l.product.name }}
+            <details class="mt-1"><summary class="text-xs text-indigo-600 cursor-pointer">wrong product? change it</summary>
+              <form method="post" class="flex flex-wrap gap-2 items-center mt-1" onsubmit="return confirm('Move this line to the chosen product?{% if receipt.posted %} The {{ l.qty }} units and their landed cost move from {{ l.product.sku }} to it, and both average costs are recomputed.{% endif %}')">
+                {% csrf_token %}<input type="hidden" name="action" value="swap_line"><input type="hidden" name="line_id" value="{{ l.pk }}">
+                <select name="product" required class="w-64 text-xs" data-combobox data-combobox-placeholder="Search the right product…">
+                  <option value="">— pick product —</option>
+                  {% for p in products %}{% if p.pk != l.product_id %}<option value="{{ p.pk }}" data-sku="{{ p.sku }}" data-upc="{{ p.all_codes|join:" " }}">{{ p.sku }} — {{ p.name }}</option>{% endif %}{% endfor %}
+                </select>
+                <button class="btn-secondary !px-2 !py-1 text-xs">Move line</button></form></details></td>
           <td class="num">{{ l.qty }}</td>
           <td class="num">${{ l.unit_cost|floatformat:4 }}</td>
           <td class="num">{% if l.landed_unit_cost %}${{ l.landed_unit_cost|floatformat:4 }}{% else %}<span class="text-slate-400">on receive</span>{% endif %}</td>

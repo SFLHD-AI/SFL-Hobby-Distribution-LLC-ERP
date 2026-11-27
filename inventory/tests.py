@@ -1722,3 +1722,50 @@ class RestoreProductTests(TestCase):
         self.assertFalse(p.is_deleted)
         self.assertEqual((p.qty_on_hand, p.avg_cost), (4, Decimal("30.0000")))
         self.assertEqual(p.movements.count(), 1)
+
+
+class SwapLineProductTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Receipt, ReceiptLine, Supplier, TradepostFill
+        self.user = User.objects.create_superuser("swap", password="x"); self.client.force_login(self.user)
+        self.hanger = make_product("HANGER", name="2026 Topps Chrome Football Hanger Box")
+        self.blaster = make_product("BLASTER", name="2025/26 Topps Chrome Basketball Blaster Box")
+        StockAdjustment.create_and_apply(product=self.hanger, qty_delta=2, reason="opening", unit_cost=Decimal("20"))
+        StockAdjustment.create_and_apply(product=self.blaster, qty_delta=1, reason="opening", unit_cost=Decimal("50"))
+        self.r = Receipt.objects.create(supplier=Supplier.objects.create(name="Tradepost"), freight_cost=Decimal("6"))
+        self.line = ReceiptLine.objects.create(receipt=self.r, product=self.hanger, qty=6, unit_cost=Decimal("40"),
+                                               tradepost_execution_id="e9")
+        self.fill = TradepostFill.objects.create(execution_id="e9", order_number="TPST-9", config_id="cfg-bl", quantity=6,
+                                                 receipt=self.r, matched_product=self.hanger)
+        self.hanger.tradepost_config_id = "cfg-bl"; self.hanger.save()
+        self.r.post(user=self.user)
+        self.hanger.refresh_from_db()
+        self.assertEqual((self.hanger.qty_on_hand, self.hanger.avg_cost), (8, Decimal("35.7500")))   # (2×20 + 6×41)/8
+
+    def test_received_line_moves_units_and_cost(self):
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "swap_line", "line_id": self.line.pk, "product": self.blaster.pk})
+        self.assertEqual(r.status_code, 302)
+        self.hanger.refresh_from_db(); self.blaster.refresh_from_db(); self.line.refresh_from_db(); self.fill.refresh_from_db()
+        self.assertEqual((self.hanger.qty_on_hand, self.hanger.avg_cost), (2, Decimal("20.0000")))      # back to before
+        self.assertEqual((self.blaster.qty_on_hand, self.blaster.avg_cost), (7, Decimal("42.2857")))   # (1×50 + 6×41)/7
+        self.assertEqual(self.line.product, self.blaster)
+        self.assertEqual(self.line.tradepost_execution_id, "e9")
+        self.assertEqual(self.fill.matched_product, self.blaster)                 # Tradepost learns the right one
+        self.assertEqual(self.hanger.tradepost_config_id, "")
+        self.assertEqual(self.blaster.tradepost_config_id, "cfg-bl")
+        self.assertTrue(self.r.posted)
+
+    def test_refused_when_units_already_sold(self):
+        self.hanger.apply_movement(movement_type="sale", qty_delta=-5)
+        r = self.client.post(f"/inventory/receiving/{self.r.pk}/", {"action": "swap_line", "line_id": self.line.pk, "product": self.blaster.pk}, follow=True)
+        self.assertIn("already sold under the wrong product", r.content.decode())
+        self.line.refresh_from_db(); self.assertEqual(self.line.product, self.hanger)
+
+    def test_open_order_just_changes_the_product(self):
+        from inventory.models import Receipt, ReceiptLine
+        r2 = Receipt.objects.create(reference="open")
+        l2 = ReceiptLine.objects.create(receipt=r2, product=self.hanger, qty=3, unit_cost=Decimal("40"))
+        self.client.post(f"/inventory/receiving/{r2.pk}/", {"action": "swap_line", "line_id": l2.pk, "product": self.blaster.pk})
+        l2.refresh_from_db(); self.assertEqual(l2.product, self.blaster)
+        self.blaster.refresh_from_db(); self.assertEqual(self.blaster.qty_on_hand, 1)

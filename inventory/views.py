@@ -1047,6 +1047,21 @@ def receipt_detail(request, pk):
         except ValidationError as e:
             messages.error(request, "; ".join(e.messages))
         return redirect("receipt_detail", pk)
+    if request.method == "POST" and request.POST.get("action") == "swap_line":
+        from inventory.models import swap_receipt_line_product
+        line = get_object_or_404(ReceiptLine, pk=request.POST.get("line_id"), receipt=receipt, is_deleted=False)
+        new_product = Product.objects.filter(pk=request.POST.get("product") or 0).first()
+        if new_product is None:
+            messages.error(request, "Pick the right product first.")
+            return redirect("receipt_detail", pk)
+        try:
+            old_sku = line.product.sku
+            swap_receipt_line_product(line, new_product, user=request.user)
+            messages.success(request, f"Line moved from {old_sku} to {new_product.sku}"
+                                      + (f": {line.qty} unit{'s' if line.qty != 1 else ''} and their cost moved between the two products." if receipt.posted else "."))
+        except ValidationError as e:
+            messages.error(request, "; ".join(e.messages))
+        return redirect("receipt_detail", pk)
     if request.method == "POST" and request.POST.get("action") == "unpost":
         try:
             receipt.unpost(user=request.user)

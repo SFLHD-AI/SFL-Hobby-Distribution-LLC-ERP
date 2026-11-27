@@ -974,6 +974,59 @@ class ReceiptLine(SoftDeleteModel):
         return (Decimal(self.qty) * self.unit_cost).quantize(CENTS, ROUND_HALF_UP)
 
 
+def swap_receipt_line_product(line, new_product, user=None):
+    """The line was logged against the wrong product. Point it at the right
+    one; if the order was already received, move the units (at the landed
+    cost they came in at) out of the wrong product and into the right one,
+    rolling both weighted averages accordingly."""
+    receipt = line.receipt
+    old = line.product
+    if new_product.pk == old.pk:
+        raise ValidationError("That's already the product on this line.")
+    if any(not a.reversed for a in line.adjustments.all()):
+        raise ValidationError("Undo the damaged / returned entries on this line first.")
+    with transaction.atomic():
+        if receipt.posted:
+            unit = line.landed_unit_cost or line.unit_cost
+            on_hand = Product.all_objects.get(pk=old.pk).qty_on_hand
+            if on_hand < line.qty:
+                raise ValidationError(f"Only {on_hand} of {old.sku} are on hand but this line received {line.qty} — "
+                                      "some were already sold under the wrong product. Fix those sales first, or move "
+                                      "what's left with a stock adjustment.")
+            remaining = on_hand - line.qty
+            if remaining > 0:
+                old_avg = ((Decimal(on_hand) * old.avg_cost - Decimal(line.qty) * unit) / Decimal(remaining)).quantize(FOURPLACES, ROUND_HALF_UP)
+                old_avg = max(old_avg, Decimal("0"))
+            else:
+                prev = StockMovement.objects.filter(product=old).exclude(source_type="Receipt", source_id=str(receipt.pk)).order_by("-id").first()
+                old_avg = prev.avg_cost_after if prev else unit
+            old.apply_movement(movement_type="receipt", qty_delta=-line.qty, user=user, unit_cost=unit, new_avg_cost=old_avg,
+                               reference=f"RCV-{receipt.pk}", source=receipt, note=f"Moved to {new_product.sku} (logged against the wrong product)")
+            new_on_hand = Product.all_objects.get(pk=new_product.pk).qty_on_hand
+            if new_on_hand <= 0:
+                new_avg = unit
+            else:
+                new_avg = ((Decimal(new_on_hand) * new_product.avg_cost + Decimal(line.qty) * unit)
+                           / Decimal(new_on_hand + line.qty)).quantize(FOURPLACES, ROUND_HALF_UP)
+            new_product.apply_movement(movement_type="receipt", qty_delta=line.qty, user=user, unit_cost=unit, new_avg_cost=new_avg,
+                                       reference=f"RCV-{receipt.pk}", source=receipt, note=f"Moved from {old.sku} (logged against the wrong product)")
+        line.product = new_product
+        line.save(update_fields=["product"])
+        # the Tradepost item this line came from should match the right product from now on
+        if line.tradepost_execution_id:
+            for fill in receipt.tradepost_fills.filter(execution_id=line.tradepost_execution_id):
+                fill.matched_product = new_product
+                fill.save(update_fields=["matched_product"])
+                if fill.config_id:
+                    Product.objects.filter(tradepost_config_id=fill.config_id).exclude(pk=new_product.pk).update(tradepost_config_id="")
+                    if not new_product.tradepost_config_id:
+                        new_product.tradepost_config_id = fill.config_id
+                        new_product.save(update_fields=["tradepost_config_id"])
+        log_activity(user, "receipt_line_product_changed", receipt,
+                     changes={"from": old.sku, "to": new_product.sku, "qty": line.qty})
+    return line
+
+
 class ReceiptAdjustment(models.Model):
     """Something that happened to a received order after the fact:
 
