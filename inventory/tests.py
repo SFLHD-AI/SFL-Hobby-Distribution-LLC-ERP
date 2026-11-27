@@ -1619,11 +1619,12 @@ class StockListPdfTests(TestCase):
         self.assertIn("$111.00", html)                           # fresh market price
         self.assertIn("SL-A", html); self.assertIn("SL-C", html)
         self.assertNotIn("SL-B", html)                           # zero stock hidden
-        self.assertIn("$120.00", html)                           # wholesale price
+        self.assertNotIn("$120.00", html)                        # never your price
+        self.assertNotIn("Wholesale", html)
         self.assertNotIn("60.00", html)                          # never the cost
         self.assertIn("<b>2</b>products in stock", html)
         self.assertIn("<b>10</b>units on hand", html)
-        # toggles off: zero-stock shown, no refresh, no prices
+        # toggles off: zero-stock shown, no refresh
         fake.calls.clear()
         with patch("inventory.pricing.get_provider", return_value=fake), \
              patch("core.pdf.render_pdf", side_effect=lambda t, c, base_url=None: __import__("django.template.loader", fromlist=["render_to_string"]).render_to_string(t, c).encode()):
@@ -1631,7 +1632,6 @@ class StockListPdfTests(TestCase):
         html = r.content.decode()
         self.assertEqual(fake.calls, [])
         self.assertIn("SL-B", html)
-        self.assertNotIn("Wholesale", html)
 
     def test_real_pdf_renders(self):
         r = self.client.get("/inventory/stock-list.pdf", {"id": [self.a.pk], "refresh": "0"})

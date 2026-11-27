@@ -350,7 +350,7 @@ def stock_list_pdf(request):
         qs = qs.filter(pk__in=ids)
     hide_zero = g.get("hide_zero", "1") != "0"
     show_market = g.get("market", "1") != "0"
-    show_price = g.get("price", "1") != "0"
+    show_price = False                      # customer-facing: never prices, never costs
     refresh = show_market and g.get("refresh", "1") != "0"
     products = [p for p in qs if (p.qty_on_hand > 0 or not hide_zero)]
     refreshed = False
@@ -369,15 +369,14 @@ def stock_list_pdf(request):
     groups = OrderedDict()
     for p in sorted(products, key=lambda x: ((x.category.name if x.category_id else "~"), x.sku)):
         groups.setdefault(p.category.name if p.category_id else "Other", []).append(p)
-    ncols = 4 + (1 if show_market else 0) + (1 if show_price else 0)
+    ncols = 4 + (1 if show_market else 0)
     company = CompanySettings.get()
     stamp = timezone.localtime()
     return pdf_response("pdf/stock_list.html", {
         "company": company, "generated": stamp, "rows": products,
         "groups": [{"name": k, "rows": v} for k, v in groups.items()],
         "total_units": sum(p.qty_on_hand for p in products),
-        "show_market": show_market, "show_price": show_price, "refreshed": refreshed,
-        "price_label": "Wholesale", "ncols": ncols,
+        "show_market": show_market, "show_price": False, "refreshed": refreshed, "ncols": ncols,
     }, f"stock-list-{stamp:%Y-%m-%d-%H%M}.pdf", inline=True)
 
 

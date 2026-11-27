@@ -48,7 +48,6 @@
   <div class="summary">
     <div class="pill"><b>{{ rows|length }}</b>product{{ rows|length|pluralize }} in stock</div>
     <div class="pill"><b>{{ total_units|intcomma }}</b>units on hand</div>
-    {% if show_price %}<div class="pill"><b>{{ price_label }}</b>prices shown</div>{% endif %}
   </div>
 
   <table>
@@ -56,7 +55,6 @@
       <th style="width:19%">SKU / UPC</th><th>Product</th><th style="width:11%">Brand</th>
       <th class="r" style="width:9%">On hand</th>
       {% if show_market %}<th class="r" style="width:13%">TCGplayer mkt</th>{% endif %}
-      {% if show_price %}<th class="r" style="width:12%">{{ price_label }}</th>{% endif %}
     </tr></thead>
     <tbody>
     {% for g in groups %}
@@ -68,13 +66,12 @@
         <td>{{ p.brand|default:"" }}</td>
         <td class="r qty">{{ p.qty_on_hand|intcomma }}</td>
         {% if show_market %}<td class="r">{% if p.market_price %}${{ p.market_price|floatformat:2|intcomma }}{% elif p.tcgplayer_id %}<span class="muted">n/a</span>{% else %}<span class="muted">—</span>{% endif %}</td>{% endif %}
-        {% if show_price %}<td class="r">${{ p.default_price|floatformat:2|intcomma }}</td>{% endif %}
       </tr>
       {% endfor %}
     {% endfor %}
     </tbody>
   </table>
 
-  <div class="note">Quantities are as of the moment this list was generated and are subject to prior sale.{% if show_market %} TCGplayer market prices are shown for reference only and change throughout the day.{% endif %}{% if show_price %} {{ price_label }} prices are per unit before shipping and tax.{% endif %}</div>
+  <div class="note">Quantities are as of the moment this list was generated and are subject to prior sale.{% if show_market %} TCGplayer market prices are shown for reference only and change throughout the day.{% endif %}</div>
 </body>
 </html>
