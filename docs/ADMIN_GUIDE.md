@@ -416,6 +416,17 @@ what you feed to Pirate Ship / ShipStation / uShip quotes.
   is on the Receiving list and the Unpaid bills report. Match the bank
   transaction later if you want the exact date and account.
 
+## Stock list PDF for customers
+
+On Inventory, tick the products (or none for everything), choose the
+toggles — **hide 0 stock**, **refresh TCGplayer prices** (pulls a fresh
+market price for each sealed product as the PDF is built), **include my
+prices** — and click **📄 Stock list PDF**. The PDF carries your logo and
+contact line, the date and time, totals, and one row per product grouped
+by category: SKU/UPC, name (with available vs committed when some are
+spoken for), brand, on hand, TCGplayer market and your wholesale price.
+Costs are never shown. Save or share it from the phone like an invoice.
+
 ## Checking a product's average cost
 
 A product's page (costs visible) has **Check average cost**: it replays

@@ -60,11 +60,29 @@
     </tbody>
   </table>
 </div>
-<div class="mt-3 flex gap-2 items-center text-sm">
+<div class="mt-3 flex flex-wrap gap-2 items-center text-sm">
   <span class="text-slate-500">{{ products|length }} products · With selected:</span>
   <input type="number" name="copies" value="1" min="1" class="w-16 rounded-lg border-slate-300 text-sm">
   <button name="mode" value="sku" class="btn-secondary">🏷 SKU labels</button>
   <button name="mode" value="bin" class="btn-secondary">🏷 Bin labels</button>
+  <span class="mx-1 text-slate-300">|</span>
+  <button formaction="{% url 'stock_list_pdf' %}" class="btn-primary" title="A customer-ready PDF of what's in stock for the ticked products — no costs shown">📄 Stock list PDF</button>
+  <label class="inline-flex items-center gap-1 text-slate-600"><input type="checkbox" name="hide_zero" value="1" checked class="rounded"> hide 0 stock</label>
+  <label class="inline-flex items-center gap-1 text-slate-600" title="Pull a fresh TCGplayer market price for each sealed product as the PDF is made"><input type="checkbox" name="refresh" value="1" checked class="rounded"> refresh TCGplayer prices</label>
+  <label class="inline-flex items-center gap-1 text-slate-600"><input type="checkbox" name="price" value="1" checked class="rounded"> include my prices</label>
 </div>
+<script>
+  // unchecked boxes send nothing; the PDF view reads explicit 0/1 so each toggle really turns off
+  document.querySelector('form[action*="labels"]').addEventListener('submit', function (e) {
+    if (!e.submitter || !e.submitter.getAttribute('formaction')) return;
+    ['hide_zero', 'refresh', 'price'].forEach(function (name) {
+      var box = this.querySelector('input[type=checkbox][name=' + name + ']');
+      var hidden = this.querySelector('input[type=hidden][data-for=' + name + ']');
+      if (!hidden) { hidden = document.createElement('input'); hidden.type = 'hidden'; hidden.dataset.for = name; this.appendChild(hidden); }
+      hidden.name = name; hidden.value = box.checked ? '1' : '0'; box.disabled = true;
+      setTimeout(function () { box.disabled = false; }, 500);
+    }, this);
+  });
+</script>
 </form>
 {% endblock %}

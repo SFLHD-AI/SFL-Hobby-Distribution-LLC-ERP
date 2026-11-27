@@ -1592,3 +1592,48 @@ class CostCheckReportTests(TestCase):
         self.assertEqual(r.status_code, 302)
         bad.refresh_from_db(); self.assertEqual(bad.avg_cost, Decimal("2600.0000"))
         self.assertIn("matches its movement ledger", self.client.get("/reports/cost-check/").content.decode())
+
+
+class StockListPdfTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Category
+        self.client.force_login(User.objects.create_superuser("pdf", password="x"))
+        sealed = Category.objects.create(name="Sealed TCG Product")
+        self.a = make_product("SL-A", name="Prismatic ETB", category=sealed, tcgplayer_id=593391, default_price=Decimal("120"))
+        self.b = make_product("SL-B", name="Empty Box", category=sealed, default_price=Decimal("50"))
+        self.c = make_product("SL-C", name="Bowman Blaster", default_price=Decimal("40"))
+        StockAdjustment.create_and_apply(product=self.a, qty_delta=7, reason="opening", unit_cost=Decimal("60"))
+        StockAdjustment.create_and_apply(product=self.c, qty_delta=3, reason="opening", unit_cost=Decimal("20"))
+
+    def test_pdf_refreshes_market_hides_zero_and_never_shows_cost(self):
+        from unittest.mock import patch
+        fake = MarketPriceTests.FakeProvider({593391: Decimal("111.00")})
+        with patch("inventory.pricing.get_provider", return_value=fake), \
+             patch("core.pdf.render_pdf", side_effect=lambda t, c, base_url=None: __import__("django.template.loader", fromlist=["render_to_string"]).render_to_string(t, c).encode()) as rp:
+            r = self.client.get("/inventory/stock-list.pdf", {"id": [self.a.pk, self.b.pk, self.c.pk], "hide_zero": "1", "refresh": "1", "price": "1"})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r["Content-Type"], "application/pdf")
+        html = r.content.decode()
+        self.assertEqual(fake.calls, [593391])                   # refreshed on the spot
+        self.assertIn("$111.00", html)                           # fresh market price
+        self.assertIn("SL-A", html); self.assertIn("SL-C", html)
+        self.assertNotIn("SL-B", html)                           # zero stock hidden
+        self.assertIn("$120.00", html)                           # wholesale price
+        self.assertNotIn("60.00", html)                          # never the cost
+        self.assertIn("<b>2</b>products in stock", html)
+        self.assertIn("<b>10</b>units on hand", html)
+        # toggles off: zero-stock shown, no refresh, no prices
+        fake.calls.clear()
+        with patch("inventory.pricing.get_provider", return_value=fake), \
+             patch("core.pdf.render_pdf", side_effect=lambda t, c, base_url=None: __import__("django.template.loader", fromlist=["render_to_string"]).render_to_string(t, c).encode()):
+            r = self.client.get("/inventory/stock-list.pdf", {"id": [self.a.pk, self.b.pk], "hide_zero": "0", "refresh": "0", "price": "0"})
+        html = r.content.decode()
+        self.assertEqual(fake.calls, [])
+        self.assertIn("SL-B", html)
+        self.assertNotIn("Wholesale", html)
+
+    def test_real_pdf_renders(self):
+        r = self.client.get("/inventory/stock-list.pdf", {"id": [self.a.pk], "refresh": "0"})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.content.startswith(b"%PDF"))

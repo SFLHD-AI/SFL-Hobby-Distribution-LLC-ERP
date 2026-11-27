@@ -23,6 +23,7 @@ PAGES = [
     ("New product", "product_create", "inventory", "add sku item"),
     ("Import products (CSV)", "product_import", "inventory", "upload catalog spreadsheet"),
     ("Print barcode labels", "product_labels", "inventory", "sku label printer 2x1"),
+    ("Stock list PDF (what's in stock)", "stock_list_pdf", "inventory", "customer availability sheet in stock pdf market"),
     ("Price lists", "pricelist_list", "inventory", "pricing tiers wholesale"),
     ("Receiving — supplier orders", "receipt_list", "receiving", "rcv purchases incoming inbound receive"),
     ("New supplier order", "receipt_create", "receiving", "rcv new purchase"),

@@ -1,0 +1,80 @@
+{% load humanize %}<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  @page { size: letter; margin: 14mm 13mm 18mm 13mm;
+          @bottom-left { content: "{{ company.company_name }} · stock list · {{ generated|date:'M j, Y g:i A' }}"; font-size: 7.5pt; color: #6b7280; font-family: Helvetica, Arial, sans-serif; }
+          @bottom-right { content: "Page " counter(page) " of " counter(pages); font-size: 7.5pt; color: #6b7280; font-family: Helvetica, Arial, sans-serif; } }
+  * { box-sizing: border-box; }
+  body { font-family: Helvetica, Arial, sans-serif; color: #0f172a; font-size: 9.5pt; margin: 0; }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2.5pt solid #1e293b; padding-bottom: 10px; }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand img { max-height: 46px; max-width: 170px; }
+  .brand .name { font-size: 16pt; font-weight: 700; letter-spacing: .3px; }
+  .brand .sub { font-size: 8.5pt; color: #475569; margin-top: 2px; }
+  .title { text-align: right; }
+  .title h1 { margin: 0; font-size: 19pt; letter-spacing: 2px; text-transform: uppercase; color: #1e293b; }
+  .title .meta { font-size: 8.5pt; color: #475569; margin-top: 3px; line-height: 1.4; }
+  .summary { display: flex; gap: 10px; margin: 12px 0 10px; }
+  .pill { border: 1pt solid #cbd5e1; border-radius: 6px; padding: 6px 10px; font-size: 8.5pt; color: #334155; background: #f8fafc; }
+  .pill b { font-size: 11pt; color: #0f172a; display: block; }
+  table { width: 100%; border-collapse: collapse; }
+  thead { display: table-header-group; }
+  th { background: #1e293b; color: #fff; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 1px; text-align: left; padding: 6px 8px; }
+  th.r, td.r { text-align: right; }
+  td { padding: 6px 8px; border-bottom: 0.6pt solid #e2e8f0; vertical-align: top; }
+  tr:nth-child(even) td { background: #f8fafc; }
+  tr.group td { background: #e2e8f0; font-weight: 700; font-size: 8.5pt; letter-spacing: .5px; color: #1e293b; padding: 5px 8px; border-bottom: 0.8pt solid #cbd5e1; }
+  .sku { font-family: Menlo, Consolas, monospace; font-size: 8pt; color: #475569; }
+  .qty { font-weight: 700; font-size: 10.5pt; }
+  .muted { color: #94a3b8; font-size: 8pt; }
+  .note { margin-top: 14px; font-size: 8pt; color: #64748b; line-height: 1.45; }
+  tr { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <div class="brand">
+      {% if company.has_logo %}<img src="{{ company.logo_src }}" alt="">{% endif %}
+      <div><div class="name">{{ company.company_name }}</div>
+        <div class="sub">{% if company.phone %}{{ company.phone }}{% endif %}{% if company.phone and company.email %} · {% endif %}{% if company.email %}{{ company.email }}{% endif %}</div></div>
+    </div>
+    <div class="title"><h1>Stock list</h1>
+      <div class="meta">{{ generated|date:"l, F j, Y · g:i A" }}<br>
+        {% if show_market %}TCGplayer market prices refreshed {% if refreshed %}at {{ generated|date:"g:i A" }}{% else %}as last fetched{% endif %}{% endif %}</div></div>
+  </div>
+
+  <div class="summary">
+    <div class="pill"><b>{{ rows|length }}</b>product{{ rows|length|pluralize }} in stock</div>
+    <div class="pill"><b>{{ total_units|intcomma }}</b>units on hand</div>
+    {% if show_price %}<div class="pill"><b>{{ price_label }}</b>prices shown</div>{% endif %}
+  </div>
+
+  <table>
+    <thead><tr>
+      <th style="width:19%">SKU / UPC</th><th>Product</th><th style="width:11%">Brand</th>
+      <th class="r" style="width:9%">On hand</th>
+      {% if show_market %}<th class="r" style="width:13%">TCGplayer mkt</th>{% endif %}
+      {% if show_price %}<th class="r" style="width:12%">{{ price_label }}</th>{% endif %}
+    </tr></thead>
+    <tbody>
+    {% for g in groups %}
+      <tr class="group"><td colspan="{{ ncols }}">{{ g.name }}</td></tr>
+      {% for p in g.rows %}
+      <tr>
+        <td class="sku">{{ p.sku }}{% if p.upc and p.upc != p.sku %}<br>{{ p.upc }}{% endif %}</td>
+        <td>{{ p.name }}{% if p.qty_committed %}<div class="muted">{{ p.qty_available }} available · {{ p.qty_committed }} committed</div>{% endif %}</td>
+        <td>{{ p.brand|default:"" }}</td>
+        <td class="r qty">{{ p.qty_on_hand|intcomma }}</td>
+        {% if show_market %}<td class="r">{% if p.market_price %}${{ p.market_price|floatformat:2|intcomma }}{% elif p.tcgplayer_id %}<span class="muted">n/a</span>{% else %}<span class="muted">—</span>{% endif %}</td>{% endif %}
+        {% if show_price %}<td class="r">${{ p.default_price|floatformat:2|intcomma }}</td>{% endif %}
+      </tr>
+      {% endfor %}
+    {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="note">Quantities are as of the moment this list was generated and are subject to prior sale.{% if show_market %} TCGplayer market prices are shown for reference only and change throughout the day.{% endif %}{% if show_price %} {{ price_label }} prices are per unit before shipping and tax.{% endif %}</div>
+</body>
+</html>

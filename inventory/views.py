@@ -336,6 +336,52 @@ def toggle_low_stock_mute(request, pk):
 
 
 @module_required("inventory")
+def stock_list_pdf(request):
+    """Customer-facing PDF of what's in stock for the ticked products:
+    quantities as of now, TCGplayer market refreshed on the spot, your price.
+    Never shows cost."""
+    from collections import OrderedDict
+    from core.models import CompanySettings
+    from core.pdf import pdf_response
+    g = request.GET if request.method == "GET" else request.POST
+    ids = g.getlist("id")
+    qs = Product.objects.filter(active=True).select_related("brand", "category").order_by("category__name", "sku")
+    if ids:
+        qs = qs.filter(pk__in=ids)
+    hide_zero = g.get("hide_zero", "1") != "0"
+    show_market = g.get("market", "1") != "0"
+    show_price = g.get("price", "1") != "0"
+    refresh = show_market and g.get("refresh", "1") != "0"
+    products = [p for p in qs if (p.qty_on_hand > 0 or not hide_zero)]
+    refreshed = False
+    if refresh:
+        from inventory.pricing import get_provider, refresh_product, refresh_unit_price
+        provider = get_provider()
+        for p in products:
+            if not p.market_eligible:
+                continue
+            if p.tcgplayer_id:
+                refresh_product(p, provider)
+                refreshed = True
+            elif p.tcgplayer_unit_id:
+                refresh_unit_price(p, provider)
+                refreshed = True
+    groups = OrderedDict()
+    for p in sorted(products, key=lambda x: ((x.category.name if x.category_id else "~"), x.sku)):
+        groups.setdefault(p.category.name if p.category_id else "Other", []).append(p)
+    ncols = 4 + (1 if show_market else 0) + (1 if show_price else 0)
+    company = CompanySettings.get()
+    stamp = timezone.localtime()
+    return pdf_response("pdf/stock_list.html", {
+        "company": company, "generated": stamp, "rows": products,
+        "groups": [{"name": k, "rows": v} for k, v in groups.items()],
+        "total_units": sum(p.qty_on_hand for p in products),
+        "show_market": show_market, "show_price": show_price, "refreshed": refreshed,
+        "price_label": "Wholesale", "ncols": ncols,
+    }, f"stock-list-{stamp:%Y-%m-%d-%H%M}.pdf", inline=True)
+
+
+@module_required("inventory")
 def product_labels(request):
     """Printable 2" x 1" Code 128 labels for SKUs and/or bin locations."""
     import base64
