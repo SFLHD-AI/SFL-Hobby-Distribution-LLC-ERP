@@ -5,6 +5,7 @@
   <h1 class="page-title">Inventory</h1>
   <div class="flex flex-wrap gap-2">
     <a href="{% url 'pricelist_list' %}" class="btn-secondary">Price lists</a>
+    <a href="{% url 'product_deleted' %}" class="btn-secondary" title="Bring back a product you deleted">Deleted</a>
     <a href="?{{ request.GET.urlencode }}&export=csv" class="btn-secondary">⬇ CSV</a>
     <label class="btn-secondary cursor-pointer">⬆ Import CSV
       <form id="importForm" method="post" enctype="multipart/form-data" action="{% url 'product_import' %}">

@@ -1,0 +1,26 @@
+{% extends "base.html" %}{% load humanize %}
+{% block title %}Deleted products{% endblock %}
+{% block content %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-5">
+  <h1 class="page-title">Deleted products</h1>
+  <a href="{% url 'product_list' %}" class="btn-secondary">← Inventory</a>
+</div>
+<p class="text-sm text-slate-500 mb-4">Deleting a product only hides it. Everything it had — stock on hand, average cost, movement history, sales — is still here and comes back when you restore it.</p>
+<div class="card overflow-x-auto">
+  <table class="tbl">
+    <thead><tr><th>SKU</th><th>Name</th><th>Category</th><th>Brand</th><th class="num">On hand</th><th>Deleted</th><th></th></tr></thead>
+    <tbody>
+    {% for p in rows %}
+      <tr>
+        <td class="font-medium">{{ p.sku }}</td>
+        <td class="whitespace-normal">{{ p.name }}</td>
+        <td>{{ p.category|default:"—" }}</td><td>{{ p.brand|default:"—" }}</td>
+        <td class="num">{{ p.qty_on_hand }}</td>
+        <td class="text-sm text-slate-500">{{ p.deleted_at|date:"M j, Y g:i A" }}{% if p.deleted_by %} · {{ p.deleted_by.username }}{% endif %}</td>
+        <td><form method="post">{% csrf_token %}<input type="hidden" name="pk" value="{{ p.pk }}"><button class="btn-primary !py-1">↩ Restore</button></form></td>
+      </tr>
+    {% empty %}<tr><td colspan="7" class="text-center text-slate-400 py-8">Nothing has been deleted.</td></tr>{% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

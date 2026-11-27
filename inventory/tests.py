@@ -1673,3 +1673,52 @@ class ProductFilterTests(TestCase):
         page = self.client.get("/inventory/?q=prismatic&brand=%d" % self.etb.brand_id).content.decode()
         self.assertIn('name="q" value="prismatic"', page)                 # filters carried into the PDF form
         self.assertIn("In stock only", page)
+
+
+class WrongProductLinkTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        self.client.force_login(User.objects.create_superuser("wl", password="x"))
+
+    def test_duplicate_upc_is_refused(self):
+        a = make_product("HANGER", name="2026 Topps Chrome Football Hanger Box", upc="887521170000")
+        data = {"sku": "BLASTER", "name": "2025/26 Topps Chrome Basketball Blaster Box", "upc": "887521170000",
+                "default_price": "40", "unit_of_measure": "each", "case_pack_qty": "1", "reorder_point": "0", "active": "on"}
+        r = self.client.post("/inventory/new/", data)
+        self.assertEqual(r.status_code, 200)
+        self.assertIn("already belongs to HANGER", r.content.decode())
+        self.assertFalse(Product.objects.filter(sku="BLASTER").exists())
+
+    def test_clear_match_forgets_the_learned_tradepost_item(self):
+        from inventory.models import TradepostFill
+        from core.models import CompanySettings
+        c = CompanySettings.get(); c.tradepost_api_key = "tp_live_x"; c.save()
+        wrong = make_product("HANGER", name="2026 Topps Chrome Football Hanger Box", tradepost_config_id="cfg-blaster")
+        fill = TradepostFill.objects.create(execution_id="e1", order_number="TPST-1", config_id="cfg-blaster",
+                                            product_name="2025/26 Topps Chrome Basketball Blaster Box", quantity=2, matched_product=wrong)
+        from unittest import mock
+        from inventory import tradepost as tp
+        with mock.patch.object(tp.TradepostClient, "list_buys", lambda self, since=None, **kw: []):
+            self.client.post("/inventory/receiving/tradepost/", {"action": "unmatch", "fill": ["e1"]})
+        fill.refresh_from_db(); wrong.refresh_from_db()
+        self.assertIsNone(fill.matched_product)
+        self.assertEqual(wrong.tradepost_config_id, "")
+        self.assertIsNone(fill.product)                 # no longer auto-matches to the wrong product
+
+
+class RestoreProductTests(TestCase):
+    def test_deleted_product_can_be_restored_with_its_history(self):
+        from django.contrib.auth.models import User
+        u = User.objects.create_superuser("rs", password="x"); self.client.force_login(u)
+        p = make_product("BLASTER", name="2025/26 Topps Chrome Basketball Blaster Box")
+        StockAdjustment.create_and_apply(product=p, qty_delta=4, reason="opening", unit_cost=Decimal("30"))
+        self.client.post(f"/inventory/{p.pk}/delete/")
+        self.assertFalse(Product.objects.filter(pk=p.pk).exists())
+        html = self.client.get("/inventory/deleted/").content.decode()
+        self.assertIn("BLASTER", html)
+        r = self.client.post("/inventory/deleted/", {"pk": p.pk})
+        self.assertEqual(r.status_code, 302)
+        p.refresh_from_db()
+        self.assertFalse(p.is_deleted)
+        self.assertEqual((p.qty_on_hand, p.avg_cost), (4, Decimal("30.0000")))
+        self.assertEqual(p.movements.count(), 1)

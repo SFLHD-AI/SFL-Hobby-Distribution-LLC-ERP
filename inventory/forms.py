@@ -37,6 +37,20 @@ class ProductForm(forms.ModelForm):
             raise forms.ValidationError("Paste the single unit's tcgplayer.com link or its numeric product ID.")
         return pid
 
+    tradepost_config_id = forms.CharField(
+        required=False, label="Tradepost product ID (learned)",
+        help_text="Set automatically when a Tradepost fill is matched to this product; every later fill of that "
+                  "Tradepost item matches here. Clear it if this product got linked to the wrong Tradepost item.")
+
+    def clean_upc(self):
+        upc = (self.cleaned_data.get("upc") or "").strip()
+        if upc:
+            dup = Product.objects.filter(models.Q(upc=upc) | models.Q(barcodes__code=upc)).exclude(pk=self.instance.pk).first()
+            if dup:
+                raise forms.ValidationError(f"UPC {upc} already belongs to {dup.sku} — {dup.name}. Two products can't share a "
+                                            "barcode or scans and imports will land on the wrong one.")
+        return upc
+
     def clean_tcgplayer(self):
         from inventory.pricing import parse_tcgplayer_id
         raw = (self.cleaned_data.get("tcgplayer") or "").strip()
@@ -56,6 +70,10 @@ class ProductForm(forms.ModelForm):
                 codes.append(token)
         primary = (self.cleaned_data.get("upc") or self.data.get("upc") or "").strip()
         sku = (self.cleaned_data.get("sku") or self.data.get("sku") or "").strip()
+        for c in codes:
+            dup = Product.objects.filter(models.Q(upc=c) | models.Q(barcodes__code=c)).exclude(pk=self.instance.pk).first()
+            if dup:
+                raise forms.ValidationError(f"Barcode {c} already belongs to {dup.sku} — {dup.name}.")
         codes = [c for c in codes if c != primary and c.lower() != sku.lower()]
         for c in codes:
             clash = ProductBarcode.objects.filter(code=c).exclude(product=self.instance if self.instance.pk else None).first()
@@ -77,6 +95,7 @@ class ProductForm(forms.ModelForm):
             self.fields["extra_barcodes"].initial = self.instance.extra_codes_text
             self.fields["tcgplayer"].initial = self.instance.tcgplayer_id or ""
             self.fields["tcgplayer_unit"].initial = self.instance.tcgplayer_unit_id or ""
+            self.fields["tradepost_config_id"].initial = self.instance.tradepost_config_id or ""
 
     def save_barcodes(self, product):
         """Sync ProductBarcode rows to the textarea (call after save())."""
@@ -114,6 +133,8 @@ class ProductForm(forms.ModelForm):
             if not obj.tcgplayer_id:
                 obj.market_price = obj.market_low = None
                 obj.market_error = ""
+        if "tradepost_config_id" in self.cleaned_data:
+            obj.tradepost_config_id = (self.cleaned_data["tradepost_config_id"] or "").strip()[:40]
         if "tcgplayer_unit" in self.cleaned_data:
             obj.tcgplayer_unit_id = self.cleaned_data["tcgplayer_unit"]
             if not obj.tcgplayer_unit_id:

@@ -277,6 +277,23 @@ def product_delete(request, pk):
 
 
 @module_required("inventory")
+def product_deleted(request):
+    """Products that were deleted (hidden) and can be brought back."""
+    if request.method == "POST":
+        product = get_object_or_404(Product.all_objects, pk=request.POST.get("pk"), is_deleted=True)
+        clash = Product.objects.filter(sku=product.sku).exclude(pk=product.pk).first()
+        if clash:
+            messages.error(request, f"Another live product already uses SKU {product.sku}. Rename that one first, then restore.")
+            return redirect("product_deleted")
+        product.restore()
+        log_activity(request.user, "restore", product)
+        messages.success(request, f"{product.sku} — {product.name} restored, with its stock history, costs and quantity intact.")
+        return redirect("product_detail", product.pk)
+    rows = Product.all_objects.filter(is_deleted=True).select_related("category", "brand", "deleted_by").order_by("-deleted_at")[:200]
+    return render(request, "inventory/product_deleted.html", {"rows": rows})
+
+
+@module_required("inventory")
 def product_detail(request, pk):
     product = get_object_or_404(Product, pk=pk)
     adj_form = AdjustmentForm()
@@ -785,8 +802,13 @@ def receipt_tradepost(request):
                 messages.error(request, "Pick a product from the list first.")
             return redirect(request.path + back)
         if action == "unmatch":
-            n = chosen.filter(receipt__isnull=True).update(matched_product=None)
-            messages.success(request, f"Cleared the product match on {n} fill{'s' if n != 1 else ''}.")
+            fills = list(chosen.filter(receipt__isnull=True))
+            cfg_ids = {f.config_id for f in fills if f.config_id}
+            forgot = Product.objects.filter(tradepost_config_id__in=cfg_ids).update(tradepost_config_id="") if cfg_ids else 0
+            n = TradepostFill.objects.filter(pk__in=[f.pk for f in fills]).update(matched_product=None)
+            messages.success(request, f"Cleared the product match on {n} fill{'s' if n != 1 else ''}"
+                                      + (f" and made {forgot} product{'s' if forgot != 1 else ''} forget that Tradepost item, "
+                                         "so it won't auto-match to it again." if forgot else "."))
             return redirect(request.path + back)
         if action == "refresh_tracking":
             if not ctx["shippo"]:
