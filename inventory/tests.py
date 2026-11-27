@@ -1637,3 +1637,39 @@ class StockListPdfTests(TestCase):
         r = self.client.get("/inventory/stock-list.pdf", {"id": [self.a.pk], "refresh": "0"})
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.content.startswith(b"%PDF"))
+
+
+class ProductFilterTests(TestCase):
+    def setUp(self):
+        from django.contrib.auth.models import User
+        from inventory.models import Brand, Category
+        self.client.force_login(User.objects.create_superuser("flt", password="x"))
+        sealed = Category.objects.create(name="Sealed TCG Product"); sports = Category.objects.create(name="Sports Cards")
+        pk = Brand.objects.create(name="Pokemon"); topps = Brand.objects.create(name="Topps")
+        self.etb = make_product("PE-ETB", name="SV Prismatic Evolutions Elite Trainer Box", category=sealed, brand=pk)
+        self.bundle = make_product("PE-BUNDLE", name="SV Prismatic Evolutions Booster Bundle", category=sealed, brand=pk)
+        self.case = make_product("PE-CASE", name="SV Prismatic Evolutions Booster Bundle - Sealed Case", category=sealed, brand=pk)
+        self.hobby = make_product("TC-HOBBY", name="2025/26 Topps Chrome Hobby Box", category=sports, brand=topps)
+        StockAdjustment.create_and_apply(product=self.etb, qty_delta=5, reason="opening", unit_cost=Decimal("60"))
+        self.sealed, self.topps = sealed, topps
+
+    def names(self, qs):
+        return {p.sku for p in __import__("inventory.views", fromlist=["filter_products"]).filter_products(qs)}
+
+    def test_contains_words_exclusions_and_phrases(self):
+        self.assertEqual(self.names({"q": "prismatic bundle"}), {"PE-BUNDLE", "PE-CASE"})
+        self.assertEqual(self.names({"q": "prismatic bundle -case"}), {"PE-BUNDLE"})
+        self.assertEqual(self.names({"q": '"hobby box"'}), {"TC-HOBBY"})
+        self.assertEqual(self.names({"q": "evolutions", "in_stock": "1"}), {"PE-ETB"})
+        self.assertEqual(self.names({"category": str(self.sealed.pk), "q": "-bundle"}), {"PE-ETB"})
+        self.assertEqual(self.names({"brand": str(self.topps.pk)}), {"TC-HOBBY"})
+
+    def test_stock_list_pdf_uses_live_filters_when_nothing_ticked(self):
+        from unittest.mock import patch
+        render = lambda t, c, base_url=None: __import__("django.template.loader", fromlist=["render_to_string"]).render_to_string(t, c).encode()
+        with patch("core.pdf.render_pdf", side_effect=render):
+            html = self.client.get("/inventory/stock-list.pdf", {"q": "prismatic", "hide_zero": "0", "refresh": "0"}).content.decode()
+        self.assertIn("PE-ETB", html); self.assertIn("PE-CASE", html); self.assertNotIn("TC-HOBBY", html)
+        page = self.client.get("/inventory/?q=prismatic&brand=%d" % self.etb.brand_id).content.decode()
+        self.assertIn('name="q" value="prismatic"', page)                 # filters carried into the PDF form
+        self.assertIn("In stock only", page)

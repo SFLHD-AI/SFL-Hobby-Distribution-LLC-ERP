@@ -16,3 +16,16 @@ def money(value):
         return f"{float(value):,.2f}"
     except (TypeError, ValueError):
         return "0.00"
+
+
+@register.filter
+def split(value, sep=" "):
+    return str(value).split(sep)
+
+
+@register.filter
+def get_item(d, key):
+    try:
+        return d.get(key, "")
+    except AttributeError:
+        return ""

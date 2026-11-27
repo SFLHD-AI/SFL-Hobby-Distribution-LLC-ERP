@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% load humanize %}
+{% extends "base.html" %}{% load humanize sfl_tags %}
 {% block title %}Inventory{% endblock %}
 {% block content %}
 <div class="flex flex-wrap items-center justify-between gap-3 mb-5">
@@ -17,18 +17,21 @@
 </div>
 
 <form method="get" class="card-pad mb-4 flex flex-wrap gap-3 items-end field-inline">
-  <input type="text" name="q" value="{{ request.GET.q }}" placeholder="SKU / name / UPC / bin — scan here"
-         class="w-full sm:w-64" autofocus data-scan data-scan-submit>
+  <div class="w-full sm:w-80"><input type="text" name="q" value="{{ request.GET.q }}" placeholder="contains… e.g. prismatic etb  ·  bundle -case  ·  “hobby box”"
+         class="w-full" autofocus data-scan data-scan-submit title="Every word must appear in the SKU, name, UPC, bin or description. Start a word with - to exclude it. Quote a phrase to match it exactly.">
+    <p class="text-[11px] text-slate-400 mt-0.5">all words must match · <code>-word</code> excludes · <code>"exact phrase"</code></p></div>
   <select name="category"><option value="">All categories</option>
     {% for c in categories %}<option value="{{ c.pk }}" {% if request.GET.category == c.pk|stringformat:"s" %}selected{% endif %}>{{ c.name }}</option>{% endfor %}</select>
   <select name="brand"><option value="">All brands</option>
     {% for b in brands %}<option value="{{ b.pk }}" {% if request.GET.brand == b.pk|stringformat:"s" %}selected{% endif %}>{{ b.name }}</option>{% endfor %}</select>
+  <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="in_stock" value="1" {% if request.GET.in_stock %}checked{% endif %} class="rounded"> In stock only</label>
   <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="low" value="1" {% if request.GET.low %}checked{% endif %} class="rounded"> Low stock only</label>
   <label class="text-sm flex items-center gap-1.5"><input type="checkbox" name="active" value="1" {% if request.GET.active %}checked{% endif %} class="rounded"> Active only</label>
   <button class="btn-secondary">Filter</button>
 </form>
 
 <form method="get" action="{% url 'product_labels' %}" target="_blank">
+  {% for key in "q category brand active in_stock low"|split %}{% if request.GET|get_item:key %}<input type="hidden" name="{{ key }}" value="{{ request.GET|get_item:key }}">{% endif %}{% endfor %}
 <div class="card overflow-x-auto">
   <table class="tbl">
     <thead><tr>
@@ -61,7 +64,7 @@
   </table>
 </div>
 <div class="mt-3 flex flex-wrap gap-2 items-center text-sm">
-  <span class="text-slate-500">{{ products|length }} products · With selected:</span>
+  <span class="text-slate-500">{{ products|length }} products · With ticked <span class="text-slate-400">(none ticked = everything matching the filters above)</span>:</span>
   <input type="number" name="copies" value="1" min="1" class="w-16 rounded-lg border-slate-300 text-sm">
   <button name="mode" value="sku" class="btn-secondary">🏷 SKU labels</button>
   <button name="mode" value="bin" class="btn-secondary">🏷 Bin labels</button>

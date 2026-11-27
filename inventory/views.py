@@ -23,26 +23,49 @@ from inventory.models import (Brand, Category, CycleCount, CycleCountLine,
 # ---------------------------------------------------------------------------
 # Products
 # ---------------------------------------------------------------------------
+def filter_products(params):
+    """The Inventory list's filters, shared with the stock-list PDF and labels.
+
+    q: every word must appear in SKU / name / UPC / bin / extra barcode
+       ("prismatic etb" finds both words anywhere); a word starting with -
+       excludes ("bundle -case"); "quoted phrases" match as one.
+    category / brand: ids.  in_stock=1: on hand > 0.  active=1.  low=1.
+    """
+    import shlex
+    qs = Product.objects.select_related("category", "brand").order_by("sku")
+    q = (params.get("q") or "").strip()
+    if q:
+        try:
+            words = shlex.split(q)
+        except ValueError:
+            words = q.split()
+        for w in words:
+            neg = w.startswith("-") and len(w) > 1
+            term = w[1:] if neg else w
+            cond = (models.Q(sku__icontains=term) | models.Q(name__icontains=term) |
+                    models.Q(upc__icontains=term) | models.Q(bin_location__icontains=term) |
+                    models.Q(barcodes__code__icontains=term) | models.Q(description__icontains=term))
+            qs = qs.exclude(cond) if neg else qs.filter(cond)
+        qs = qs.distinct()
+    cat = params.get("category")
+    if cat and str(cat).isdigit():
+        qs = qs.filter(category_id=cat)
+    brand = params.get("brand")
+    if brand and str(brand).isdigit():
+        qs = qs.filter(brand_id=brand)
+    if params.get("active") == "1":
+        qs = qs.filter(active=True)
+    if params.get("in_stock") == "1":
+        qs = qs.filter(qty_on_hand__gt=0)
+    products = list(qs)
+    if params.get("low") == "1":
+        products = [p for p in products if p.is_low_stock and p.active]
+    return products
+
+
 @module_required("inventory")
 def product_list(request):
-    qs = (Product.objects.select_related("category", "brand")
-          .order_by("sku"))
-    q = request.GET.get("q", "").strip()
-    if q:
-        qs = qs.filter(models.Q(sku__icontains=q) | models.Q(name__icontains=q) |
-                       models.Q(upc__icontains=q) | models.Q(bin_location__icontains=q) |
-                       models.Q(barcodes__code__icontains=q)).distinct()
-    cat = request.GET.get("category")
-    if cat:
-        qs = qs.filter(category_id=cat)
-    brand = request.GET.get("brand")
-    if brand:
-        qs = qs.filter(brand_id=brand)
-    if request.GET.get("active") == "1":
-        qs = qs.filter(active=True)
-    products = list(qs)
-    if request.GET.get("low") == "1":
-        products = [p for p in products if p.is_low_stock and p.active]
+    products = filter_products(request.GET)
 
     if request.GET.get("export") == "csv":
         show_costs = can_see_costs(request.user)
@@ -345,9 +368,10 @@ def stock_list_pdf(request):
     from core.pdf import pdf_response
     g = request.GET if request.method == "GET" else request.POST
     ids = g.getlist("id")
-    qs = Product.objects.filter(active=True).select_related("brand", "category").order_by("category__name", "sku")
     if ids:
-        qs = qs.filter(pk__in=ids)
+        qs = list(Product.objects.filter(active=True, pk__in=ids).select_related("brand", "category"))
+    else:
+        qs = [p for p in filter_products(g) if p.active]          # everything the current filters match
     hide_zero = g.get("hide_zero", "1") != "0"
     show_market = g.get("market", "1") != "0"
     show_price = False                      # customer-facing: never prices, never costs
